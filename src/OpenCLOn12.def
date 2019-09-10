@@ -1,0 +1,144 @@
+EXPORTS
+
+;
+; Note:
+;
+; 1. Functions are grouped into blocks according to the OpenCL API version they
+; were introduced in.
+;
+; 2. Function blocks are sorted in ascending order of the API version.
+;
+; 3. Functions within a block are sorted alphabetically.
+;
+
+; OpenCL 1.0 API
+clBuildProgram
+clCreateBuffer
+clCreateCommandQueue
+clCreateContext
+clCreateContextFromType
+; clCreateFromGLBuffer
+; clCreateFromGLRenderbuffer
+; clCreateFromGLTexture2D
+; clCreateFromGLTexture3D
+clCreateImage2D
+clCreateImage3D
+clCreateKernel
+clCreateKernelsInProgram
+clCreateProgramWithBinary
+clCreateProgramWithSource
+clCreateSampler
+; clEnqueueAcquireGLObjects
+clEnqueueBarrier
+clEnqueueCopyBuffer
+clEnqueueCopyBufferToImage
+clEnqueueCopyImage
+clEnqueueCopyImageToBuffer
+clEnqueueMapBuffer
+clEnqueueMapImage
+clEnqueueMarker
+clEnqueueNDRangeKernel
+clEnqueueNativeKernel
+clEnqueueReadBuffer
+clEnqueueReadImage
+; clEnqueueReleaseGLObjects
+clEnqueueTask
+clEnqueueUnmapMemObject
+clEnqueueWaitForEvents
+clEnqueueWriteBuffer
+clEnqueueWriteImage
+clFinish
+clFlush
+clGetCommandQueueInfo
+clGetContextInfo
+clGetDeviceIDs
+clGetDeviceInfo
+clGetEventInfo
+clGetEventProfilingInfo
+clGetExtensionFunctionAddress
+; clGetGLObjectInfo
+; clGetGLTextureInfo
+clGetImageInfo
+clGetKernelInfo
+clGetKernelWorkGroupInfo
+clGetMemObjectInfo
+clGetPlatformIDs
+clGetPlatformInfo
+clGetProgramBuildInfo
+clGetProgramInfo
+clGetSamplerInfo
+clGetSupportedImageFormats
+clReleaseCommandQueue
+clReleaseContext
+clReleaseEvent
+clReleaseKernel
+clReleaseMemObject
+clReleaseProgram
+clReleaseSampler
+clRetainCommandQueue
+clRetainContext
+clRetainEvent
+clRetainKernel
+clRetainMemObject
+clRetainProgram
+clRetainSampler
+clSetCommandQueueProperty
+clSetKernelArg
+clUnloadCompiler
+clWaitForEvents
+
+; OpenCL 1.1 API
+clCreateSubBuffer
+clCreateUserEvent
+clEnqueueCopyBufferRect
+clEnqueueReadBufferRect
+clEnqueueWriteBufferRect
+clSetEventCallback
+clSetMemObjectDestructorCallback
+clSetUserEventStatus
+
+; OpenCL 1.2 API
+clCompileProgram
+; clCreateFromGLTexture
+clCreateImage
+clCreateProgramWithBuiltInKernels
+clCreateSubDevices
+clEnqueueBarrierWithWaitList
+clEnqueueFillBuffer
+clEnqueueFillImage
+clEnqueueMarkerWithWaitList
+clEnqueueMigrateMemObjects
+clGetExtensionFunctionAddressForPlatform
+clGetKernelArgInfo
+clLinkProgram
+clReleaseDevice
+clRetainDevice
+clUnloadPlatformCompiler
+
+; OpenCL 2.0 API
+clCreateCommandQueueWithProperties
+clCreatePipe
+clCreateSamplerWithProperties
+clEnqueueSVMFree
+clEnqueueSVMMap
+clEnqueueSVMMemcpy
+clEnqueueSVMMemFill
+clEnqueueSVMUnmap
+clGetPipeInfo
+clSetKernelArgSVMPointer
+clSetKernelExecInfo
+clSVMAlloc
+clSVMFree
+
+; OpenCL 2.1 API
+clCloneKernel
+clCreateProgramWithIL
+clEnqueueSVMMigrateMem
+clGetDeviceAndHostTimer
+clGetHostTimer
+clGetKernelSubGroupInfo
+clSetDefaultDeviceCommandQueue
+
+; OpenCL 2.2 API
+clSetProgramReleaseCallback
+clSetProgramSpecializationConstant

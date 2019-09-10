@@ -1,0 +1,33 @@
+#pragma once
+
+#include "device.hpp"
+#include "context.hpp"
+#include "task.hpp"
+
+class CommandQueue : public CLChildBase<CommandQueue, Device, cl_command_queue>
+{
+public:
+    CommandQueue(Device& device, Context& context, const cl_queue_properties* properties);
+
+    friend cl_int CL_API_CALL clGetCommandQueueInfo(cl_command_queue, cl_command_queue_info, size_t, void*, size_t*);
+
+    Context& GetContext() const { return m_Context.get(); }
+    Device& GetDevice() const { return m_Parent.get(); }
+
+    void Flush(TaskPoolLock const&);
+    void QueueTask(Task*, TaskPoolLock const&);
+    void NotifyTaskCompletion(Task*, TaskPoolLock const&);
+    void AddAllTasksAsDependencies(Task*, TaskPoolLock const&);
+
+    const bool m_bOutOfOrder;
+    const bool m_bProfile;
+    std::vector<cl_queue_properties> const m_Properties;
+
+protected:
+    Context::ref_int m_Context;
+
+    std::deque<Task::ref_ptr> m_QueuedTasks;
+    std::vector<Task::ref_ptr_int> m_OutstandingTasks;
+    Task* m_LastQueuedTask = nullptr;
+    Task* m_LastQueuedBarrier = nullptr;
+};
