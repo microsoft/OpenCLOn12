@@ -15,11 +15,14 @@
 #include <atomic>
 #include <map>
 #include <algorithm>
+#ifndef assert
+#include <assert>
+#endif
 
 using std::min;
 using std::max;
 
-#include <D3D12TranslationLayerDependancyIncludes.h>
+#include <D3D12TranslationLayerDependencyIncludes.h>
 #include <D3D12TranslationLayerIncludes.h>
 
 #include <initguid.h>
