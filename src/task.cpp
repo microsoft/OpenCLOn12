@@ -253,6 +253,7 @@ clGetEventProfilingInfo(cl_event            event,
     case CL_PROFILING_COMMAND_END:
     case CL_PROFILING_COMMAND_COMPLETE:
         Time = task.GetTimestamp(param_name);
+        break;
     default:
         return ReportError("Invalid param_name", CL_INVALID_VALUE);
     }
