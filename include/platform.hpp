@@ -16,7 +16,7 @@
 #include <map>
 #include <algorithm>
 #ifndef assert
-#include <assert>
+#include <assert.h>
 #endif
 
 using std::min;
