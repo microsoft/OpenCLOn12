@@ -221,12 +221,12 @@ void Device::InitD3D()
 
     m_Callbacks.m_pfnPostSubmit = []() {};
 
-    ImmCtx::CreationFlags Flags = {};
-    Flags.CreatesAndDestroysAreMultithreaded = true;
-    Flags.RenamingIsMultithreaded = true;
-    Flags.UseResidencyManagement = true;
-    Flags.UseThreadpoolForPSOCreates = true;
-    m_ImmCtx.emplace(0, m_D3D12Options, m_spDevice.Get(), nullptr, m_Callbacks, 0, Flags);
+    ImmCtx::CreationArgs Args = {};
+    Args.CreatesAndDestroysAreMultithreaded = true;
+    Args.RenamingIsMultithreaded = true;
+    Args.UseResidencyManagement = true;
+    Args.UseThreadpoolForPSOCreates = true;
+    m_ImmCtx.emplace(0, m_D3D12Options, m_spDevice.Get(), nullptr, m_Callbacks, 0, Args);
 
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
     m_CallbackScheduler.SetSchedulingMode(mode);
