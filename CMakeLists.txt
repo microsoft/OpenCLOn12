@@ -6,13 +6,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)
 file(GLOB INC include/*.h include/*.hpp)
+file(GLOB EXTERNAL_INC external/*.h external/*.hpp)
 
 configure_file(OpenCL-ICD-Loader/loader/icd_dispatch.h icd_dispatch.h COPYONLY)
 
-add_library(openclon12 SHARED ${SRC} ${INC})
+add_library(openclon12 SHARED ${SRC} ${INC} ${EXTERNAL_INC})
 target_include_directories(openclon12
     PRIVATE include
-    PRIVATE OpenCL-Headers
+    PRIVATE external
+    PUBLIC OpenCL-Headers
     PRIVATE wil/include
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(openclon12 d3d12translationlayer)
+source_group("Header Files\\External" FILES ${EXTERNAL_INC})

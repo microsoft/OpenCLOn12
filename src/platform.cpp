@@ -63,6 +63,16 @@ clGetPlatformInfo(cl_platform_id   platform,
     return CL_SUCCESS;
 }
 
+extern CL_API_ENTRY cl_int CL_API_CALL
+clUnloadPlatformCompiler(cl_platform_id platform) CL_API_SUFFIX__VERSION_1_2
+{
+    if (!platform)
+    {
+        return CL_INVALID_PLATFORM;
+    }
+    static_cast<Platform*>(platform)->UnloadCompiler();
+}
+
 #include "device.hpp"
 Platform::Platform()
 {
@@ -90,4 +100,19 @@ cl_uint Platform::GetNumDevices() const noexcept
 cl_device_id Platform::GetDevice(cl_uint i) const noexcept
 {
     return m_Devices[i].get();
+}
+
+XPlatHelpers::unique_module const& Platform::GetCompiler()
+{
+    if (!m_Compiler)
+    {
+        // TODO: Probably should load from next to this DLL
+        m_Compiler.load("CLGLOn12Compiler.dll");
+    }
+    return m_Compiler;
+}
+
+void Platform::UnloadCompiler()
+{
+    m_Compiler.reset();
 }

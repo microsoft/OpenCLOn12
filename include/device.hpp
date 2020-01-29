@@ -54,6 +54,20 @@ public:
             context.get() });
         context.release();
     }
+    template <typename Fn> void QueueProgramOp(Fn&& fn)
+    {
+        struct Context { Fn m_fn; };
+        std::unique_ptr<Context> context(new Context{ std::forward<Fn>(fn) });
+        m_CompileAndLinkScheduler.QueueTask({
+            [](void* pContext)
+            {
+                std::unique_ptr<Context> context(static_cast<Context*>(pContext));
+                context->m_fn();
+            },
+            [](void* pContext) { delete static_cast<Context*>(pContext); },
+            context.get() });
+        context.release();
+    }
 
 protected:
     void ExecuteTasks(Submission& tasks);
@@ -74,6 +88,7 @@ protected:
 
     BackgroundTaskScheduler::Scheduler m_CallbackScheduler;
     BackgroundTaskScheduler::Scheduler m_CompletionScheduler;
+    BackgroundTaskScheduler::Scheduler m_CompileAndLinkScheduler;
 
     UINT64 m_TimestampFrequency = 0;
 };

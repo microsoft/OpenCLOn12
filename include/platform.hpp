@@ -34,6 +34,7 @@ using Microsoft::WRL::ComPtr;
 
 #define WIL_ENABLE_EXCEPTIONS
 #include <wil/result_macros.h>
+#include "XPlatHelpers.h"
 
 template <typename TClass, typename TCLPtr>
 class CLBase : public std::remove_pointer_t<TCLPtr>
@@ -60,6 +61,8 @@ public:
 
     cl_uint GetNumDevices() const noexcept;
     cl_device_id GetDevice(cl_uint i) const noexcept;
+    XPlatHelpers::unique_module const& GetCompiler();
+    void UnloadCompiler();
 
     class ref_int
     {
@@ -74,6 +77,7 @@ public:
 protected:
     ComPtr<IDXCoreAdapterList> m_spAdapters;
     std::vector<std::unique_ptr<Device>> m_Devices;
+    XPlatHelpers::unique_module m_Compiler;
 };
 extern std::unique_ptr<Platform> g_Platform;
 

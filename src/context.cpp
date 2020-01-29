@@ -50,6 +50,10 @@ clCreateContext(const cl_context_properties * properties,
     {
         return ReportError("num_devices must not be zero.", CL_INVALID_VALUE);
     }
+    if (num_devices > 1)
+    {
+        return ReportError("This platform only supports one device per context.", CL_INVALID_VALUE);
+    }
     if (devices == nullptr)
     {
         return ReportError("devices must not be NULL.", CL_INVALID_VALUE);

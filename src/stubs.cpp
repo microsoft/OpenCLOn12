@@ -139,31 +139,6 @@ clGetSamplerInfo(cl_sampler         sampler,
     return CL_INVALID_PLATFORM;
 }
 
-/* Program Object APIs */
-extern CL_API_ENTRY cl_program CL_API_CALL
-clCreateProgramWithSource(cl_context        context,
-    cl_uint           count,
-    const char **     strings,
-    const size_t *    lengths,
-    cl_int *          errcode_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
-
-extern CL_API_ENTRY cl_program CL_API_CALL
-clCreateProgramWithBinary(cl_context                     context,
-    cl_uint                        num_devices,
-    const cl_device_id *           device_list,
-    const size_t *                 lengths,
-    const unsigned char **         binaries,
-    cl_int *                       binary_status,
-    cl_int *                       errcode_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
-
 #ifdef CL_VERSION_1_2
 
 extern CL_API_ENTRY cl_program CL_API_CALL
@@ -193,65 +168,6 @@ clCreateProgramWithIL(cl_context    context,
 
 #endif
 
-extern CL_API_ENTRY cl_int CL_API_CALL
-clRetainProgram(cl_program program) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clReleaseProgram(cl_program program) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clBuildProgram(cl_program           program,
-    cl_uint              num_devices,
-    const cl_device_id * device_list,
-    const char *         options,
-    void (CL_CALLBACK *  pfn_notify)(cl_program program,
-        void * user_data),
-    void *               user_data) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-#ifdef CL_VERSION_1_2
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clCompileProgram(cl_program           program,
-    cl_uint              num_devices,
-    const cl_device_id * device_list,
-    const char *         options,
-    cl_uint              num_input_headers,
-    const cl_program *   input_headers,
-    const char **        header_include_names,
-    void (CL_CALLBACK *  pfn_notify)(cl_program program,
-        void * user_data),
-    void *               user_data) CL_API_SUFFIX__VERSION_1_2
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_program CL_API_CALL
-clLinkProgram(cl_context           context,
-    cl_uint              num_devices,
-    const cl_device_id * device_list,
-    const char *         options,
-    cl_uint              num_input_programs,
-    const cl_program *   input_programs,
-    void (CL_CALLBACK *  pfn_notify)(cl_program program,
-        void * user_data),
-    void *               user_data,
-    cl_int *             errcode_ret) CL_API_SUFFIX__VERSION_1_2
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
-
-#endif
-
 #ifdef CL_VERSION_2_2
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -273,37 +189,6 @@ clSetProgramSpecializationConstant(cl_program  program,
 }
 
 #endif
-
-#ifdef CL_VERSION_1_2
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clUnloadPlatformCompiler(cl_platform_id platform) CL_API_SUFFIX__VERSION_1_2
-{
-    return CL_INVALID_PLATFORM;
-}
-
-#endif
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clGetProgramInfo(cl_program         program,
-    cl_program_info    param_name,
-    size_t             param_value_size,
-    void *             param_value,
-    size_t *           param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clGetProgramBuildInfo(cl_program            program,
-    cl_device_id          device,
-    cl_program_build_info param_name,
-    size_t                param_value_size,
-    void *                param_value,
-    size_t *              param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
 
 /* Kernel Object APIs */
 extern CL_API_ENTRY cl_kernel CL_API_CALL

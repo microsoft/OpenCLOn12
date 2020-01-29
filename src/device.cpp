@@ -232,6 +232,9 @@ void Device::InitD3D()
     m_CallbackScheduler.SetSchedulingMode(mode);
     m_CompletionScheduler.SetSchedulingMode(mode);
 
+    mode.NumThreads = std::thread::hardware_concurrency();
+    m_CompileAndLinkScheduler.SetSchedulingMode(mode);
+
     (void)m_ImmCtx->GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS)->GetTimestampFrequency(&m_TimestampFrequency);
 
     m_RecordingSubmission.reset(new Submission);

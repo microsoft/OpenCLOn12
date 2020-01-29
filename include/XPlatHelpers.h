@@ -130,7 +130,7 @@ namespace XPlatHelpers
         HMODULE get() const { return _hM; }
         operator bool() const { return _hM != nullptr; }
 
-        void* proc_address(const char* pCStr) { return GetProcAddress(_hM, pCStr); }
-        template <typename T> T proc_address(const char* pCStr) { return reinterpret_cast<T>(proc_address(pCStr)); }
+        void* proc_address(const char* pCStr) const { return GetProcAddress(_hM, pCStr); }
+        template <typename T> T proc_address(const char* pCStr) const { return reinterpret_cast<T>(proc_address(pCStr)); }
     };
 }
