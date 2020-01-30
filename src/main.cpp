@@ -257,3 +257,7 @@ clGetPlatformIDs(cl_uint          num_entries,
     return clIcdGetPlatformIDsKHR(num_entries, platforms, num_platforms);
 }
 
+#ifndef HAS_TELASSERT
+void __stdcall MicrosoftTelemetryAssertTriggeredNoArgs() { }
+#endif
+

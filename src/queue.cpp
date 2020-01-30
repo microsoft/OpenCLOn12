@@ -170,6 +170,39 @@ clCreateCommandQueue(cl_context                     context,
     return clCreateCommandQueueWithProperties(context, device, PropArray, errcode_ret);
 }
 
+extern CL_API_ENTRY cl_int CL_API_CALL
+clFlush(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto ReportError = queue.GetContext().GetErrorReporter();
+    try
+    {
+        queue.Flush(queue.GetDevice().GetTaskPoolLock());
+        return CL_SUCCESS;
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clFinish(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
+{
+    cl_event e = nullptr;
+    cl_int status = clEnqueueMarker(command_queue, &e);
+    if (status != CL_SUCCESS)
+    {
+        return status;
+    }
+    status = clWaitForEvents(1, &e);
+    clReleaseEvent(e);
+    return status;
+}
+
 static bool IsOutOfOrder(const cl_queue_properties* properties)
 {
     auto prop = FindProperty<cl_queue_properties>(properties, CL_QUEUE_PROPERTIES);

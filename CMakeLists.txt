@@ -4,7 +4,7 @@ project(openclon12)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp)
+file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp src/*.def)
 file(GLOB INC include/*.h include/*.hpp)
 file(GLOB EXTERNAL_INC external/*.h external/*.hpp)
 
@@ -17,5 +17,5 @@ target_include_directories(openclon12
     PUBLIC OpenCL-Headers
     PRIVATE wil/include
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(openclon12 d3d12translationlayer)
+target_link_libraries(openclon12 d3d12translationlayerinternal)
 source_group("Header Files\\External" FILES ${EXTERNAL_INC})

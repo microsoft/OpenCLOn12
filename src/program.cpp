@@ -1,6 +1,16 @@
 #pragma once
 #include "program.hpp"
 #include "clc_compiler.h"
+#include "kernel.hpp"
+
+#include "BlobContainer.h"
+// TODO: Shell out to DXIL.dll
+extern void ComputeHashRetail(const BYTE* pData, UINT32 byteCount, BYTE* pOutHash);
+void SignBlob(void* pBlob)
+{
+    auto pHeader = reinterpret_cast<DXBCHeader*>(pBlob);
+    ComputeHashRetail(&reinterpret_cast<BYTE*>(pBlob)[DXBCHashStartOffset], pHeader->ContainerSizeInBytes - DXBCHashStartOffset, pHeader->Hash.Digest);
+}
 
 extern CL_API_ENTRY cl_program CL_API_CALL
 clCreateProgramWithSource(cl_context        context_,
@@ -317,8 +327,7 @@ clGetProgramInfo(cl_program         program_,
             char* pOut = reinterpret_cast<char*>(param_value);
             for (size_t i = 0; i < program.m_KernelNames.size(); ++i)
             {
-                strcpy(pOut, program.m_KernelNames[i].c_str());
-                pOut = pOut + program.m_KernelNames[i].size();
+                pOut = std::copy(program.m_KernelNames[i].begin(), program.m_KernelNames[i].end(), pOut);
                 *(pOut++) = ';';
             }
             *(--pOut) = '\0';
@@ -415,7 +424,7 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
 
         // Update build status to indicate build is starting so nobody else can start a build
         m_BuildStatus = CL_BUILD_IN_PROGRESS;
-        m_LastBuildOptions = options;
+        m_LastBuildOptions = options ? options : "";
     }
 
     if (pfn_notify)
@@ -481,7 +490,7 @@ cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl
 
         // Update build status to indicate compile is starting so nobody else can start a build
         m_BuildStatus = CL_BUILD_IN_PROGRESS;
-        m_LastBuildOptions = options;
+        m_LastBuildOptions = options ? options : "";
     }
 
     if (pfn_notify)
@@ -546,7 +555,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     // Note: Don't need to take our own lock, since no other thread can have access to this object
     // Update build status to indicate compile is starting so nobody else can start a build
     m_BuildStatus = CL_BUILD_IN_PROGRESS;
-    m_LastBuildOptions = options;
+    m_LastBuildOptions = options ? options : "";
 
     if (pfn_notify)
     {
@@ -692,6 +701,7 @@ void Program::BuildImpl(BuildArgs const& Args)
         void* blob = nullptr;
         size_t blobSize = 0;
         int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), nullptr, 0, nullptr, nullptr, nullptr, &blob, &blobSize);
+        if (blob) SignBlob(blob);
 
         std::lock_guard Lock(m_Lock);
         if (result == 0)
@@ -732,6 +742,7 @@ void Program::CompileImpl(CompileArgs const& Args)
     void* blob = nullptr;
     size_t blobSize = 0;
     int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), headers.data(), headers.size(), nullptr, nullptr, nullptr, &blob, &blobSize);
+    if (blob) SignBlob(blob);
 
     {
         std::lock_guard Lock(m_Lock);

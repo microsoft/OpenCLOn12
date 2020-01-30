@@ -190,25 +190,6 @@ clSetProgramSpecializationConstant(cl_program  program,
 
 #endif
 
-/* Kernel Object APIs */
-extern CL_API_ENTRY cl_kernel CL_API_CALL
-clCreateKernel(cl_program      program,
-    const char *    kernel_name,
-    cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clCreateKernelsInProgram(cl_program     program,
-    cl_uint        num_kernels,
-    cl_kernel *    kernels,
-    cl_uint *      num_kernels_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
 #ifdef CL_VERSION_2_1
 
 extern CL_API_ENTRY cl_kernel CL_API_CALL
@@ -220,27 +201,6 @@ clCloneKernel(cl_kernel     source_kernel,
 }
 
 #endif
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clRetainKernel(cl_kernel    kernel) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clReleaseKernel(cl_kernel   kernel) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clSetKernelArg(cl_kernel    kernel,
-    cl_uint      arg_index,
-    size_t       arg_size,
-    const void * arg_value) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
 
 #ifdef CL_VERSION_2_0
 
@@ -316,19 +276,6 @@ clGetKernelSubGroupInfo(cl_kernel                   kernel,
 
 #endif
 
-/* Flush and Finish APIs */
-extern CL_API_ENTRY cl_int CL_API_CALL
-clFlush(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clFinish(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
 #ifdef CL_VERSION_1_2
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -350,20 +297,6 @@ clSetMemObjectDestructorCallback(cl_mem memobj,
     void (CL_CALLBACK * pfn_notify)(cl_mem memobj,
         void * user_data),
     void * user_data) CL_API_SUFFIX__VERSION_1_1
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clEnqueueNDRangeKernel(cl_command_queue command_queue,
-    cl_kernel        kernel,
-    cl_uint          work_dim,
-    const size_t *   global_work_offset,
-    const size_t *   global_work_size,
-    const size_t *   local_work_size,
-    cl_uint          num_events_in_wait_list,
-    const cl_event * event_wait_list,
-    cl_event *       event) CL_API_SUFFIX__VERSION_1_0
 {
     return CL_INVALID_PLATFORM;
 }
@@ -488,26 +421,6 @@ clGetExtensionFunctionAddressForPlatform(cl_platform_id platform,
 #endif
 
 /* Deprecated OpenCL 1.1 APIs */
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
-clEnqueueMarker(cl_command_queue    command_queue,
-    cl_event *          event) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
-clEnqueueWaitForEvents(cl_command_queue  command_queue,
-    cl_uint          num_events,
-    const cl_event * event_list) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
-clEnqueueBarrier(cl_command_queue command_queue) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
-{
-    return CL_INVALID_PLATFORM;
-}
 
 extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
 clUnloadCompiler(void) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
@@ -525,14 +438,4 @@ clCreateSampler(cl_context          context,
 {
     *errcode_ret = CL_INVALID_PLATFORM;
     return nullptr;
-}
-
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_2_DEPRECATED cl_int CL_API_CALL
-clEnqueueTask(cl_command_queue  command_queue,
-    cl_kernel         kernel,
-    cl_uint           num_events_in_wait_list,
-    const cl_event *  event_wait_list,
-    cl_event *        event) CL_EXT_SUFFIX__VERSION_1_2_DEPRECATED
-{
-    return CL_INVALID_PLATFORM;
 }

@@ -903,8 +903,265 @@ clEnqueueFillImage(cl_command_queue   command_queue,
     return CL_SUCCESS;
 }
 
+class MemReadTask : public Task
+{
+public:
+    struct Args
+    {
+        cl_uint SrcX;
+        cl_uint SrcY;
+        cl_uint SrcZ;
+        cl_uint Width;
+        cl_uint Height;
+        cl_uint Depth;
+        cl_ushort FirstArraySlice;
+        cl_ushort NumArraySlices;
+        cl_uint DstX;
+        cl_uint DstY;
+        cl_uint DstZ;
+        cl_uint SrcBufferRowPitch;
+        cl_uint SrcBufferSlicePitch;
+        void* pData;
+        cl_uint DstRowPitch;
+        cl_uint DstSlicePitch;
+    };
+    MemReadTask(Context& Parent, Resource& Source, cl_command_type CommandType,
+        cl_command_queue CommandQueue, Args const& args)
+        : Task(Parent, CommandType, CommandQueue)
+        , m_Source(&Source)
+        , m_Args(args)
+    {
+    }
 
-#pragma warning(disable: 4100)
+private:
+    Resource::ref_ptr_int m_Source;
+    const Args m_Args;
+
+    void RecordImpl() final;
+    void OnComplete() final
+    {
+        m_Source.Release();
+    }
+};
+
+void MemReadTask::RecordImpl()
+{
+    auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+    for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
+    {
+        D3D12TranslationLayer::MappedSubresource MapRet;
+        D3D12_BOX SrcBox =
+        {
+            m_Args.SrcX, m_Args.SrcY, m_Args.SrcZ,
+            m_Args.SrcX + m_Args.Width,
+            m_Args.SrcY + m_Args.Height,
+            m_Args.SrcZ + m_Args.Depth
+        };
+
+        // Unlike for writing, we don't need to be super picky about what
+        // we read - we can ask the GPU to read data that we're not going to write
+        // out into the user buffer
+        if (m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+        {
+            SrcBox = {};
+            SrcBox.left = (UINT)(m_Source->m_Offset + // Buffer suballocation offset
+                m_Args.SrcX); // Offset within row
+            SrcBox.right = SrcBox.left + m_Args.Width +
+                ((m_Args.Height - 1) * m_Args.SrcBufferRowPitch) +
+                ((m_Args.Depth - 1) * m_Args.SrcBufferSlicePitch);
+        }
+        ImmCtx.Map(m_Source->GetUnderlyingResource(), i,
+            D3D12TranslationLayer::MAP_TYPE_READ, false,
+            nullptr, &MapRet);
+
+        if (m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+        {
+            assert(i == 0);
+            for (cl_uint z = 0; z < m_Args.Depth; ++z)
+            {
+                for (cl_uint y = 0; y < m_Args.Height; ++y)
+                {
+                    char* pDest = reinterpret_cast<char*>(m_Args.pData) +
+                        (z + m_Args.DstZ) * m_Args.DstSlicePitch +
+                        (y + m_Args.DstY) * m_Args.DstRowPitch +
+                        m_Args.DstX;
+                    const char* pSrc = reinterpret_cast<const char*>(MapRet.pData) +
+                        (z + m_Args.SrcZ) * m_Args.SrcBufferSlicePitch +
+                        (y + m_Args.SrcY) * m_Args.SrcBufferRowPitch +
+                        m_Args.SrcX;
+                    memcpy(pDest, pSrc, m_Args.Width);
+                }
+            }
+        }
+        else
+        {
+            assert(m_Args.DstZ == 0 && m_Args.DstY == 0 && m_Args.DstX == 0);
+            char* pDest = reinterpret_cast<char*>(m_Args.pData) +
+                i * m_Args.Depth * m_Args.DstSlicePitch;
+            D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
+            D3D12_SUBRESOURCE_DATA Src = { MapRet.pData, MapRet.RowPitch, MapRet.DepthPitch };
+            MemcpySubresource(&Dest, &Src, MapRet.RowPitch, m_Args.Height, m_Args.Depth);
+        }
+    }
+    
+}
+
+cl_int clEnqueueReadBufferRectImpl(cl_command_queue    command_queue,
+    cl_mem              buffer,
+    cl_bool             blocking_read,
+    const size_t* buffer_offset,
+    const size_t* host_offset,
+    const size_t* region,
+    size_t              buffer_row_pitch,
+    size_t              buffer_slice_pitch,
+    size_t              host_row_pitch,
+    size_t              host_slice_pitch,
+    void* ptr,
+    cl_uint             num_events_in_wait_list,
+    const cl_event* event_wait_list,
+    cl_event* event,
+    cl_command_type command_type)
+{
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    if (!buffer)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+    CommandQueue& queue = *static_cast<CommandQueue*>(command_queue);
+    Resource& resource = *static_cast<Resource*>(buffer);
+    Context& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (&context != &resource.m_Parent.get())
+    {
+        return ReportError("Context mismatch between command queue and buffer.", CL_INVALID_CONTEXT);
+    }
+
+    if (resource.m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("buffer must be a buffer object.", CL_INVALID_MEM_OBJECT);
+    }
+
+    if (buffer_offset[0] > resource.m_Desc.image_width ||
+        region[0] > resource.m_Desc.image_width ||
+        buffer_offset[0] + region[0] > resource.m_Desc.image_width)
+    {
+        return ReportError("Offsets/regions too large.", CL_INVALID_VALUE);
+    }
+
+    if (buffer_row_pitch == 0)
+    {
+        buffer_row_pitch = region[0];
+    }
+    else if (buffer_row_pitch > resource.m_Desc.image_width ||
+        buffer_row_pitch < region[0])
+    {
+        return ReportError("buffer_row_pitch must be 0 or between region[0] and the buffer size.", CL_INVALID_VALUE);
+    }
+
+    if (host_row_pitch == 0)
+    {
+        host_row_pitch = region[0];
+    }
+    else if (host_row_pitch > resource.m_Desc.image_width ||
+        host_row_pitch < region[0])
+    {
+        return ReportError("host_row_pitch must be 0 or between region[0] and the buffer size.", CL_INVALID_VALUE);
+    }
+
+    size_t SliceSizeInBytes = (buffer_offset[1] + region[1] - 1) * buffer_row_pitch + buffer_offset[0] + region[0];
+    if (SliceSizeInBytes > resource.m_Desc.image_width)
+    {
+        return ReportError("Offsets/regions too large.", CL_INVALID_VALUE);
+    }
+
+    size_t ReqBufferSlicePitch = buffer_row_pitch * region[1];
+    size_t ReqHostSlicePitch = host_row_pitch * region[1];
+    if (buffer_slice_pitch == 0)
+    {
+        buffer_slice_pitch = ReqBufferSlicePitch;
+    }
+    else if (buffer_slice_pitch > resource.m_Desc.image_width ||
+        buffer_slice_pitch < ReqBufferSlicePitch)
+    {
+        return ReportError("buffer_slice_pitch must be 0 or between (region[0] * buffer_row_pitch) and the buffer size.", CL_INVALID_VALUE);
+    }
+
+    if (host_slice_pitch == 0)
+    {
+        host_slice_pitch = ReqHostSlicePitch;
+    }
+    else if (host_slice_pitch > resource.m_Desc.image_width ||
+        host_slice_pitch < ReqHostSlicePitch)
+    {
+        return ReportError("host_slice_pitch must be 0 or between (region[0] * buffer_row_pitch) and the buffer size.", CL_INVALID_VALUE);
+    }
+
+    size_t ResourceSizeInBytes = (buffer_offset[2] + region[2] - 1) * buffer_slice_pitch + SliceSizeInBytes;
+    if (ResourceSizeInBytes > resource.m_Desc.image_width)
+    {
+        return ReportError("Offsets/regions too large.", CL_INVALID_VALUE);
+    }
+
+    if (resource.m_Flags & (CL_MEM_HOST_WRITE_ONLY | CL_MEM_HOST_NO_ACCESS))
+    {
+        return ReportError("Buffer is not readable from the host.", CL_INVALID_OPERATION);
+    }
+
+    if (!ptr)
+    {
+        return ReportError("ptr must not be null.", CL_INVALID_VALUE);
+    }
+
+    MemReadTask::Args CmdArgs = {};
+    CmdArgs.DstX = (cl_uint)buffer_offset[0];
+    CmdArgs.DstY = (cl_uint)buffer_offset[1];
+    CmdArgs.DstZ = (cl_uint)buffer_offset[2];
+    CmdArgs.Width = (cl_uint)region[0];
+    CmdArgs.Height = (cl_uint)region[1];
+    CmdArgs.Depth = (cl_uint)region[2];
+    CmdArgs.SrcX = (cl_uint)host_offset[0];
+    CmdArgs.SrcY = (cl_uint)host_offset[1];
+    CmdArgs.SrcZ = (cl_uint)host_offset[2];
+    CmdArgs.NumArraySlices = 1;
+    CmdArgs.SrcBufferRowPitch = (cl_uint)buffer_row_pitch;
+    CmdArgs.SrcBufferSlicePitch = (cl_uint)buffer_slice_pitch;
+    CmdArgs.pData = ptr;
+    CmdArgs.DstRowPitch = (cl_uint)host_row_pitch;
+    CmdArgs.DstSlicePitch = (cl_uint)host_slice_pitch;
+
+    cl_int ret = CL_SUCCESS;
+    try
+    {
+        std::unique_ptr<Task> task(new MemReadTask(context, resource, command_type, command_queue, CmdArgs));
+        {
+            auto Lock = context.GetDevice().GetTaskPoolLock();
+            task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+            queue.QueueTask(task.get(), Lock);
+            if (blocking_read)
+            {
+                queue.Flush(Lock);
+            }
+        }
+
+        if (blocking_read)
+        {
+            ret = task->WaitForCompletion();
+        }
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return ret;
+}
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueReadBuffer(cl_command_queue    command_queue,
@@ -917,7 +1174,25 @@ clEnqueueReadBuffer(cl_command_queue    command_queue,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_0
 {
-    return CL_INVALID_PLATFORM;
+    size_t buffer_offset[3] = { offset, 0, 0 };
+    size_t host_offset[3] = { 0, 0, 0 };
+    size_t region[3] = { size, 1, 1 };
+    return clEnqueueReadBufferRectImpl(
+        command_queue,
+        buffer,
+        blocking_read,
+        buffer_offset,
+        host_offset,
+        region,
+        0,
+        0,
+        0,
+        0,
+        ptr,
+        num_events_in_wait_list,
+        event_wait_list,
+        event,
+        CL_COMMAND_READ_BUFFER);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -936,8 +1211,208 @@ clEnqueueReadBufferRect(cl_command_queue    command_queue,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_1
 {
-    return CL_INVALID_PLATFORM;
+    return clEnqueueReadBufferRectImpl(
+        command_queue,
+        buffer,
+        blocking_read,
+        buffer_offset,
+        host_offset,
+        region,
+        buffer_row_pitch,
+        buffer_slice_pitch,
+        host_row_pitch,
+        host_slice_pitch,
+        ptr,
+        num_events_in_wait_list,
+        event_wait_list,
+        event,
+        CL_COMMAND_READ_BUFFER_RECT);
 }
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clEnqueueReadImage(cl_command_queue     command_queue,
+    cl_mem               image,
+    cl_bool              blocking_read,
+    const size_t* origin,
+    const size_t* region,
+    size_t               row_pitch,
+    size_t               slice_pitch,
+    void* ptr,
+    cl_uint              num_events_in_wait_list,
+    const cl_event* event_wait_list,
+    cl_event* event) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    if (!image)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+    CommandQueue& queue = *static_cast<CommandQueue*>(command_queue);
+    Resource& resource = *static_cast<Resource*>(image);
+    Context& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (&context != &resource.m_Parent.get())
+    {
+        return ReportError("Context mismatch between command queue and buffer.", CL_INVALID_CONTEXT);
+    }
+
+    if (origin[0] > resource.m_Desc.image_width ||
+        region[0] > resource.m_Desc.image_width ||
+        origin[0] + region[0] > resource.m_Desc.image_width)
+    {
+        return ReportError("origin/region is too large.", CL_INVALID_VALUE);
+    }
+
+    size_t ReqRowPitch = CD3D11FormatHelper::GetByteAlignment(GetDXGIFormatForCLImageFormat(resource.m_Format)) * resource.m_Desc.image_width;
+    if (row_pitch == 0)
+    {
+        row_pitch = ReqRowPitch;
+    }
+    else if (row_pitch < ReqRowPitch)
+    {
+        return ReportError("row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
+    }
+
+    size_t ReqSlicePitch = row_pitch * max<size_t>(resource.m_Desc.image_height, 1);
+    if (slice_pitch == 0)
+    {
+        slice_pitch = ReqSlicePitch;
+    }
+    else if (slice_pitch < ReqSlicePitch)
+    {
+        return ReportError("slice_pitch must be 0 or at least input_row_pitch * image_height.", CL_INVALID_VALUE);
+    }
+
+    if (resource.m_Flags & (CL_MEM_HOST_WRITE_ONLY | CL_MEM_HOST_NO_ACCESS))
+    {
+        return ReportError("Image is not readable from the host.", CL_INVALID_OPERATION);
+    }
+
+    if (!ptr)
+    {
+        return ReportError("ptr must not be null.", CL_INVALID_VALUE);
+    }
+
+    MemReadTask::Args CmdArgs = {};
+    CmdArgs.SrcX = (cl_uint)origin[0];
+    CmdArgs.Width = (cl_uint)region[0];
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
+    CmdArgs.NumArraySlices = 1;
+    CmdArgs.pData = ptr;
+    CmdArgs.DstRowPitch = (cl_uint)row_pitch;
+    CmdArgs.DstSlicePitch = (cl_uint)slice_pitch;
+
+    switch (resource.m_Desc.image_type)
+    {
+    default:
+    case CL_MEM_OBJECT_BUFFER:
+        return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
+
+    case CL_MEM_OBJECT_IMAGE1D:
+    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
+        if (origin[1] != 0 || origin[2] != 0 ||
+            region[1] != 0 || region[2] != 0)
+        {
+            return ReportError("For 1D images, origin/region dimensions beyond the first must be 0.", CL_INVALID_VALUE);
+        }
+        break;
+
+    case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+        if (origin[1] > resource.m_Desc.image_array_size ||
+            region[1] > resource.m_Desc.image_array_size ||
+            origin[1] + region[1] > resource.m_Desc.image_array_size)
+        {
+            return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
+        }
+        CmdArgs.FirstArraySlice = (cl_ushort)origin[1];
+        CmdArgs.NumArraySlices = (cl_ushort)region[1];
+
+        if (origin[2] != 0 || region[2] != 0)
+        {
+            return ReportError("For 1D image arrays, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
+        }
+        break;
+
+    case CL_MEM_OBJECT_IMAGE2D:
+    case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+    case CL_MEM_OBJECT_IMAGE3D:
+        if (origin[1] > resource.m_Desc.image_height ||
+            region[1] > resource.m_Desc.image_height ||
+            origin[1] + region[1] > resource.m_Desc.image_height)
+        {
+            return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
+        }
+        CmdArgs.SrcY = (cl_uint)origin[1];
+        CmdArgs.Height = (cl_uint)region[1];
+
+        switch (resource.m_Desc.image_type)
+        {
+        case CL_MEM_OBJECT_IMAGE2D:
+            if (origin[2] != 0 || region[2] != 0)
+            {
+                return ReportError("For 2D images, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
+            }
+            break;
+        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+            if (origin[2] > resource.m_Desc.image_array_size ||
+                region[2] > resource.m_Desc.image_array_size ||
+                origin[2] + region[2] > resource.m_Desc.image_array_size)
+            {
+                return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
+            }
+            CmdArgs.FirstArraySlice = (cl_ushort)origin[2];
+            CmdArgs.NumArraySlices = (cl_ushort)region[2];
+            break;
+        case CL_MEM_OBJECT_IMAGE3D:
+            if (origin[2] > resource.m_Desc.image_depth ||
+                region[2] > resource.m_Desc.image_depth ||
+                origin[2] + region[2] > resource.m_Desc.image_depth)
+            {
+                return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
+            }
+            CmdArgs.SrcZ = (cl_uint)origin[2];
+            CmdArgs.Depth = (cl_uint)region[2];
+            break;
+        }
+        break;
+    }
+
+    cl_int ret = CL_SUCCESS;
+    try
+    {
+        std::unique_ptr<Task> task(new MemReadTask(context, resource, CL_COMMAND_READ_IMAGE, command_queue, CmdArgs));
+        {
+            auto Lock = context.GetDevice().GetTaskPoolLock();
+            task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+            queue.QueueTask(task.get(), Lock);
+            if (blocking_read)
+            {
+                queue.Flush(Lock);
+            }
+        }
+
+        if (blocking_read)
+        {
+            ret = task->WaitForCompletion();
+        }
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return ret;
+}
+
+#pragma warning(disable: 4100)
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyBuffer(cl_command_queue    command_queue,
@@ -967,22 +1442,6 @@ clEnqueueCopyBufferRect(cl_command_queue    command_queue,
     cl_uint             num_events_in_wait_list,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_1
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clEnqueueReadImage(cl_command_queue     command_queue,
-    cl_mem               image,
-    cl_bool              blocking_read,
-    const size_t* origin,
-    const size_t* region,
-    size_t               row_pitch,
-    size_t               slice_pitch,
-    void* ptr,
-    cl_uint              num_events_in_wait_list,
-    const cl_event* event_wait_list,
-    cl_event* event) CL_API_SUFFIX__VERSION_1_0
 {
     return CL_INVALID_PLATFORM;
 }

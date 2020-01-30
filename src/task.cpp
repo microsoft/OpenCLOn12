@@ -309,6 +309,13 @@ clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
     return CL_SUCCESS;
 }
 
+extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+clEnqueueMarker(cl_command_queue    command_queue,
+    cl_event* event) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clEnqueueMarkerWithWaitList(command_queue, 0, nullptr, event);
+}
+
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueBarrierWithWaitList(cl_command_queue  command_queue,
     cl_uint           num_events_in_wait_list,
@@ -357,6 +364,20 @@ clEnqueueBarrierWithWaitList(cl_command_queue  command_queue,
     return CL_SUCCESS;
 }
 
+extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+clEnqueueWaitForEvents(cl_command_queue  command_queue,
+    cl_uint          num_events,
+    const cl_event* event_list) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clEnqueueBarrierWithWaitList(command_queue, num_events, event_list, nullptr);
+}
+
+extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+clEnqueueBarrier(cl_command_queue command_queue) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clEnqueueBarrierWithWaitList(command_queue, 0, nullptr, nullptr);
+}
+
 void Task::Record()
 {
     auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
@@ -368,9 +389,11 @@ void Task::Record()
             m_StartTimestamp.reset(new D3D12TranslationLayer::Query(
                 &ImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
             ));
+            m_StartTimestamp->Initialize();
             m_StopTimestamp.reset(new D3D12TranslationLayer::Query(
                 &ImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
             ));
+            m_StopTimestamp->Initialize();
         }
         catch(...) { /* Do nothing, just don't capture timestamps */ }
     }

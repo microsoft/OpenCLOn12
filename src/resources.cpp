@@ -32,9 +32,11 @@ void ModifyResourceArgsForMemFlags(D3D12TranslationLayer::ResourceCreationArgs& 
         {
         case (CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY):
             usage = D3D12TranslationLayer::RESOURCE_USAGE_STAGING;
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ;
             break;
         default:
             usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
             break;
         }
         Args.m_heapDesc.Properties.Type =
@@ -45,6 +47,7 @@ void ModifyResourceArgsForMemFlags(D3D12TranslationLayer::ResourceCreationArgs& 
         if ((flags & CL_MEM_HOST_NO_ACCESS) == 0)
         {
             Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
         }
         Args.m_heapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
     }
@@ -53,7 +56,7 @@ void ModifyResourceArgsForMemFlags(D3D12TranslationLayer::ResourceCreationArgs& 
 template <typename TErrFunc>
 bool ValidateMemFlagsBase(cl_mem_flags flags, TErrFunc&& ReportError)
 {
-    if (flags & ValidMemFlags)
+    if (flags & ~ValidMemFlags)
     {
         ReportError("Unknown flags specified.", CL_INVALID_VALUE);
         return false;
@@ -750,6 +753,32 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
     , m_Underlying(std::move(Underlying))
     , m_Desc(GetBufferDesc(size, CL_MEM_OBJECT_BUFFER))
 {
+    if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
+    {
+        D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
+        auto& UAVDesc = UAVDescWrapper.m_Desc12;
+        UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        UAVDesc.Buffer.CounterOffsetInBytes = 0;
+        UAVDesc.Buffer.StructureByteStride = 0;
+        UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+        UAVDesc.Buffer.NumElements = (UINT)(size / 4);
+        UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
+        m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
+    }
+    if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+        SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        SRVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        SRVDesc.Buffer.StructureByteStride = 0;
+        SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+        SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+        SRVDesc.Buffer.NumElements = (UINT)(size / 4);
+        m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
+    }
 }
 
 Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags)
@@ -789,6 +818,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
             SRVDesc.Format = DXGIFormat;
+            SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             SRVDesc.Buffer.StructureByteStride = 0;
             SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
             SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;

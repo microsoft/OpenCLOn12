@@ -15,7 +15,7 @@ struct TaskPoolLock
 
 class Task;
 
-using Submission = std::vector<Task*>;
+using Submission = std::vector<::ref_ptr_int<Task>>;
 
 class Device : public CLChildBase<Device, Platform, cl_device_id>
 {

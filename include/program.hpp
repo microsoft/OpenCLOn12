@@ -3,6 +3,7 @@
 #include "context.hpp"
 #undef GetBinaryType
 
+class Kernel;
 class Program : public CLChildBase<Program, Context, cl_program>
 {
 public:
@@ -22,8 +23,8 @@ public:
 
     friend cl_int CL_API_CALL clGetProgramInfo(cl_program, cl_program_info, size_t, void*, size_t*);
     friend cl_int CL_API_CALL clGetProgramBuildInfo(cl_program, cl_device_id, cl_program_build_info, size_t, void*, size_t*);
-
-    struct { const void* pBlob; size_t Size; } GetBinary() const { return { m_Binary.get(), m_BinarySize }; }
+    friend cl_kernel CL_API_CALL clCreateKernel(cl_program, const char*, cl_int*);
+    friend cl_int CL_API_CALL clCreateKernelsInProgram(cl_program, cl_uint, cl_kernel*, cl_uint*);
 
 private:
     std::recursive_mutex m_Lock;
@@ -37,7 +38,7 @@ private:
     // For reflection only
     std::string m_LastBuildOptions;
 
-    std::vector<std::string> m_KernelNames;
+    std::vector<std::string> m_KernelNames = { "main_test" };
 
     struct CommonOptions
     {

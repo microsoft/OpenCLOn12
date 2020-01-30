@@ -133,7 +133,7 @@ protected:
 
     // State changes can only be made while holding the task pool lock
     State m_State = State::Queued;
-    cl_ulong m_ProfilingTimestamps[4];
+    cl_ulong m_ProfilingTimestamps[4] = {};
 
     std::vector<ref_ptr> m_TasksToWaitOn;
     std::vector<ref_ptr_int> m_TasksWaitingOnThis;

@@ -71,6 +71,7 @@ clUnloadPlatformCompiler(cl_platform_id platform) CL_API_SUFFIX__VERSION_1_2
         return CL_INVALID_PLATFORM;
     }
     static_cast<Platform*>(platform)->UnloadCompiler();
+    return CL_SUCCESS;
 }
 
 #include "device.hpp"
