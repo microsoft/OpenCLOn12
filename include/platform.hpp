@@ -56,7 +56,7 @@ public:
     static constexpr char* Extensions = "cl_khr_icd";
     static constexpr char* ICDSuffix = "oclon12";
 
-    Platform();
+    Platform(KHRicdVendorDispatchRec* dispatch);
     ~Platform();
 
     cl_uint GetNumDevices() const noexcept;

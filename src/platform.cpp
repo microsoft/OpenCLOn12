@@ -75,8 +75,10 @@ clUnloadPlatformCompiler(cl_platform_id platform) CL_API_SUFFIX__VERSION_1_2
 }
 
 #include "device.hpp"
-Platform::Platform()
+Platform::Platform(KHRicdVendorDispatchRec* dispatch)
 {
+    this->dispatch = dispatch;
+
     ComPtr<IDXCoreAdapterFactory> spFactory;
     THROW_IF_FAILED(DXCoreCreateAdapterFactory(IID_PPV_ARGS(&spFactory)));
 

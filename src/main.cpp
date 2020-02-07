@@ -222,8 +222,7 @@ clIcdGetPlatformIDsKHR(cl_uint           num_entries,
     {
         try
         {
-            g_Platform = std::make_unique<Platform>();
-            g_Platform->dispatch = &g_DispatchTable;
+            g_Platform = std::make_unique<Platform>(&g_DispatchTable);
         }
         catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
         catch (std::exception&) { return CL_OUT_OF_RESOURCES; }
