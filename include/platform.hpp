@@ -62,6 +62,7 @@ public:
     cl_uint GetNumDevices() const noexcept;
     cl_device_id GetDevice(cl_uint i) const noexcept;
     XPlatHelpers::unique_module const& GetCompiler();
+    XPlatHelpers::unique_module const& GetDXIL();
     void UnloadCompiler();
 
     class ref_int
@@ -77,7 +78,9 @@ public:
 protected:
     ComPtr<IDXCoreAdapterList> m_spAdapters;
     std::vector<std::unique_ptr<Device>> m_Devices;
-    XPlatHelpers::unique_module m_Compiler;
+
+    std::mutex m_ModuleLock;
+    XPlatHelpers::unique_module m_Compiler, m_DXIL;
 };
 extern std::unique_ptr<Platform> g_Platform;
 

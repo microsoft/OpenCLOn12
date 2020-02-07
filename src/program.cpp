@@ -2,14 +2,29 @@
 #include "program.hpp"
 #include "clc_compiler.h"
 #include "kernel.hpp"
+#include "dxcapi.h"
 
-#include "BlobContainer.h"
-// TODO: Shell out to DXIL.dll
-extern void ComputeHashRetail(const BYTE* pData, UINT32 byteCount, BYTE* pOutHash);
-void SignBlob(void* pBlob)
+void SignBlob(void* pBlob, size_t size)
 {
-    auto pHeader = reinterpret_cast<DXBCHeader*>(pBlob);
-    ComputeHashRetail(&reinterpret_cast<BYTE*>(pBlob)[DXBCHashStartOffset], pHeader->ContainerSizeInBytes - DXBCHashStartOffset, pHeader->Hash.Digest);
+    auto& DXIL = g_Platform->GetDXIL();
+    auto pfnCreateInstance = DXIL.proc_address<decltype(&DxcCreateInstance)>("DxcCreateInstance");
+    ComPtr<IDxcValidator> spValidator;
+    if (SUCCEEDED(pfnCreateInstance(CLSID_DxcValidator, IID_PPV_ARGS(&spValidator))))
+    {
+        struct Blob : IDxcBlob
+        {
+            void* pBlob;
+            UINT Size;
+            Blob(void* p, UINT s) : pBlob(p), Size(s) { }
+            STDMETHOD(QueryInterface)(REFIID, void** ppv) { *ppv = this; return S_OK; }
+            STDMETHOD_(ULONG, AddRef)() { return 1; }
+            STDMETHOD_(ULONG, Release)() { return 0; }
+            STDMETHOD_(void*, GetBufferPointer)() override { return pBlob; }
+            STDMETHOD_(SIZE_T, GetBufferSize)() override { return Size; }
+        } Blob = { pBlob, (UINT)size };
+        ComPtr<IDxcOperationResult> spResult;
+        (void)spValidator->Validate(&Blob, DxcValidatorFlags_InPlaceEdit, &spResult);
+    }
 }
 
 extern CL_API_ENTRY cl_program CL_API_CALL
@@ -701,7 +716,7 @@ void Program::BuildImpl(BuildArgs const& Args)
         void* blob = nullptr;
         size_t blobSize = 0;
         int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), nullptr, 0, nullptr, nullptr, nullptr, &blob, &blobSize);
-        if (blob) SignBlob(blob);
+        if (blob) SignBlob(blob, blobSize);
 
         std::lock_guard Lock(m_Lock);
         if (result == 0)
@@ -742,7 +757,7 @@ void Program::CompileImpl(CompileArgs const& Args)
     void* blob = nullptr;
     size_t blobSize = 0;
     int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), headers.data(), headers.size(), nullptr, nullptr, nullptr, &blob, &blobSize);
-    if (blob) SignBlob(blob);
+    if (blob) SignBlob(blob, blobSize);
 
     {
         std::lock_guard Lock(m_Lock);

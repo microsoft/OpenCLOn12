@@ -103,17 +103,67 @@ cl_device_id Platform::GetDevice(cl_uint i) const noexcept
     return m_Devices[i].get();
 }
 
+#ifdef _WIN32
+extern "C" extern IMAGE_DOS_HEADER __ImageBase;
+#endif
+
+void LoadFromNextToSelf(XPlatHelpers::unique_module& mod, const char* name)
+{
+#ifdef _WIN32
+    char selfPath[MAX_PATH] = "";
+    if (auto pathSize = GetModuleFileNameA((HINSTANCE)&__ImageBase, selfPath, sizeof(selfPath));
+        pathSize == 0 || pathSize == sizeof(selfPath))
+    {
+        return;
+    }
+
+    auto lastSlash = strrchr(selfPath, '\\');
+    if (!lastSlash)
+    {
+        return;
+    }
+
+    *(lastSlash + 1) = '\0';
+    if (strcat_s(selfPath, name) != 0)
+    {
+        return;
+    }
+
+    mod.load(selfPath);
+#endif
+}
+
 XPlatHelpers::unique_module const& Platform::GetCompiler()
 {
+    std::lock_guard lock(m_ModuleLock);
     if (!m_Compiler)
     {
-        // TODO: Probably should load from next to this DLL
         m_Compiler.load("CLGLOn12Compiler.dll");
+    }
+    if (!m_Compiler)
+    {
+        LoadFromNextToSelf(m_Compiler, "CLGLOn12Compiler.dll");
     }
     return m_Compiler;
 }
 
+XPlatHelpers::unique_module const& Platform::GetDXIL()
+{
+    std::lock_guard lock(m_ModuleLock);
+    if (!m_DXIL)
+    {
+        m_DXIL.load("DXIL.dll");
+    }
+    if (!m_DXIL)
+    {
+        LoadFromNextToSelf(m_DXIL, "DXIL.dll");
+    }
+    return m_DXIL;
+}
+
 void Platform::UnloadCompiler()
 {
+    std::lock_guard lock(m_ModuleLock);
     m_Compiler.reset();
+    m_DXIL.reset();
 }
