@@ -5,6 +5,9 @@
 #define CL_USE_DEPRECATED_OPENCL_1_1_APIS
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
 
+#include <D3D12TranslationLayerDependencyIncludes.h>
+#include <D3D12TranslationLayerIncludes.h>
+
 #include <CL/cl.h>
 #include <CL/cl_ext.h>
 #include <icd_dispatch.h>
@@ -21,9 +24,6 @@
 
 using std::min;
 using std::max;
-
-#include <D3D12TranslationLayerDependencyIncludes.h>
-#include <D3D12TranslationLayerIncludes.h>
 
 #include <initguid.h>
 #include <d3d12.h>
