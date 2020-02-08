@@ -2,7 +2,7 @@
 #include "program.hpp"
 #include "clc_compiler.h"
 #include "kernel.hpp"
-#include "dxcapi.h"
+#include <dxc/dxcapi.h>
 
 void SignBlob(void* pBlob, size_t size)
 {
@@ -402,7 +402,7 @@ Program::Program(Context& Parent, std::string Source)
 
 Program::Program(Context& Parent, std::unique_ptr<byte[]> Binary, size_t BinarySize, cl_program_binary_type Type)
     : CLChildBase(Parent)
-    , m_Binary(Binary.release(), &operator delete[])
+    , m_Binary(Binary.release(), CustomDeleteArray)
     , m_BinarySize(BinarySize)
     , m_BinaryType(Type)
 {
@@ -789,7 +789,7 @@ void Program::LinkImpl(LinkArgs const& Args)
     }
     else
     {
-        m_Binary = decltype(m_Binary)(new byte[Args.LinkPrograms[0]->m_BinarySize], &operator delete[]);
+        m_Binary = decltype(m_Binary)(new byte[Args.LinkPrograms[0]->m_BinarySize], CustomDeleteArray);
         m_BinarySize = Args.LinkPrograms[0]->m_BinarySize;
         memcpy(m_Binary.get(), Args.LinkPrograms[0]->m_Binary.get(), m_BinarySize);
         m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;

@@ -28,7 +28,9 @@ public:
 
 private:
     std::recursive_mutex m_Lock;
-    std::unique_ptr<void, void(*)(void*)> m_Binary = { nullptr, operator delete };
+    static void CustomDelete(void* p) { ::operator delete(p); }
+    static void CustomDeleteArray(void* p) { ::operator delete[](p); }
+    std::unique_ptr<void, void(*)(void*)> m_Binary = { nullptr, CustomDelete };
     size_t m_BinarySize = 0;
     cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
 

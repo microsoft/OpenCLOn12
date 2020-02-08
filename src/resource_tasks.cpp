@@ -999,7 +999,7 @@ void MemReadTask::RecordImpl()
             char* pDest = reinterpret_cast<char*>(m_Args.pData) +
                 i * m_Args.Depth * m_Args.DstSlicePitch;
             D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
-            D3D12_SUBRESOURCE_DATA Src = { MapRet.pData, MapRet.RowPitch, MapRet.DepthPitch };
+            D3D12_SUBRESOURCE_DATA Src = { MapRet.pData, (LONG_PTR)MapRet.RowPitch, (LONG_PTR)MapRet.DepthPitch };
             MemcpySubresource(&Dest, &Src, MapRet.RowPitch, m_Args.Height, m_Args.Depth);
         }
     }
