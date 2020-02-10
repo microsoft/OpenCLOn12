@@ -8,8 +8,6 @@ file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp src/*.def)
 file(GLOB INC include/*.h include/*.hpp)
 file(GLOB EXTERNAL_INC external/*.h external/*.hpp)
 
-configure_file(OpenCL-ICD-Loader/loader/icd_dispatch.h icd_dispatch.h COPYONLY)
-
 add_library(openclon12 SHARED ${SRC} ${INC} ${EXTERNAL_INC})
 target_include_directories(openclon12
     PRIVATE include

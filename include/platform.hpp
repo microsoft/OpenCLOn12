@@ -8,9 +8,13 @@
 #include <D3D12TranslationLayerDependencyIncludes.h>
 #include <D3D12TranslationLayerIncludes.h>
 
+#include <CL/OpenCL.h>
 #include <CL/cl.h>
 #include <CL/cl_ext.h>
-#include <icd_dispatch.h>
+#include <CL/cl_d3d10.h>
+#include <CL/cl_d3d11.h>
+#include <CL/cl_dx9_media_sharing.h>
+#include <CL/cl_icd.h>
 
 #include <type_traits>
 #include <memory>
@@ -36,6 +40,19 @@ using Microsoft::WRL::ComPtr;
 #include <wil/result_macros.h>
 #include "XPlatHelpers.h"
 
+#define DEFINE_DISPATCHABLE_HANDLE(name) \
+    struct _##name { cl_icd_dispatch* dispatch; }
+
+DEFINE_DISPATCHABLE_HANDLE(cl_platform_id);
+DEFINE_DISPATCHABLE_HANDLE(cl_device_id);
+DEFINE_DISPATCHABLE_HANDLE(cl_context);
+DEFINE_DISPATCHABLE_HANDLE(cl_command_queue);
+DEFINE_DISPATCHABLE_HANDLE(cl_mem);
+DEFINE_DISPATCHABLE_HANDLE(cl_program);
+DEFINE_DISPATCHABLE_HANDLE(cl_kernel);
+DEFINE_DISPATCHABLE_HANDLE(cl_event);
+DEFINE_DISPATCHABLE_HANDLE(cl_sampler);
+
 template <typename TClass, typename TCLPtr>
 class CLBase : public std::remove_pointer_t<TCLPtr>
 {
@@ -56,7 +73,7 @@ public:
     static constexpr char* Extensions = "cl_khr_icd";
     static constexpr char* ICDSuffix = "oclon12";
 
-    Platform(KHRicdVendorDispatchRec* dispatch);
+    Platform(cl_icd_dispatch* dispatch);
     ~Platform();
 
     cl_uint GetNumDevices() const noexcept;

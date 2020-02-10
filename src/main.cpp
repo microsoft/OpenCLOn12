@@ -34,7 +34,7 @@ clGetExtensionFunctionAddress(const char *name)
     return nullptr;
 }
 
-KHRicdVendorDispatchRec g_DispatchTable
+cl_icd_dispatch g_DispatchTable
 {
     /* OpenCL 1.0 */
     clGetPlatformIDs,

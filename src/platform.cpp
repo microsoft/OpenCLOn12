@@ -75,7 +75,7 @@ clUnloadPlatformCompiler(cl_platform_id platform) CL_API_SUFFIX__VERSION_1_2
 }
 
 #include "device.hpp"
-Platform::Platform(KHRicdVendorDispatchRec* dispatch)
+Platform::Platform(cl_icd_dispatch* dispatch)
 {
     this->dispatch = dispatch;
 
