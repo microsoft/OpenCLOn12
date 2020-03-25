@@ -1,12 +1,12 @@
-/*
- * Copyright 2019 Collabora Ltd.
+﻿/*
+ * Copyright © Microsoft Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
  * to deal in the Software without restriction, including without limitation
- * on the rights to use, copy, modify, merge, publish, distribute, sub
- * license, and/or sell copies of the Software, and to permit persons to whom
- * the Software is furnished to do so, subject to the following conditions:
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
  *
  * The above copyright notice and this permission notice (including the next
  * paragraph) shall be included in all copies or substantial portions of the
@@ -14,11 +14,11 @@
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHOR(S) AND/OR THEIR SUPPLIERS BE LIABLE FOR ANY CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
- * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE.
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
  */
 
 #ifndef CLC_COMPILER_H
@@ -29,14 +29,6 @@ extern "C" {
 #endif
 
 #include <stddef.h>
-
-#if defined(BUILD_COMPILER)
-   #include "util/macros.h"
-#elif defined(_MSC_VER)
-   #define PUBLIC __declspec(dllimport)
-#elif !defined(PUBLIC)
-   #define PUBLIC
-#endif
 
 struct clc_define {
    const char *name;
@@ -50,6 +42,7 @@ struct clc_header {
 
 typedef void (*clc_msg_callback)(const char *, int, const char *);
 
+#define CLC_MAX_CONSTS 32
 #define CLC_MAX_CONST_ARGS 8
 #define CLC_MAX_READ_IMAGE_ARGS 128
 #define CLC_MAX_WRITE_IMAGE_ARGS 8
@@ -77,6 +70,14 @@ struct clc_metadata {
    } args[CLC_MAX_ARGS];
    size_t num_args;
 
+   size_t num_uavs;
+
+   struct {
+      void *data;
+      size_t size;
+   } consts[CLC_MAX_CONSTS];
+   size_t num_consts;
+
    struct {
       int image_index;
       int cbuf_offset;
@@ -84,12 +85,12 @@ struct clc_metadata {
    size_t num_image_channels;
 };
 
-PUBLIC int clc_compile_from_source(
+int clc_compile_from_source(
    const char *source,
    const char *source_name,
-   const struct clc_define defines[], // should be sorted by name
+   const struct clc_define defines[],
    size_t num_defines,
-   const struct clc_header headers[], // should be sorted by name
+   const struct clc_header headers[],
    size_t num_headers,
    clc_msg_callback warning_callback,
    clc_msg_callback error_callback,
@@ -97,7 +98,7 @@ PUBLIC int clc_compile_from_source(
    void **blob,
    size_t *blob_size);
 
-PUBLIC void free_blob(void* blob);
+void clc_free_blob(void *blob);
 
 #ifdef __cplusplus
 }

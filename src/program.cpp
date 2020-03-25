@@ -706,7 +706,8 @@ void Program::BuildImpl(BuildArgs const& Args)
     {
         auto& Compiler = g_Platform->GetCompiler();
         auto compile = Compiler.proc_address<decltype(&clc_compile_from_source)>("clc_compile_from_source");
-        auto free = Compiler.proc_address<decltype(&free_blob)>("free_blob");
+        auto free = Compiler.proc_address<decltype(&clc_free_blob)>("clc_free_blob");
+        clc_metadata metadata = {};
 
         std::vector<clc_define> defines;
         for (auto& def : Args.Common.Defines)
@@ -715,7 +716,7 @@ void Program::BuildImpl(BuildArgs const& Args)
         }
         void* blob = nullptr;
         size_t blobSize = 0;
-        int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), nullptr, 0, nullptr, nullptr, nullptr, &blob, &blobSize);
+        int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), nullptr, 0, nullptr, nullptr, &metadata, &blob, &blobSize);
         if (blob) SignBlob(blob, blobSize);
 
         std::lock_guard Lock(m_Lock);
@@ -742,7 +743,8 @@ void Program::CompileImpl(CompileArgs const& Args)
 {
     auto& Compiler = g_Platform->GetCompiler();
     auto compile = Compiler.proc_address<decltype(&clc_compile_from_source)>("clc_compile_from_source");
-    auto free = Compiler.proc_address<decltype(&free_blob)>("free_blob");
+    auto free = Compiler.proc_address<decltype(&clc_free_blob)>("clc_free_blob");
+    clc_metadata metadata = {};
 
     std::vector<clc_define> defines;
     for (auto& def : Args.Common.Defines)
@@ -756,7 +758,7 @@ void Program::CompileImpl(CompileArgs const& Args)
     }
     void* blob = nullptr;
     size_t blobSize = 0;
-    int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), headers.data(), headers.size(), nullptr, nullptr, nullptr, &blob, &blobSize);
+    int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), headers.data(), headers.size(), nullptr, nullptr, &metadata, &blob, &blobSize);
     if (blob) SignBlob(blob, blobSize);
 
     {
