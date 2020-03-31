@@ -32,7 +32,7 @@ clCreateKernel(cl_program      program_,
 
     try
     {
-        return new Kernel(program, program.m_Binary.get(), program.m_BinarySize);
+        return new Kernel(program, program.m_Binary, program.m_BinarySize);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -73,7 +73,7 @@ clCreateKernelsInProgram(cl_program     program_,
             temp.resize(program.m_KernelNames.size());
             for (cl_uint i = 0; i < program.m_KernelNames.size(); ++i)
             {
-                temp[i] = Kernel::ref_ptr(new Kernel(program, program.m_Binary.get(), program.m_BinarySize), adopt_ref{});
+                temp[i] = Kernel::ref_ptr(new Kernel(program, program.m_Binary, program.m_BinarySize), adopt_ref{});
             }
 
             for (cl_uint i = 0; i < program.m_KernelNames.size(); ++i)

@@ -303,7 +303,7 @@ clGetProgramInfo(cl_program         program_,
         }
         if (param_value_size)
         {
-            memcpy(reinterpret_cast<void**>(param_value)[0], program.m_Binary.get(), program.m_BinarySize);
+            memcpy(reinterpret_cast<void**>(param_value)[0], program.m_Binary, program.m_BinarySize);
         }
         if (param_value_size_ret)
         {
@@ -402,9 +402,10 @@ Program::Program(Context& Parent, std::string Source)
 
 Program::Program(Context& Parent, std::unique_ptr<byte[]> Binary, size_t BinarySize, cl_program_binary_type Type)
     : CLChildBase(Parent)
-    , m_Binary(Binary.release(), CustomDeleteArray)
+    , m_Binary(Binary.get())
     , m_BinarySize(BinarySize)
     , m_BinaryType(Type)
+    , m_OwnedBinary(std::move(Binary))
 {
 }
 
@@ -705,28 +706,35 @@ void Program::BuildImpl(BuildArgs const& Args)
     else
     {
         auto& Compiler = g_Platform->GetCompiler();
-        auto compile = Compiler.proc_address<decltype(&clc_compile_from_source)>("clc_compile_from_source");
-        auto free = Compiler.proc_address<decltype(&clc_free_blob)>("clc_free_blob");
-        clc_metadata metadata = {};
+        auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
+        auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
+        auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
+        clc_compile_args args = {};
 
-        std::vector<clc_define> defines;
+        std::vector<clc_named_value> defines;
         for (auto& def : Args.Common.Defines)
         {
             defines.push_back({ def.first.c_str(), def.second.c_str() });
         }
-        void* blob = nullptr;
-        size_t blobSize = 0;
-        int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), nullptr, 0, nullptr, nullptr, &metadata, &blob, &blobSize);
-        if (blob) SignBlob(blob, blobSize);
+
+        args.defines = defines.data();
+        args.num_defines = (unsigned)defines.size();
+        args.source = { "source.cl", m_Source.c_str() };
+
+        unique_spirv compiledObject(compile(&args, nullptr), free);
+        const clc_object* rawCompiledObject = compiledObject.get();
+        unique_spirv object(rawCompiledObject ? link(&rawCompiledObject, 1, nullptr) : nullptr, free);
 
         std::lock_guard Lock(m_Lock);
-        if (result == 0)
+        if (object)
         {
-            m_Binary = decltype(m_Binary)(blob, free);
-            m_BinarySize = blobSize;
-            // TODO: Library if linker option set
+            m_Binary = object->spvbin.data;
+            m_BinarySize = object->spvbin.size;
             m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
             m_BuildStatus = CL_BUILD_SUCCESS;
+            m_OwnedBinary = std::move(object);
+
+            // TODO: Should probably create all kernels here to ensure that they all link
         }
         else
         {
@@ -742,33 +750,31 @@ void Program::BuildImpl(BuildArgs const& Args)
 void Program::CompileImpl(CompileArgs const& Args)
 {
     auto& Compiler = g_Platform->GetCompiler();
-    auto compile = Compiler.proc_address<decltype(&clc_compile_from_source)>("clc_compile_from_source");
-    auto free = Compiler.proc_address<decltype(&clc_free_blob)>("clc_free_blob");
-    clc_metadata metadata = {};
+    auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
+    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
+    clc_compile_args args = {};
 
-    std::vector<clc_define> defines;
+    std::vector<clc_named_value> defines;
     for (auto& def : Args.Common.Defines)
     {
         defines.push_back({ def.first.c_str(), def.second.c_str() });
     }
-    std::vector<clc_header> headers;
-    for (auto& header : Args.Headers)
-    {
-        headers.push_back({ header.first.c_str(), header.second->m_Source.c_str() });
-    }
-    void* blob = nullptr;
-    size_t blobSize = 0;
-    int result = compile(m_Source.c_str(), "source.cl", defines.data(), defines.size(), headers.data(), headers.size(), nullptr, nullptr, &metadata, &blob, &blobSize);
-    if (blob) SignBlob(blob, blobSize);
+
+    args.defines = defines.data();
+    args.num_defines = (unsigned)defines.size();
+    args.source = { "source.cl", m_Source.c_str() };
+
+    unique_spirv object(compile(&args, nullptr), free);
 
     {
         std::lock_guard Lock(m_Lock);
-        if (result == 0)
+        if (object)
         {
-            m_Binary = decltype(m_Binary)(blob, free);
-            m_BinarySize = blobSize;
+            m_Binary = object->spvbin.data;
+            m_BinarySize = object->spvbin.size;
             m_BinaryType = CL_PROGRAM_BINARY_TYPE_COMPILED_OBJECT;
             m_BuildStatus = CL_BUILD_SUCCESS;
+            m_OwnedBinary = std::move(object);
         }
         else
         {
@@ -783,19 +789,29 @@ void Program::CompileImpl(CompileArgs const& Args)
 
 void Program::LinkImpl(LinkArgs const& Args)
 {
+    auto& Compiler = g_Platform->GetCompiler();
+    auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
+    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
+    std::vector<const clc_object*> objects;
+    objects.reserve(Args.LinkPrograms.size());
+    std::transform(Args.LinkPrograms.begin(), Args.LinkPrograms.end(), std::back_inserter(objects),
+        [](Program::ref_ptr_int const& program) { return std::get<unique_spirv>(program->m_OwnedBinary).get(); });
+
+    unique_spirv linkedObject(link(objects.data(), (unsigned)objects.size(), nullptr), free);
+
     std::lock_guard Lock(m_Lock);
-    // TODO: Actually link
-    if (Args.LinkPrograms.size() > 1)
+    if (linkedObject)
     {
-        m_BuildStatus = CL_BUILD_ERROR;
+        m_Binary = linkedObject->spvbin.data;
+        m_BinarySize = linkedObject->spvbin.size;
+        // TODO: Library if linker option set
+        m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+        m_BuildStatus = CL_BUILD_SUCCESS;
+        m_OwnedBinary = std::move(linkedObject);
     }
     else
     {
-        m_Binary = decltype(m_Binary)(new byte[Args.LinkPrograms[0]->m_BinarySize], CustomDeleteArray);
-        m_BinarySize = Args.LinkPrograms[0]->m_BinarySize;
-        memcpy(m_Binary.get(), Args.LinkPrograms[0]->m_Binary.get(), m_BinarySize);
-        m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
-        m_BuildStatus = CL_BUILD_SUCCESS;
+        m_BuildStatus = CL_BUILD_ERROR;
     }
     if (Args.Common.pfn_notify)
     {

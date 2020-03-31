@@ -29,18 +29,36 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include <stdint.h>
 
-struct clc_define {
+struct clc_named_value {
    const char *name;
-   const char *definition;
+   const char *value;
 };
 
-struct clc_header {
-   const char *name;
-   const char *source;
+struct clc_compile_args {
+   const struct clc_named_value *defines;
+   unsigned num_defines;
+   const struct clc_named_value *headers;
+   unsigned num_headers;
+   struct clc_named_value source;
 };
 
 typedef void (*clc_msg_callback)(const char *, int, const char *);
+
+struct clc_logger {
+   clc_msg_callback error;
+   clc_msg_callback warning;
+};
+
+struct spirv_binary {
+   uint32_t *data;
+   size_t size;
+};
+
+struct clc_object {
+   struct spirv_binary spvbin;
+};
 
 #define CLC_MAX_CONSTS 32
 #define CLC_MAX_CONST_ARGS 8
@@ -50,7 +68,7 @@ typedef void (*clc_msg_callback)(const char *, int, const char *);
 #define CLC_MAX_ARGS (CLC_MAX_CONST_ARGS + CLC_MAX_READ_IMAGE_ARGS + \
                       CLC_MAX_WRITE_IMAGE_ARGS)
 
-struct clc_metadata {
+struct clc_dxil_metadata {
    struct {
       enum {
          CLC_ARG_CONST,
@@ -85,20 +103,31 @@ struct clc_metadata {
    size_t num_image_channels;
 };
 
-int clc_compile_from_source(
-   const char *source,
-   const char *source_name,
-   const struct clc_define defines[],
-   size_t num_defines,
-   const struct clc_header headers[],
-   size_t num_headers,
-   clc_msg_callback warning_callback,
-   clc_msg_callback error_callback,
-   struct clc_metadata *metadata,
-   void **blob,
-   size_t *blob_size);
+struct clc_dxil_object {
+   struct clc_dxil_metadata metadata;
+   struct {
+      void *data;
+      size_t size;
+   } binary;
+};
 
-void clc_free_blob(void *blob);
+struct clc_object *
+clc_compile(const struct clc_compile_args *args,
+            const struct clc_logger *logger);
+
+struct clc_object *
+clc_link(const struct clc_object **in_objs,
+         unsigned num_in_objs,
+         const struct clc_logger *logger);
+
+void clc_free_object(struct clc_object *obj);
+
+struct clc_dxil_object *
+clc_to_dxil(const struct clc_object *obj,
+            const char *entrypoint,
+            const struct clc_logger *logger);
+
+void clc_free_dxil_object(struct clc_dxil_object *dxil);
 
 #ifdef __cplusplus
 }

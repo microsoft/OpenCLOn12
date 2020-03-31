@@ -1,7 +1,15 @@
 #pragma once
 
 #include "context.hpp"
+#include <variant>
 #undef GetBinaryType
+
+struct clc_object;
+struct clc_dxil_object;
+
+using unique_spirv = std::unique_ptr<clc_object, void(*)(clc_object*)>;
+using unique_dxil = std::unique_ptr<clc_dxil_object, void(*)(clc_dxil_object*)>;
+using unique_app_binary = std::unique_ptr<byte[]>;
 
 class Kernel;
 class Program : public CLChildBase<Program, Context, cl_program>
@@ -28,11 +36,10 @@ public:
 
 private:
     std::recursive_mutex m_Lock;
-    static void CustomDelete(void* p) { ::operator delete(p); }
-    static void CustomDeleteArray(void* p) { ::operator delete[](p); }
-    std::unique_ptr<void, void(*)(void*)> m_Binary = { nullptr, CustomDelete };
+    void* m_Binary = nullptr;
     size_t m_BinarySize = 0;
     cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
+    std::variant<std::monostate, unique_spirv, unique_dxil, unique_app_binary> m_OwnedBinary;
 
     cl_build_status m_BuildStatus = CL_BUILD_NONE;
     std::string m_BuildLog;
