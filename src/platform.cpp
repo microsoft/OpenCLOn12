@@ -165,7 +165,8 @@ XPlatHelpers::unique_module const& Platform::GetDXIL()
 
 void Platform::UnloadCompiler()
 {
-    std::lock_guard lock(m_ModuleLock);
-    m_Compiler.reset();
-    m_DXIL.reset();
+    // If we want to actually support unloading the compiler,
+    // we'll need to track all live programs/kernels, because
+    // they need to call back into the compiler to be able to
+    // free their program memory.
 }
