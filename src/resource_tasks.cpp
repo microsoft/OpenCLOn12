@@ -127,7 +127,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
                 };
                 if (bIsRowByRowCopy)
                 {
-                    DstBox = {};
+                    DstBox = { 0, 0, 0, 1, 1, 1 };
                     DstBox.left = (UINT)(m_Target->m_Offset + // Buffer suballocation offset
                         ((z + m_Args.DstZ) * m_Args.DstBufferSlicePitch) + // Slice offset
                         ((y + m_Args.DstY) * m_Args.DstBufferRowPitch) + // Row offset
@@ -1412,7 +1412,69 @@ clEnqueueReadImage(cl_command_queue     command_queue,
     return ret;
 }
 
-#pragma warning(disable: 4100)
+class CopyResourceTask : public Task
+{
+public:
+    struct Args
+    {
+        cl_uint DstX;
+        cl_uint DstY;
+        cl_uint DstZ;
+        cl_uint Width;
+        cl_uint Height;
+        cl_uint Depth;
+        cl_uint SrcX;
+        cl_uint SrcY;
+        cl_uint SrcZ;
+        cl_ushort FirstSrcArraySlice;
+        cl_ushort FirstDstArraySlice;
+        cl_ushort NumArraySlices;
+    };
+
+    CopyResourceTask(Context& Parent, Resource& Source, Resource& Dest,
+        cl_command_queue CommandQueue, Args const& args, cl_command_type type)
+        : Task(Parent, type, CommandQueue)
+        , m_Source(&Source)
+        , m_Dest(&Dest)
+        , m_Args(args)
+    {
+    }
+
+private:
+    Resource::ref_ptr_int m_Source;
+    Resource::ref_ptr_int m_Dest;
+    const Args m_Args;
+
+    void RecordImpl() final
+    {
+        for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
+        {
+            D3D12_BOX SrcBox =
+            {
+                m_Args.SrcX,
+                m_Args.SrcY,
+                m_Args.SrcZ,
+                m_Args.SrcX + m_Args.Width,
+                m_Args.SrcY + m_Args.Height,
+                m_Args.SrcZ + m_Args.Depth
+            };
+            m_Parent->GetDevice().ImmCtx().ResourceCopyRegion(
+                m_Dest->GetUnderlyingResource(),
+                m_Args.FirstDstArraySlice + i,
+                m_Args.DstX,
+                m_Args.DstY,
+                m_Args.DstZ,
+                m_Source->GetUnderlyingResource(),
+                m_Args.FirstSrcArraySlice + i,
+                &SrcBox);
+        }
+    }
+    void OnComplete() final
+    {
+        m_Source.Release();
+        m_Dest.Release();
+    }
+};
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyBuffer(cl_command_queue    command_queue,
@@ -1425,7 +1487,420 @@ clEnqueueCopyBuffer(cl_command_queue    command_queue,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (!src_buffer || !dst_buffer)
+    {
+        return ReportError("src_buffer and dst_buffer must not be NULL.", CL_INVALID_MEM_OBJECT);
+    }
+
+    auto& source = *static_cast<Resource*>(src_buffer);
+    auto& dest = *static_cast<Resource*>(dst_buffer);
+    if (&source.m_Parent.get() != &context || &dest.m_Parent.get() != &context)
+    {
+        return ReportError("src_buffer and dst_buffer must belong to the same context as the command_queue", CL_INVALID_CONTEXT);
+    }
+
+    if (source.m_Desc.image_type != CL_MEM_OBJECT_BUFFER ||
+        dest.m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("src_buffer and dst_buffer must be buffers", CL_INVALID_MEM_OBJECT);
+    }
+
+    if (size == 0 ||
+        size + src_offset > source.m_Desc.image_width ||
+        size + dst_offset > dest.m_Desc.image_width)
+    {
+        return ReportError("size must be nonzero, and size and offsets must address regions within buffers", CL_INVALID_VALUE);
+    }
+
+    if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
+    {
+        size_t absolute_src_offset = src_offset + source.m_Offset;
+        size_t absolute_dst_offset = dst_offset + dest.m_Offset;
+        if ((absolute_src_offset <= absolute_dst_offset && absolute_dst_offset <= absolute_src_offset + size - 1) ||
+            (absolute_dst_offset <= absolute_src_offset && absolute_src_offset <= absolute_dst_offset + size - 1))
+        {
+            return ReportError("Buffer regions overlap", CL_MEM_COPY_OVERLAP);
+        }
+    }
+
+    CopyResourceTask::Args CmdArgs = {};
+    CmdArgs.SrcX = (cl_uint)(src_offset + source.m_Offset);
+    CmdArgs.DstX = (cl_uint)(dst_offset + dest.m_Offset);
+    CmdArgs.Width = (cl_uint)size;
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
+    CmdArgs.NumArraySlices = 1;
+
+    try
+    {
+        std::unique_ptr<Task> task(new CopyResourceTask(context, source, dest, command_queue, CmdArgs, CL_COMMAND_COPY_BUFFER));
+        auto Lock = context.GetDevice().GetTaskPoolLock();
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+        queue.QueueTask(task.get(), Lock);
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clEnqueueCopyImage(cl_command_queue     command_queue,
+    cl_mem               src_image,
+    cl_mem               dst_image,
+    const size_t* src_origin,
+    const size_t* dst_origin,
+    const size_t* region,
+    cl_uint              num_events_in_wait_list,
+    const cl_event* event_wait_list,
+    cl_event* event) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (!src_image || !dst_image)
+    {
+        return ReportError("src_image and dst_image must not be NULL.", CL_INVALID_MEM_OBJECT);
+    }
+
+    auto& source = *static_cast<Resource*>(src_image);
+    auto& dest = *static_cast<Resource*>(dst_image);
+    if (&source.m_Parent.get() != &context || &dest.m_Parent.get() != &context)
+    {
+        return ReportError("src_image and dst_image must belong to the same context as the command_queue", CL_INVALID_CONTEXT);
+    }
+
+    if (source.m_Desc.image_type == CL_MEM_OBJECT_BUFFER ||
+        dest.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("src_image and dst_image must not be buffers", CL_INVALID_MEM_OBJECT);
+    }
+
+    if (source.m_Format.image_channel_data_type != dest.m_Format.image_channel_data_type ||
+        source.m_Format.image_channel_order != dest.m_Format.image_channel_order)
+    {
+        return ReportError("src_image and dst_image must have the same format", CL_IMAGE_FORMAT_MISMATCH);
+    }
+
+    // TODO: This is going to be tricky...
+    if (source.m_Desc.image_type != dest.m_Desc.image_type)
+    {
+        return ReportError("This implementation does not yet support copying between different image types", CL_INVALID_MEM_OBJECT);
+    }
+
+    CopyResourceTask::Args CmdArgs = {};
+    CmdArgs.Width = 1;
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
+    CmdArgs.NumArraySlices = 1;
+
+    switch (source.m_Desc.image_type)
+    {
+    default:
+    case CL_MEM_OBJECT_BUFFER:
+        return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
+
+    case CL_MEM_OBJECT_IMAGE1D:
+    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
+        if (src_origin[1] != 0 || src_origin[2] != 0 ||
+            dst_origin[1] != 0 || dst_origin[2] != 0 ||
+            region[1] != 0 || region[2] != 0)
+        {
+            return ReportError("For 1D images, origin/region dimensions beyond the first must be 0.", CL_INVALID_VALUE);
+        }
+        break;
+
+    case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+        if (src_origin[1] > source.m_Desc.image_array_size ||
+            region[1] > source.m_Desc.image_array_size ||
+            dst_origin[1] > dest.m_Desc.image_array_size ||
+            region[1] > dest.m_Desc.image_array_size ||
+            src_origin[1] + region[1] > source.m_Desc.image_array_size ||
+            dst_origin[1] + region[1] > dest.m_Desc.image_array_size)
+        {
+            return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
+        }
+        CmdArgs.FirstSrcArraySlice = (cl_ushort)src_origin[1];
+        CmdArgs.FirstDstArraySlice = (cl_ushort)dst_origin[1];
+        CmdArgs.NumArraySlices = (cl_ushort)region[1];
+
+        if (src_origin[2] != 0 || dst_origin[2] != 0 || region[2] != 0)
+        {
+            return ReportError("For 1D image arrays, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
+        }
+        break;
+
+    case CL_MEM_OBJECT_IMAGE2D:
+    case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+    case CL_MEM_OBJECT_IMAGE3D:
+        if (src_origin[1] > source.m_Desc.image_height ||
+            region[1] > source.m_Desc.image_height ||
+            dst_origin[1] > dest.m_Desc.image_height ||
+            region[1] > dest.m_Desc.image_height ||
+            src_origin[1] + region[1] > source.m_Desc.image_height ||
+            dst_origin[1] + region[1] > dest.m_Desc.image_height)
+        {
+            return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
+        }
+        CmdArgs.SrcY = (cl_uint)src_origin[1];
+        CmdArgs.DstY = (cl_uint)dst_origin[1];
+        CmdArgs.Height = (cl_uint)region[1];
+
+        switch (source.m_Desc.image_type)
+        {
+        case CL_MEM_OBJECT_IMAGE2D:
+            if (src_origin[2] != 0 || dst_origin[2] != 0 || region[2] != 0)
+            {
+                return ReportError("For 2D images, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
+            }
+            break;
+        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+            if (src_origin[2] > source.m_Desc.image_array_size ||
+                region[2] > source.m_Desc.image_array_size ||
+                dst_origin[2] > source.m_Desc.image_array_size ||
+                region[2] > dest.m_Desc.image_array_size ||
+                src_origin[2] + region[2] > source.m_Desc.image_array_size ||
+                dst_origin[2] + region[2] > dest.m_Desc.image_array_size)
+            {
+                return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
+            }
+            CmdArgs.FirstSrcArraySlice = (cl_ushort)src_origin[2];
+            CmdArgs.FirstDstArraySlice = (cl_ushort)dst_origin[2];
+            CmdArgs.NumArraySlices = (cl_ushort)region[2];
+            break;
+        case CL_MEM_OBJECT_IMAGE3D:
+            if (src_origin[2] > source.m_Desc.image_depth ||
+                region[2] > source.m_Desc.image_depth ||
+                dst_origin[2] > dest.m_Desc.image_depth ||
+                region[2] > dest.m_Desc.image_depth ||
+                src_origin[2] + region[2] > source.m_Desc.image_depth ||
+                dst_origin[2] + region[2] > dest.m_Desc.image_depth)
+            {
+                return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
+            }
+            CmdArgs.SrcZ = (cl_uint)src_origin[2];
+            CmdArgs.DstZ = (cl_uint)dst_origin[2];
+            CmdArgs.Depth = (cl_uint)region[2];
+            break;
+        }
+        break;
+    }
+
+    if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
+    {
+        cl_uint overlap = 0;
+        for (cl_uint i = 0; i < 3; ++i)
+        {
+            if ((src_origin[i] <= dst_origin[i] && dst_origin[i] <= src_origin[i] + region[i]) ||
+                (dst_origin[i] <= src_origin[i] && src_origin[i] <= dst_origin[i] + region[i]))
+            {
+                ++overlap;
+            }
+        }
+        if (overlap == 3)
+        {
+            return ReportError("Image regions overlap", CL_MEM_COPY_OVERLAP);
+        }
+    }
+
+    try
+    {
+        std::unique_ptr<Task> task(new CopyResourceTask(context, source, dest, command_queue, CmdArgs, CL_COMMAND_COPY_IMAGE));
+        auto Lock = context.GetDevice().GetTaskPoolLock();
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+        queue.QueueTask(task.get(), Lock);
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return CL_SUCCESS;
+}
+
+class CopyBufferRectTask : public Task
+{
+public:
+    struct Args
+    {
+        cl_uint DstX;
+        cl_uint DstY;
+        cl_uint DstZ;
+        cl_uint Width;
+        cl_uint Height;
+        cl_uint Depth;
+        cl_uint SrcX;
+        cl_uint SrcY;
+        cl_uint SrcZ;
+        cl_uint DstBufferRowPitch;
+        cl_uint DstBufferSlicePitch;
+        cl_uint SrcBufferRowPitch;
+        cl_uint SrcBufferSlicePitch;
+    };
+
+    CopyBufferRectTask(Context& Parent, Resource& Source, Resource& Dest,
+        cl_command_queue CommandQueue, Args const& args)
+        : Task(Parent, CL_COMMAND_COPY_BUFFER_RECT, CommandQueue)
+        , m_Source(&Source)
+        , m_Dest(&Dest)
+        , m_Args(args)
+    {
+    }
+
+private:
+    Resource::ref_ptr_int m_Source;
+    Resource::ref_ptr_int m_Dest;
+    const Args m_Args;
+
+    void RecordImpl() final;
+    void OnComplete() final
+    {
+        m_Source.Release();
+        m_Dest.Release();
+    }
+};
+
+void CopyBufferRectTask::RecordImpl()
+{
+    // TODO: Fast-path when pitches line up with D3D12 buffer-as-texture support, and not same-resource copy
+    /*
+    if (m_Source->GetUnderlyingResource() != m_Dest->GetUnderlyingResource() &&
+        m_Args.DstBufferRowPitch % D3D12_TEXTURE_DATA_PITCH_ALIGNMENT == 0 &&
+        m_Args.DstBufferSlicePitch == m_Args.DstBufferRowPitch * m_Args.Height &&
+        m_Args.SrcBufferRowPitch % D3D12_TEXTURE_DATA_PITCH_ALIGNMENT == 0 &&
+        m_Args.SrcBufferSlicePitch == m_Args.SrcBufferRowPitch * m_Args.Height &&
+        m_Dest->m_Offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT == 0 &&
+        m_Source->m_Offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT == 0)
+    {
+        auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+
+        ImmCtx.GetResourceStateManager().TransitionResource(m_Dest->GetUnderlyingResource(), D3D12_RESOURCE_STATE_COPY_DEST);
+        ImmCtx.GetResourceStateManager().TransitionResource(m_Source->GetUnderlyingResource(), D3D12_RESOURCE_STATE_COPY_SOURCE);
+        ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT DstFootprint = { m_Dest->m_Offset,
+            {
+                DXGI_FORMAT_R8_UINT,
+                m_Args.Width,
+                m_Args.Height,
+                m_Args.Depth,
+                m_Args.DstBufferRowPitch
+            } };
+        CD3DX12_TEXTURE_COPY_LOCATION Dst(m_Dest->GetUnderlyingResource()->GetUnderlyingResource(), DstFootprint);
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT SrcFootprint = { m_Source->m_Offset,
+            {
+                DXGI_FORMAT_R8_UINT,
+                m_Args.Width,
+                m_Args.Height,
+                m_Args.Depth,
+                m_Args.SrcBufferRowPitch
+            } };
+        CD3DX12_TEXTURE_COPY_LOCATION Src(m_Source->GetUnderlyingResource()->GetUnderlyingResource(), SrcFootprint);
+        ImmCtx.GetGraphicsCommandList()->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+        ImmCtx.PostCopy(m_Source->GetUnderlyingResource(), 0, m_Dest->GetUnderlyingResource(), 0, 1);
+    }
+    else
+    */
+    {
+        for (cl_uint z = 0; z < m_Args.Depth; ++z)
+        {
+            for (cl_uint y = 0; y < m_Args.Height; ++y)
+            {
+                D3D12_BOX SrcBox =
+                {
+                    (UINT)(m_Source->m_Offset +
+                        (z + m_Args.SrcZ) * m_Args.SrcBufferSlicePitch +
+                        (y + m_Args.SrcY) * m_Args.SrcBufferRowPitch +
+                        m_Args.SrcX),
+                    0, 0, 1, 1, 1
+                };
+                SrcBox.right = SrcBox.left + m_Args.Width;
+                UINT DstOffset =
+                    (UINT)(m_Dest->m_Offset +
+                    (z + m_Args.DstZ) * m_Args.DstBufferSlicePitch +
+                    (y + m_Args.DstY) * m_Args.DstBufferRowPitch +
+                    m_Args.DstX);
+                m_Parent->GetDevice().ImmCtx().ResourceCopyRegion(
+                    m_Dest->GetUnderlyingResource(),
+                    0, //SubresourceIndex
+                    DstOffset,
+                    0, 0,
+                    m_Source->GetUnderlyingResource(),
+                    0, //SubresourceIndex,
+                    &SrcBox);
+            }
+        }
+    }
+}
+
+// Adapted from OpenCL spec, Appendix D
+bool check_copy_overlap(
+    const size_t src_offset,
+    const size_t dst_offset,
+    const size_t src_origin[],
+    const size_t dst_origin[],
+    const size_t region[],
+    const size_t row_pitch,
+    const size_t slice_pitch)
+{
+    const size_t slice_size = (region[1] - 1) * row_pitch + region[0];
+
+    /* No overlap if region[0] for dst or src fits in the gap
+     * between region[0] and row_pitch.
+     */
+    {
+        const size_t src_dx = (src_origin[0] + src_offset) % row_pitch;
+        const size_t dst_dx = (dst_origin[0] + dst_offset) % row_pitch;
+
+        if (((dst_dx >= src_dx + region[0]) &&
+            (dst_dx + region[0] <= src_dx + row_pitch)) ||
+            ((src_dx >= dst_dx + region[0]) &&
+                (src_dx + region[0] <= dst_dx + row_pitch)))
+        {
+            return false;
+        }
+    }
+
+    /* No overlap if region[1] for dst or src fits in the gap
+     * between region[1] and slice_pitch.
+     */
+    {
+        const size_t src_dy =
+            (src_origin[1] * row_pitch + src_origin[0] + src_offset) % slice_pitch;
+        const size_t dst_dy =
+            (dst_origin[1] * row_pitch + dst_origin[0] + dst_offset) % slice_pitch;
+
+        if (((dst_dy >= src_dy + slice_size) &&
+            (dst_dy + slice_size <= src_dy + slice_pitch)) ||
+            ((src_dy >= dst_dy + slice_size) &&
+                (src_dy + slice_size <= dst_dy + slice_pitch))) {
+            return false;
+        }
+    }
+
+    /* Otherwise src and dst overlap. */
+    return true;
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -1443,22 +1918,145 @@ clEnqueueCopyBufferRect(cl_command_queue    command_queue,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_1
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (!src_buffer || !dst_buffer)
+    {
+        return ReportError("src_buffer and dst_buffer must not be NULL.", CL_INVALID_MEM_OBJECT);
+    }
+
+    auto& source = *static_cast<Resource*>(src_buffer);
+    auto& dest = *static_cast<Resource*>(dst_buffer);
+    if (&source.m_Parent.get() != &context || &dest.m_Parent.get() != &context)
+    {
+        return ReportError("src_buffer and dst_buffer must belong to the same context as the command_queue", CL_INVALID_CONTEXT);
+    }
+
+    if (source.m_Desc.image_type != CL_MEM_OBJECT_BUFFER ||
+        dest.m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("src_buffer and dst_buffer must be buffers", CL_INVALID_MEM_OBJECT);
+    }
+
+    if (region[0] == 0 ||
+        region[1] == 0 ||
+        region[2] == 0)
+    {
+        return ReportError("region contains a 0", CL_INVALID_VALUE);
+    }
+
+    if (src_row_pitch == 0)
+    {
+        src_row_pitch = region[0];
+    }
+    else if (src_row_pitch < region[0])
+    {
+        return ReportError("src_row_pitch must be >= region[0]", CL_INVALID_VALUE);
+    }
+
+    if (src_slice_pitch == 0)
+    {
+        src_slice_pitch = region[1] * src_row_pitch;
+    }
+    else if (src_slice_pitch < region[1] * src_row_pitch)
+    {
+        return ReportError("src_slice_pitch must be >= (region[1] * src_row_pitch)", CL_INVALID_VALUE);
+    }
+
+    if (dst_row_pitch == 0)
+    {
+        dst_row_pitch = region[0];
+    }
+    else if (dst_row_pitch < region[0])
+    {
+        return ReportError("dst_row_pitch must be >= region[0]", CL_INVALID_VALUE);
+    }
+
+    if (dst_slice_pitch == 0)
+    {
+        dst_slice_pitch = region[1] * dst_row_pitch;
+    }
+    else if (dst_slice_pitch < region[1] * dst_row_pitch)
+    {
+        return ReportError("dst_slice_pitch must be >= (region[1] * dst_row_pitch)", CL_INVALID_VALUE);
+    }
+
+    // From OpenCL spec, Appendix D
+    const size_t src_slice_size = (region[1] - 1) * src_row_pitch + region[0];
+    const size_t dst_slice_size = (region[1] - 1) * dst_row_pitch + region[0];
+    const size_t src_block_size = (region[2] - 1) * src_slice_pitch + src_slice_size;
+    const size_t dst_block_size = (region[2] - 1) * dst_slice_pitch + dst_slice_size;
+    const size_t src_start = src_origin[2] * src_slice_pitch
+        + src_origin[1] * dst_row_pitch
+        + src_origin[0]
+        + source.m_Offset;
+    const size_t src_end = src_start + src_block_size;
+    const size_t dst_start = dst_origin[2] * dst_slice_pitch
+        + dst_origin[1] * dst_row_pitch
+        + dst_origin[0]
+        + dest.m_Offset;
+    const size_t dst_end = dst_start + dst_block_size;
+
+    if (src_end - source.m_Offset > source.m_Desc.image_width ||
+        dst_end - dest.m_Offset > dest.m_Desc.image_width)
+    {
+        return ReportError("Offsets and region would require accessing out of bounds of buffer objects", CL_INVALID_VALUE);
+    }
+
+    if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
+    {
+        if ((src_start <= dst_start && dst_start <= src_end) ||
+            (dst_start <= src_start && src_start <= dst_end))
+        {
+            if (src_row_pitch != dst_row_pitch ||
+                src_slice_pitch != dst_slice_pitch ||
+                check_copy_overlap(source.m_Offset, dest.m_Offset, src_origin, dst_origin, region, src_row_pitch, src_slice_pitch))
+            {
+                return ReportError("Buffer regions overlap", CL_MEM_COPY_OVERLAP);
+            }
+        }
+    }
+
+    CopyBufferRectTask::Args CmdArgs = {};
+    CmdArgs.DstX = (cl_uint)dst_origin[0];
+    CmdArgs.DstY = (cl_uint)dst_origin[1];
+    CmdArgs.DstZ = (cl_uint)dst_origin[2];
+    CmdArgs.Width = (cl_uint)region[0];
+    CmdArgs.Height = (cl_uint)region[1];
+    CmdArgs.Depth = (cl_uint)region[2];
+    CmdArgs.SrcX = (cl_uint)src_origin[0];
+    CmdArgs.SrcY = (cl_uint)src_origin[1];
+    CmdArgs.SrcZ = (cl_uint)src_origin[2];
+    CmdArgs.DstBufferRowPitch = (cl_uint)dst_row_pitch;
+    CmdArgs.DstBufferSlicePitch = (cl_uint)dst_slice_pitch;
+    CmdArgs.SrcBufferRowPitch = (cl_uint)src_row_pitch;
+    CmdArgs.SrcBufferSlicePitch = (cl_uint)src_slice_pitch;
+
+    try
+    {
+        std::unique_ptr<Task> task(new CopyBufferRectTask(context, source, dest, command_queue, CmdArgs));
+        auto Lock = context.GetDevice().GetTaskPoolLock();
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+        queue.QueueTask(task.get(), Lock);
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return CL_SUCCESS;
 }
 
-extern CL_API_ENTRY cl_int CL_API_CALL
-clEnqueueCopyImage(cl_command_queue     command_queue,
-    cl_mem               src_image,
-    cl_mem               dst_image,
-    const size_t* src_origin,
-    const size_t* dst_origin,
-    const size_t* region,
-    cl_uint              num_events_in_wait_list,
-    const cl_event* event_wait_list,
-    cl_event* event) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
+#pragma warning(disable: 4100)
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
@@ -1473,6 +2071,7 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
 {
     return CL_INVALID_PLATFORM;
 }
+
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyBufferToImage(cl_command_queue command_queue,
