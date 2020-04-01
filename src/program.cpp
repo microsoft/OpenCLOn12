@@ -113,10 +113,19 @@ clCreateProgramWithBinary(cl_context                     context_,
 
     try
     {
-        std::unique_ptr<byte[]> BinaryCopy(new byte[lengths[0]]);
+        unique_spirv BinaryHolder(new clc_object,
+            [](clc_object* obj)
+            {
+                if (obj->spvbin.data)
+                    delete[] reinterpret_cast<byte*>(obj->spvbin.data);
+                delete obj;
+            });
+        BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[lengths[0]]);
+        BinaryHolder->spvbin.size = lengths[0];
+        memcpy(BinaryHolder->spvbin.data, binaries[0], lengths[0]);
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
         if (binary_status) *binary_status = CL_SUCCESS;
-        return new Program(context, std::move(BinaryCopy), lengths[0], CL_PROGRAM_BINARY_TYPE_EXECUTABLE);
+        return new Program(context, std::move(BinaryHolder), CL_PROGRAM_BINARY_TYPE_EXECUTABLE);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -293,7 +302,7 @@ clGetProgramInfo(cl_program         program_,
     case CL_PROGRAM_NUM_DEVICES: return RetValue(1u);
     case CL_PROGRAM_DEVICES: return RetValue((cl_device_id)&program.GetDevice());
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
-    case CL_PROGRAM_BINARY_SIZES: { std::lock_guard lock(program.m_Lock); return RetValue(program.m_BinarySize); }
+    case CL_PROGRAM_BINARY_SIZES: { std::lock_guard lock(program.m_Lock); return RetValue(program.m_OwnedBinary->spvbin.size); }
     case CL_PROGRAM_BINARIES:
     {
         std::lock_guard lock(program.m_Lock);
@@ -303,7 +312,7 @@ clGetProgramInfo(cl_program         program_,
         }
         if (param_value_size)
         {
-            memcpy(reinterpret_cast<void**>(param_value)[0], program.m_Binary, program.m_BinarySize);
+            memcpy(reinterpret_cast<void**>(param_value)[0], program.m_OwnedBinary->spvbin.data, program.m_OwnedBinary->spvbin.size);
         }
         if (param_value_size_ret)
         {
@@ -318,7 +327,7 @@ clGetProgramInfo(cl_program         program_,
         {
             return CL_INVALID_PROGRAM_EXECUTABLE;
         }
-        return RetValue(program.m_KernelNames.size());
+        return RetValue(program.m_Kernels.size());
     }
     case CL_PROGRAM_KERNEL_NAMES:
     {
@@ -328,11 +337,11 @@ clGetProgramInfo(cl_program         program_,
             return CL_INVALID_PROGRAM_EXECUTABLE;
         }
         size_t stringSize = 0;
-        for (size_t i = 0; i < program.m_KernelNames.size(); ++i)
+        for (auto&& [kernelName, kernel] : program.m_Kernels)
         {
-            stringSize += program.m_KernelNames[i].size();
+            stringSize += kernelName.size();
         }
-        stringSize += program.m_KernelNames.size(); // 1 semicolon between each name + 1 null terminator
+        stringSize += program.m_Kernels.size(); // 1 semicolon between each name + 1 null terminator
         if (param_value_size && param_value_size < stringSize)
         {
             return CL_INVALID_VALUE;
@@ -340,9 +349,9 @@ clGetProgramInfo(cl_program         program_,
         if (param_value_size)
         {
             char* pOut = reinterpret_cast<char*>(param_value);
-            for (size_t i = 0; i < program.m_KernelNames.size(); ++i)
+            for (auto&& [kernelName, kernel] : program.m_Kernels)
             {
-                pOut = std::copy(program.m_KernelNames[i].begin(), program.m_KernelNames[i].end(), pOut);
+                pOut = std::copy(kernelName.begin(), kernelName.end(), pOut);
                 *(pOut++) = ';';
             }
             *(--pOut) = '\0';
@@ -400,13 +409,12 @@ Program::Program(Context& Parent, std::string Source)
 {
 }
 
-Program::Program(Context& Parent, std::unique_ptr<byte[]> Binary, size_t BinarySize, cl_program_binary_type Type)
+Program::Program(Context& Parent, unique_spirv Binary, cl_program_binary_type Type)
     : CLChildBase(Parent)
-    , m_Binary(Binary.get())
-    , m_BinarySize(BinarySize)
-    , m_BinaryType(Type)
     , m_OwnedBinary(std::move(Binary))
+    , m_BinaryType(Type)
 {
+    CreateKernels();
 }
 
 Program::Program(Context& Parent)
@@ -596,6 +604,15 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     }
 }
 
+const clc_dxil_object* Program::GetKernel(const char* name) const
+{
+    std::lock_guard lock(m_Lock);
+    auto iter = m_Kernels.find(name);
+    if (iter == m_Kernels.end())
+        return nullptr;
+    return iter->second.get();
+}
+
 cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions)
 {
     char InDefineOrInclude = '\0';
@@ -728,19 +745,16 @@ void Program::BuildImpl(BuildArgs const& Args)
         std::lock_guard Lock(m_Lock);
         if (object)
         {
-            m_Binary = object->spvbin.data;
-            m_BinarySize = object->spvbin.size;
             m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
             m_BuildStatus = CL_BUILD_SUCCESS;
             m_OwnedBinary = std::move(object);
-
-            // TODO: Should probably create all kernels here to ensure that they all link
         }
         else
         {
             m_BuildStatus = CL_BUILD_ERROR;
         }
     }
+    CreateKernels();
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
@@ -770,8 +784,6 @@ void Program::CompileImpl(CompileArgs const& Args)
         std::lock_guard Lock(m_Lock);
         if (object)
         {
-            m_Binary = object->spvbin.data;
-            m_BinarySize = object->spvbin.size;
             m_BinaryType = CL_PROGRAM_BINARY_TYPE_COMPILED_OBJECT;
             m_BuildStatus = CL_BUILD_SUCCESS;
             m_OwnedBinary = std::move(object);
@@ -795,15 +807,13 @@ void Program::LinkImpl(LinkArgs const& Args)
     std::vector<const clc_object*> objects;
     objects.reserve(Args.LinkPrograms.size());
     std::transform(Args.LinkPrograms.begin(), Args.LinkPrograms.end(), std::back_inserter(objects),
-        [](Program::ref_ptr_int const& program) { return std::get<unique_spirv>(program->m_OwnedBinary).get(); });
+        [](Program::ref_ptr_int const& program) { return program->m_OwnedBinary.get(); });
 
     unique_spirv linkedObject(link(objects.data(), (unsigned)objects.size(), nullptr), free);
 
     std::lock_guard Lock(m_Lock);
     if (linkedObject)
     {
-        m_Binary = linkedObject->spvbin.data;
-        m_BinarySize = linkedObject->spvbin.size;
         // TODO: Library if linker option set
         m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
         m_BuildStatus = CL_BUILD_SUCCESS;
@@ -813,8 +823,29 @@ void Program::LinkImpl(LinkArgs const& Args)
     {
         m_BuildStatus = CL_BUILD_ERROR;
     }
+    CreateKernels();
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
+    }
+}
+
+void Program::CreateKernels()
+{
+    if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        return;
+
+    auto& Compiler = g_Platform->GetCompiler();
+    auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
+    auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
+
+    std::lock_guard Lock(m_Lock);
+    static const char* KernelNames[] = { "main_test" };
+    for (auto& name : KernelNames)
+    {
+        auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
+        kernel.reset(get_kernel(m_OwnedBinary.get(), name, nullptr));
+        if (kernel)
+            SignBlob(kernel->binary.data, kernel->binary.size);
     }
 }

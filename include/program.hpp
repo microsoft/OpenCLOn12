@@ -21,7 +21,7 @@ public:
     Device& GetDevice() const { return GetContext().GetDevice(); }
 
     Program(Context& Parent, std::string Source);
-    Program(Context& Parent, std::unique_ptr<byte[]> Binary, size_t BinarySize, cl_program_binary_type Type);
+    Program(Context& Parent, unique_spirv Binary, cl_program_binary_type Type);
     Program(Context& Parent);
     using Callback = void(CL_CALLBACK*)(cl_program, void*);
 
@@ -29,17 +29,17 @@ public:
     cl_int Compile(const char* options, cl_uint num_input_headers, const cl_program *input_headers, const char**header_include_names, Callback pfn_notify, void* user_data);
     cl_int Link(const char* options, cl_uint num_input_programs, const cl_program* input_programs, Callback pfn_notify, void* user_data);
 
+    const clc_dxil_object* GetKernel(const char* name) const;
+
     friend cl_int CL_API_CALL clGetProgramInfo(cl_program, cl_program_info, size_t, void*, size_t*);
     friend cl_int CL_API_CALL clGetProgramBuildInfo(cl_program, cl_device_id, cl_program_build_info, size_t, void*, size_t*);
     friend cl_kernel CL_API_CALL clCreateKernel(cl_program, const char*, cl_int*);
     friend cl_int CL_API_CALL clCreateKernelsInProgram(cl_program, cl_uint, cl_kernel*, cl_uint*);
 
 private:
-    std::recursive_mutex m_Lock;
-    void* m_Binary = nullptr;
-    size_t m_BinarySize = 0;
+    mutable std::recursive_mutex m_Lock;
+    unique_spirv m_OwnedBinary{ nullptr, nullptr };
     cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
-    std::variant<std::monostate, unique_spirv, unique_dxil, unique_app_binary> m_OwnedBinary;
 
     cl_build_status m_BuildStatus = CL_BUILD_NONE;
     std::string m_BuildLog;
@@ -47,7 +47,7 @@ private:
     // For reflection only
     std::string m_LastBuildOptions;
 
-    std::vector<std::string> m_KernelNames = { "main_test" };
+    std::map<std::string, unique_dxil> m_Kernels;
 
     struct CommonOptions
     {
@@ -77,5 +77,7 @@ private:
     void BuildImpl(BuildArgs const& Args);
     void CompileImpl(CompileArgs const& Args);
     void LinkImpl(LinkArgs const& Args);
+
+    void CreateKernels();
 
 };

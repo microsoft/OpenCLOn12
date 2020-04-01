@@ -1,4 +1,5 @@
 #include "kernel.hpp"
+#include "clc_compiler.h"
 
 extern CL_API_ENTRY cl_kernel CL_API_CALL
 clCreateKernel(cl_program      program_,
@@ -13,6 +14,7 @@ clCreateKernel(cl_program      program_,
 
     Program& program = *static_cast<Program*>(program_);
     auto ReportError = program.GetContext().GetErrorReporter(errcode_ret);
+    const clc_dxil_object* kernel;
 
     {
         std::lock_guard Lock(program.m_Lock);
@@ -20,11 +22,9 @@ clCreateKernel(cl_program      program_,
         {
             return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
         }
-        if (std::find_if(program.m_KernelNames.begin(), program.m_KernelNames.end(),
-            [kernel_name](std::string const& namestr)
-            {
-                return strcmp(namestr.c_str(), kernel_name) == 0;
-            }) == program.m_KernelNames.end())
+
+        kernel = program.GetKernel(kernel_name);
+        if (kernel == nullptr)
         {
             return ReportError("No kernel with that name present in program.", CL_INVALID_KERNEL_NAME);
         }
@@ -32,7 +32,7 @@ clCreateKernel(cl_program      program_,
 
     try
     {
-        return new Kernel(program, program.m_Binary, program.m_BinarySize);
+        return new Kernel(program, kernel);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -59,7 +59,7 @@ clCreateKernelsInProgram(cl_program     program_,
         {
             return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
         }
-        if (num_kernels > 0 && num_kernels < program.m_KernelNames.size())
+        if (num_kernels > 0 && num_kernels < program.m_Kernels.size())
         {
             return ReportError("num_kernels is too small.", CL_INVALID_VALUE);
         }
@@ -70,13 +70,14 @@ clCreateKernelsInProgram(cl_program     program_,
         try
         {
             std::vector<Kernel::ref_ptr> temp;
-            temp.resize(program.m_KernelNames.size());
-            for (cl_uint i = 0; i < program.m_KernelNames.size(); ++i)
-            {
-                temp[i] = Kernel::ref_ptr(new Kernel(program, program.m_Binary, program.m_BinarySize), adopt_ref{});
-            }
+            temp.resize(program.m_Kernels.size());
+            std::transform(program.m_Kernels.begin(), program.m_Kernels.end(), temp.begin(),
+                [&program](std::pair<const std::string, unique_dxil> const& pair)
+                {
+                    return Kernel::ref_ptr(new Kernel(program, pair.second.get()), adopt_ref{});
+                });
 
-            for (cl_uint i = 0; i < program.m_KernelNames.size(); ++i)
+            for (cl_uint i = 0; i < program.m_Kernels.size(); ++i)
             {
                 kernels[i] = temp[i].Detach();
             }
@@ -87,7 +88,7 @@ clCreateKernelsInProgram(cl_program     program_,
     }
     if (num_kernels_ret)
     {
-        *num_kernels_ret = (cl_uint)program.m_KernelNames.size();
+        *num_kernels_ret = (cl_uint)program.m_Kernels.size();
     }
     return CL_SUCCESS;
 }
@@ -127,9 +128,10 @@ clSetKernelArg(cl_kernel    kernel,
     return static_cast<Kernel*>(kernel)->SetArg(arg_index, arg_size, arg_value);
 }
 
-Kernel::Kernel(Program& Parent, const void* pBlob, size_t blobSize)
+Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     : CLChildBase(Parent)
-    , m_Shader(&Parent.GetDevice().ImmCtx(), pBlob, blobSize, D3D12TranslationLayer::SShaderDecls{})
+    , m_pDxil(pDxil)
+    , m_Shader(&Parent.GetDevice().ImmCtx(), pDxil->binary.data, pDxil->binary.size, D3D12TranslationLayer::SShaderDecls{})
     , m_RootSig(&Parent.GetDevice().ImmCtx(), 
         D3D12TranslationLayer::RootSignatureDesc(&m_Shader, false))
     , m_PSO(&Parent.GetDevice().ImmCtx(), D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC{ &m_Shader })
