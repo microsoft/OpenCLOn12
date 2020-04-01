@@ -47,6 +47,11 @@ clGetPlatformInfo(cl_platform_id   platform,
         return nullptr;
     }();
 
+    if (!pString)
+    {
+        return CL_INVALID_VALUE;
+    }
+
     auto stringlen = strlen(pString) + 1;
     if (param_value_size && param_value_size < stringlen)
     {

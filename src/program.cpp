@@ -4,6 +4,35 @@
 #include "kernel.hpp"
 #include <dxc/dxcapi.h>
 
+struct ProgramBinaryHeader
+{
+    static constexpr GUID c_ValidHeaderGuid = { /* 8d46c01e-2977-4234-a5b0-292405fc1d34 */
+        0x8d46c01e, 0x2977, 0x4234, {0xa5, 0xb0, 0x29, 0x24, 0x05, 0xfc, 0x1d, 0x34} };
+    const GUID HeaderGuid = c_ValidHeaderGuid;
+    cl_program_binary_type BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
+    uint32_t BinarySize = 0;
+
+    ProgramBinaryHeader() = default;
+    ProgramBinaryHeader(const clc_object* obj, cl_program_binary_type type)
+        : BinaryType(type)
+        , BinarySize((uint32_t)obj->spvbin.size)
+    {
+    }
+    struct CopyBinaryContentsTag {};
+    ProgramBinaryHeader(const clc_object* obj, cl_program_binary_type type, CopyBinaryContentsTag)
+        : ProgramBinaryHeader(obj, type)
+    {
+        memcpy(GetBinary(), obj->spvbin.data, BinarySize);
+    }
+
+    size_t ComputeFullBlobSize() const
+    {
+        return sizeof(*this) + BinarySize;
+    }
+    void* GetBinary() { return this + 1; }
+    const void* GetBinary() const { return this + 1; }
+};
+
 void SignBlob(void* pBlob, size_t size)
 {
     auto& DXIL = g_Platform->GetDXIL();
@@ -106,10 +135,23 @@ clCreateProgramWithBinary(cl_context                     context_,
             *binary_status = CL_INVALID_VALUE;
         return ReportError("lengths, binaries, and the entries within must not be NULL.", CL_INVALID_VALUE);
     }
-    
-    // TODO:
-    // Validation
-    // Determine binary type
+
+    auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[0]);
+    try
+    {
+        if (lengths[0] < sizeof(ProgramBinaryHeader))
+            throw std::exception("Binary size too small");
+        if (header->HeaderGuid != header->c_ValidHeaderGuid)
+            throw std::exception("Invalid binary header");
+        if (lengths[0] < header->ComputeFullBlobSize())
+            throw std::exception("Binary size provided is smaller than expected, binary appears truncated");
+    }
+    catch (std::exception& ex)
+    {
+        if (binary_status)
+            *binary_status = CL_INVALID_BINARY;
+        return ReportError(ex.what(), CL_INVALID_BINARY);
+    }
 
     try
     {
@@ -120,12 +162,12 @@ clCreateProgramWithBinary(cl_context                     context_,
                     delete[] reinterpret_cast<byte*>(obj->spvbin.data);
                 delete obj;
             });
-        BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[lengths[0]]);
-        BinaryHolder->spvbin.size = lengths[0];
-        memcpy(BinaryHolder->spvbin.data, binaries[0], lengths[0]);
+        BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[header->BinarySize]);
+        BinaryHolder->spvbin.size = header->BinarySize;
+        memcpy(BinaryHolder->spvbin.data, header->GetBinary(), header->BinarySize);
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
         if (binary_status) *binary_status = CL_SUCCESS;
-        return new Program(context, std::move(BinaryHolder), CL_PROGRAM_BINARY_TYPE_EXECUTABLE);
+        return new Program(context, std::move(BinaryHolder), header->BinaryType);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -302,7 +344,16 @@ clGetProgramInfo(cl_program         program_,
     case CL_PROGRAM_NUM_DEVICES: return RetValue(1u);
     case CL_PROGRAM_DEVICES: return RetValue((cl_device_id)&program.GetDevice());
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
-    case CL_PROGRAM_BINARY_SIZES: { std::lock_guard lock(program.m_Lock); return RetValue(program.m_OwnedBinary->spvbin.size); }
+    case CL_PROGRAM_BINARY_SIZES:
+    {
+        std::lock_guard lock(program.m_Lock);
+        if (program.m_BinaryType == CL_PROGRAM_BINARY_TYPE_NONE)
+        {
+            return RetValue(0);
+        }
+        ProgramBinaryHeader header(program.m_OwnedBinary.get(), program.m_BinaryType);
+        return RetValue(header.ComputeFullBlobSize());
+    }
     case CL_PROGRAM_BINARIES:
     {
         std::lock_guard lock(program.m_Lock);
@@ -312,7 +363,8 @@ clGetProgramInfo(cl_program         program_,
         }
         if (param_value_size)
         {
-            memcpy(reinterpret_cast<void**>(param_value)[0], program.m_OwnedBinary->spvbin.data, program.m_OwnedBinary->spvbin.size);
+            new (reinterpret_cast<void**>(param_value)[0])
+                ProgramBinaryHeader(program.m_OwnedBinary.get(), program.m_BinaryType, ProgramBinaryHeader::CopyBinaryContentsTag{});
         }
         if (param_value_size_ret)
         {
@@ -323,7 +375,8 @@ clGetProgramInfo(cl_program         program_,
     case CL_PROGRAM_NUM_KERNELS:
     {
         std::lock_guard lock(program.m_Lock);
-        if (program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
+            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         {
             return CL_INVALID_PROGRAM_EXECUTABLE;
         }
@@ -332,7 +385,8 @@ clGetProgramInfo(cl_program         program_,
     case CL_PROGRAM_KERNEL_NAMES:
     {
         std::lock_guard lock(program.m_Lock);
-        if (program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
+            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         {
             return CL_INVALID_PROGRAM_EXECUTABLE;
         }
@@ -414,7 +468,6 @@ Program::Program(Context& Parent, unique_spirv Binary, cl_program_binary_type Ty
     , m_OwnedBinary(std::move(Binary))
     , m_BinaryType(Type)
 {
-    CreateKernels();
 }
 
 Program::Program(Context& Parent)
@@ -441,9 +494,10 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
         {
             return ReportError("Cannot build program: program already has been built.", CL_INVALID_OPERATION);
         }
-        if (m_BinaryType == CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE &&
+            m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         {
-            return ReportError("Cannot build program: program contains executable.", CL_INVALID_OPERATION);
+            return ReportError("Cannot build program: program contains non-executable binary.", CL_INVALID_OPERATION);
         }
 
         // Update build status to indicate build is starting so nobody else can start a build
@@ -505,6 +559,7 @@ cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl
         std::lock_guard Lock(m_Lock);
         if (m_BuildStatus != CL_BUILD_NONE)
         {
+            // TODO: Probably need to allow recompiling with different args as long as there's no kernels or outstanding links
             return ReportError("Cannot compile program: program already has been built.", CL_INVALID_OPERATION);
         }
         if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
@@ -713,14 +768,7 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
 
 void Program::BuildImpl(BuildArgs const& Args)
 {
-    // No need for lock - build status was set to building, so binary type cannot change out from under us
-    if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
-    {
-        // TODO:
-        // Right now all binaries are program binaries, so if we were created with one, just update our type and we're done.
-        m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
-    }
-    else
+    if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
     {
         auto& Compiler = g_Platform->GetCompiler();
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
@@ -741,18 +789,18 @@ void Program::BuildImpl(BuildArgs const& Args)
         unique_spirv compiledObject(compile(&args, nullptr), free);
         const clc_object* rawCompiledObject = compiledObject.get();
         unique_spirv object(rawCompiledObject ? link(&rawCompiledObject, 1, nullptr) : nullptr, free);
+        m_OwnedBinary = std::move(object);
+    }
 
-        std::lock_guard Lock(m_Lock);
-        if (object)
-        {
-            m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
-            m_BuildStatus = CL_BUILD_SUCCESS;
-            m_OwnedBinary = std::move(object);
-        }
-        else
-        {
-            m_BuildStatus = CL_BUILD_ERROR;
-        }
+    std::lock_guard Lock(m_Lock);
+    if (m_OwnedBinary)
+    {
+        m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+        m_BuildStatus = CL_BUILD_SUCCESS;
+    }
+    else
+    {
+        m_BuildStatus = CL_BUILD_ERROR;
     }
     CreateKernels();
     if (Args.Common.pfn_notify)

@@ -18,7 +18,8 @@ clCreateKernel(cl_program      program_,
 
     {
         std::lock_guard Lock(program.m_Lock);
-        if (program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
+            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         {
             return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
         }
@@ -55,7 +56,8 @@ clCreateKernelsInProgram(cl_program     program_,
 
     {
         std::lock_guard Lock(program.m_Lock);
-        if (program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
+            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         {
             return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
         }
