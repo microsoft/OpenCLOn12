@@ -2,13 +2,19 @@
 #include "task.hpp"
 #include "queue.hpp"
 #include "resources.hpp"
+#include "clc_compiler.h"
 
 class ExecuteKernel : public Task
 {
 public:
     Kernel::ref_ptr_int m_Kernel;
     const std::array<uint32_t, 3> m_DispatchDims;
-    D3D12TranslationLayer::UAV* const m_UAV;
+
+    const std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
+    std::vector<D3D12TranslationLayer::Resource*> m_CBs;
+    const std::vector<cl_uint> m_CBOffsets;
+    Resource::UnderlyingResourcePtr m_KernelArgsCb;
+
     void RecordImpl() final;
     void OnComplete() final
     {
@@ -19,8 +25,49 @@ public:
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
         , m_Kernel(&kernel)
         , m_DispatchDims(dims)
-        , m_UAV(kernel.m_ResourceArgument ? &kernel.m_ResourceArgument->GetUAV() : nullptr)
+        , m_UAVs(kernel.m_UAVs)
+        , m_CBs(kernel.m_CBs)
+        , m_CBOffsets(kernel.m_CBOffsets)
     {
+        cl_uint KernelArgCBIndex = kernel.m_pDxil->metadata.kernel_inputs_cbv_id;
+        assert(m_CBs[KernelArgCBIndex] == nullptr);
+        assert(m_CBOffsets[KernelArgCBIndex] == 0);
+        assert(m_CBs.size() == m_CBOffsets.size());
+
+        D3D12TranslationLayer::ResourceCreationArgs Args = {};
+        Args.m_appDesc.m_Subresources = 1;
+        Args.m_appDesc.m_SubresourcesPerPlane = 1;
+        Args.m_appDesc.m_NonOpaquePlaneCount = 1;
+        Args.m_appDesc.m_MipLevels = 1;
+        Args.m_appDesc.m_ArraySize = 1;
+        Args.m_appDesc.m_Depth = 1;
+        Args.m_appDesc.m_Width = (UINT)kernel.m_KernelArgsCbData.size();
+        Args.m_appDesc.m_Height = 1;
+        Args.m_appDesc.m_Format = DXGI_FORMAT_UNKNOWN;
+        Args.m_appDesc.m_Samples = 1;
+        Args.m_appDesc.m_Quality = 0;
+        Args.m_appDesc.m_resourceDimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
+        Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
+        Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(Args.m_appDesc.m_Width);
+        Args.m_heapDesc = CD3DX12_HEAP_DESC(Args.m_appDesc.m_Width,
+            m_Parent->GetDevice().GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD));
+
+        m_KernelArgsCb =
+            D3D12TranslationLayer::Resource::CreateResource(
+                &m_Parent->GetDevice().ImmCtx(),
+                Args,
+                D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
+
+        D3D11_SUBRESOURCE_DATA Data = { kernel.m_KernelArgsCbData.data() };
+        m_Parent->GetDevice().ImmCtx().UpdateSubresources(
+            m_KernelArgsCb.get(),
+            m_KernelArgsCb->GetFullSubresourceSubset(),
+            &Data,
+            nullptr,
+            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
+        
+        m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
     }
 };
 
@@ -126,11 +173,31 @@ clEnqueueTask(cl_command_queue  command_queue,
         event);
 }
 
+constexpr UINT c_aUAVAppendOffsets[D3D11_1_UAV_SLOT_COUNT] =
+{
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+    (UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,(UINT)-1,
+};
+constexpr UINT c_NumConstants[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] =
+{
+    D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT,
+    D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT,
+    D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT,
+    D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT,
+    D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT
+};
+
 void ExecuteKernel::RecordImpl()
 {
     auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
-    const UINT InitialCount = UINT_MAX;
-    ImmCtx.CsSetUnorderedAccessViews(0, 1, &m_UAV, &InitialCount);
+    ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
+    ImmCtx.SetConstantBuffers<D3D12TranslationLayer::e_CS>(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
     ImmCtx.SetPipelineState(&m_Kernel->m_PSO);
     ImmCtx.Dispatch(m_DispatchDims[0], m_DispatchDims[1], m_DispatchDims[2]);
 }

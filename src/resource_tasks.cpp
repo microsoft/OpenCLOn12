@@ -1631,8 +1631,8 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
     }
 
     CopyResourceTask::Args CmdArgs = {};
-    CmdArgs.SrcX = src_origin[0];
-    CmdArgs.DstX = dst_origin[0];
+    CmdArgs.SrcX = (cl_uint)src_origin[0];
+    CmdArgs.DstX = (cl_uint)dst_origin[0];
     CmdArgs.Width = 1;
     CmdArgs.Height = 1;
     CmdArgs.Depth = 1;

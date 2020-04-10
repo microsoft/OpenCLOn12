@@ -138,19 +138,163 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
         D3D12TranslationLayer::RootSignatureDesc(&m_Shader, false))
     , m_PSO(&Parent.GetDevice().ImmCtx(), D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC{ &m_Shader })
 {
+    m_UAVs.resize(m_pDxil->metadata.num_uavs);
+    m_CBs.resize(m_pDxil->metadata.num_consts + 1);
+    m_CBOffsets.resize(m_pDxil->metadata.num_consts + 1);
+    m_KernelArgsCbData.resize(m_pDxil->metadata.kernel_inputs_buf_size);
+
+    // Fill out the fixed data in the kernel args buffer
+    for (cl_uint i = 0; i < m_pDxil->kernel->num_args; ++i)
+    {
+        if (m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL)
+        {
+            auto& arg = m_pDxil->metadata.args[i];
+            cl_uint value = arg.buf_id << 28;
+            byte* KernelArgBase = m_KernelArgsCbData.data() + arg.offset;
+            *reinterpret_cast<cl_uint*>(KernelArgBase) = value;
+        }
+    }
+
+    // TODO: Do we need constant buffers for global constant data?
 }
 
 cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
     auto ReportError = m_Parent->GetContext().GetErrorReporter();
-    if (arg_index != 0)
+    if (arg_index > m_pDxil->kernel->num_args)
     {
-        return ReportError("Error", CL_INVALID_ARG_INDEX);
+        return ReportError("Argument index out of bounds", CL_INVALID_ARG_INDEX);
     }
-    if (arg_size != sizeof(void*))
+
+    switch (m_pDxil->kernel->args[arg_index].address_qualifier)
     {
-        return ReportError("Error", CL_INVALID_ARG_SIZE);
+    case CLC_KERNEL_ARG_ADDRESS_GLOBAL:
+    {
+        if (arg_size != sizeof(cl_mem))
+        {
+            return ReportError("Invalid argument size, must be sizeof(cl_mem) for global arguments", CL_INVALID_ARG_SIZE);
+        }
+        cl_mem resource = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
+        D3D12TranslationLayer::UAV* uav = resource ? &reinterpret_cast<Resource*>(resource)->GetUAV() : nullptr;
+        m_UAVs[m_pDxil->metadata.args[arg_index].buf_id] = uav;
+        break;
     }
-    m_ResourceArgument = reinterpret_cast<Resource*>(const_cast<void*>(arg_value));
+
+    case CLC_KERNEL_ARG_ADDRESS_CONSTANT:
+        if (arg_size != sizeof(cl_mem))
+        {
+            return ReportError("Invalid argument size, must be sizeof(cl_mem) for constant arguments", CL_INVALID_ARG_SIZE);
+        }
+        // TODO: Which CB index?
+        return ReportError("Unsupported argument type", CL_OUT_OF_HOST_MEMORY);
+        break;
+
+    case CLC_KERNEL_ARG_ADDRESS_PRIVATE:
+        if (arg_size != m_pDxil->metadata.args[arg_index].size)
+        {
+            return ReportError("Invalid argument size", CL_INVALID_ARG_SIZE);
+        }
+        memcpy(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset, arg_value, arg_size);
+        break;
+
+    case CLC_KERNEL_ARG_ADDRESS_LOCAL:
+        if (arg_size == 0)
+        {
+            return ReportError("Argument size must be nonzero for local arguments", CL_INVALID_ARG_SIZE);
+        }
+        if (arg_value != nullptr)
+        {
+            return ReportError("Argument value must be null for local arguments", CL_INVALID_ARG_VALUE);
+        }
+        break;
+    }
+
     return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetKernelInfo(cl_kernel       kernel_,
+    cl_kernel_info  param_name,
+    size_t          param_value_size,
+    void* param_value,
+    size_t* param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    if (kernel_)
+    {
+        return CL_INVALID_KERNEL;
+    }
+
+    auto RetValue = [&](auto&& param)
+    {
+        return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
+    };
+    auto& kernel = *static_cast<Kernel*>(kernel_);
+    switch (param_name)
+    {
+    case CL_KERNEL_FUNCTION_NAME: return RetValue(kernel.m_pDxil->kernel->name);
+    case CL_KERNEL_NUM_ARGS: return RetValue((cl_uint)kernel.m_pDxil->kernel->num_args);
+    case CL_KERNEL_REFERENCE_COUNT: return RetValue(kernel.GetRefCount());
+    case CL_KERNEL_CONTEXT: return RetValue((cl_context)&kernel.m_Parent->m_Parent.get());
+    case CL_KERNEL_PROGRAM: return RetValue((cl_program)&kernel.m_Parent.get());
+    case CL_KERNEL_ATTRIBUTES: return RetValue("");
+    }
+
+    return CL_INVALID_VALUE;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetKernelArgInfo(cl_kernel       kernel_,
+    cl_uint         arg_indx,
+    cl_kernel_arg_info  param_name,
+    size_t          param_value_size,
+    void* param_value,
+    size_t* param_value_size_ret) CL_API_SUFFIX__VERSION_1_2
+{
+    if (kernel_)
+    {
+        return CL_INVALID_KERNEL;
+    }
+
+    auto RetValue = [&](auto&& param)
+    {
+        return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
+    };
+    auto& kernel = *static_cast<Kernel*>(kernel_);
+    
+    if (arg_indx > kernel.m_pDxil->kernel->num_args)
+    {
+        return CL_INVALID_ARG_INDEX;
+    }
+
+    auto& arg = kernel.m_pDxil->kernel->args[arg_indx];
+    switch (param_name)
+    {
+    case CL_KERNEL_ARG_ADDRESS_QUALIFIER:
+        switch (arg.address_qualifier)
+        {
+        default:
+        case CLC_KERNEL_ARG_ADDRESS_PRIVATE: return RetValue(CL_KERNEL_ARG_ADDRESS_PRIVATE);
+        case CLC_KERNEL_ARG_ADDRESS_CONSTANT: return RetValue(CL_KERNEL_ARG_ADDRESS_CONSTANT);
+        case CLC_KERNEL_ARG_ADDRESS_LOCAL: return RetValue(CL_KERNEL_ARG_ADDRESS_LOCAL);
+        case CLC_KERNEL_ARG_ADDRESS_GLOBAL: return RetValue(CL_KERNEL_ARG_ADDRESS_GLOBAL);
+        }
+        break;
+    case CL_KERNEL_ARG_ACCESS_QUALIFIER:
+        // Only valid for images, and there's no metadata for that yet
+        return RetValue(CL_KERNEL_ARG_ACCESS_NONE);
+    case CL_KERNEL_ARG_TYPE_NAME: return RetValue(arg.type_name);
+    case CL_KERNEL_ARG_TYPE_QUALIFIER:
+    {
+        cl_kernel_arg_type_qualifier qualifier = CL_KERNEL_ARG_TYPE_NONE;
+        if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_CONST) qualifier |= CL_KERNEL_ARG_TYPE_CONST;
+        if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_RESTRICT) qualifier |= CL_KERNEL_ARG_TYPE_RESTRICT;
+        if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_VOLATILE) qualifier |= CL_KERNEL_ARG_TYPE_VOLATILE;
+        return RetValue(qualifier);
+    }
+    case CL_KERNEL_ARG_NAME:
+        if (arg.name) return RetValue(arg.name);
+        return CL_KERNEL_ARG_INFO_NOT_AVAILABLE;
+    }
+
+    return CL_INVALID_VALUE;
 }

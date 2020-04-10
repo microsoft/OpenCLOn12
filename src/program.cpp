@@ -888,9 +888,9 @@ void Program::CreateKernels()
     auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 
     std::lock_guard Lock(m_Lock);
-    static const char* KernelNames[] = { "main_test" };
-    for (auto& name : KernelNames)
+    for (auto kernelMeta = m_OwnedBinary->kernels; kernelMeta != m_OwnedBinary->kernels + m_OwnedBinary->num_kernels; ++kernelMeta)
     {
+        auto name = kernelMeta->name;
         auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
         kernel.reset(get_kernel(m_OwnedBinary.get(), name, nullptr));
         if (kernel)
