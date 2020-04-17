@@ -61,6 +61,7 @@ public:
 };
 
 struct adopt_ref {};
+struct clc_context;
 
 class Device;
 class Platform : public CLBase<Platform, cl_platform_id>
@@ -80,6 +81,7 @@ public:
     cl_device_id GetDevice(cl_uint i) const noexcept;
     XPlatHelpers::unique_module const& GetCompiler();
     XPlatHelpers::unique_module const& GetDXIL();
+    clc_context* GetCompilerContext();
     void UnloadCompiler();
 
     class ref_int
@@ -96,8 +98,9 @@ protected:
     ComPtr<IDXCoreAdapterList> m_spAdapters;
     std::vector<std::unique_ptr<Device>> m_Devices;
 
-    std::mutex m_ModuleLock;
+    std::recursive_mutex m_ModuleLock;
     XPlatHelpers::unique_module m_Compiler, m_DXIL;
+    std::unique_ptr<clc_context, void(*)(clc_context*)> m_CompilerContext = { nullptr, nullptr };
 };
 extern std::unique_ptr<Platform> g_Platform;
 

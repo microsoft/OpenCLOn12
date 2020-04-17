@@ -135,19 +135,30 @@ struct clc_dxil_object {
    } binary;
 };
 
+struct clc_context {
+   unsigned int dummy;
+};
+
+struct clc_context *clc_context_new(void);
+
+void clc_free_context(struct clc_context *ctx);
+
 struct clc_object *
-clc_compile(const struct clc_compile_args *args,
+clc_compile(struct clc_context *ctx,
+            const struct clc_compile_args *args,
             const struct clc_logger *logger);
 
 struct clc_object *
-clc_link(const struct clc_object **in_objs,
+clc_link(struct clc_context *ctx,
+         const struct clc_object **in_objs,
          unsigned num_in_objs,
          const struct clc_logger *logger);
 
 void clc_free_object(struct clc_object *obj);
 
 struct clc_dxil_object *
-clc_to_dxil(const struct clc_object *obj,
+clc_to_dxil(struct clc_context *ctx,
+            const struct clc_object *obj,
             const char *entrypoint,
             const struct clc_logger *logger);
 

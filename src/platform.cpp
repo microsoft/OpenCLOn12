@@ -1,4 +1,5 @@
 #include "platform.hpp"
+#include "clc_compiler.h"
 
 CL_API_ENTRY cl_int CL_API_CALL
 clGetPlatformInfo(cl_platform_id   platform,
@@ -166,6 +167,19 @@ XPlatHelpers::unique_module const& Platform::GetDXIL()
         LoadFromNextToSelf(m_DXIL, "DXIL.dll");
     }
     return m_DXIL;
+}
+
+clc_context* Platform::GetCompilerContext()
+{
+    std::lock_guard lock(m_ModuleLock);
+    if (!m_CompilerContext)
+    {
+        auto& compiler = GetCompiler();
+        auto createContext = compiler.proc_address<decltype(&clc_context_new)>("clc_context_new");
+        auto freeContext = compiler.proc_address<decltype(&clc_free_context)>("clc_free_context");
+        m_CompilerContext = decltype(m_CompilerContext)(createContext(), freeContext);
+    }
+    return m_CompilerContext.get();
 }
 
 void Platform::UnloadCompiler()

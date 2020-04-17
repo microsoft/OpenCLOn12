@@ -771,6 +771,7 @@ void Program::BuildImpl(BuildArgs const& Args)
     if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
     {
         auto& Compiler = g_Platform->GetCompiler();
+        auto Context = g_Platform->GetCompilerContext();
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
         auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
         auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
@@ -786,9 +787,9 @@ void Program::BuildImpl(BuildArgs const& Args)
         args.num_defines = (unsigned)defines.size();
         args.source = { "source.cl", m_Source.c_str() };
 
-        unique_spirv compiledObject(compile(&args, nullptr), free);
+        unique_spirv compiledObject(compile(Context, &args, nullptr), free);
         const clc_object* rawCompiledObject = compiledObject.get();
-        unique_spirv object(rawCompiledObject ? link(&rawCompiledObject, 1, nullptr) : nullptr, free);
+        unique_spirv object(rawCompiledObject ? link(Context, &rawCompiledObject, 1, nullptr) : nullptr, free);
         m_OwnedBinary = std::move(object);
     }
 
@@ -812,6 +813,7 @@ void Program::BuildImpl(BuildArgs const& Args)
 void Program::CompileImpl(CompileArgs const& Args)
 {
     auto& Compiler = g_Platform->GetCompiler();
+    auto Context = g_Platform->GetCompilerContext();
     auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     clc_compile_args args = {};
@@ -826,7 +828,7 @@ void Program::CompileImpl(CompileArgs const& Args)
     args.num_defines = (unsigned)defines.size();
     args.source = { "source.cl", m_Source.c_str() };
 
-    unique_spirv object(compile(&args, nullptr), free);
+    unique_spirv object(compile(Context, &args, nullptr), free);
 
     {
         std::lock_guard Lock(m_Lock);
@@ -850,6 +852,7 @@ void Program::CompileImpl(CompileArgs const& Args)
 void Program::LinkImpl(LinkArgs const& Args)
 {
     auto& Compiler = g_Platform->GetCompiler();
+    auto Context = g_Platform->GetCompilerContext();
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     std::vector<const clc_object*> objects;
@@ -857,7 +860,7 @@ void Program::LinkImpl(LinkArgs const& Args)
     std::transform(Args.LinkPrograms.begin(), Args.LinkPrograms.end(), std::back_inserter(objects),
         [](Program::ref_ptr_int const& program) { return program->m_OwnedBinary.get(); });
 
-    unique_spirv linkedObject(link(objects.data(), (unsigned)objects.size(), nullptr), free);
+    unique_spirv linkedObject(link(Context, objects.data(), (unsigned)objects.size(), nullptr), free);
 
     std::lock_guard Lock(m_Lock);
     if (linkedObject)
@@ -884,6 +887,7 @@ void Program::CreateKernels()
         return;
 
     auto& Compiler = g_Platform->GetCompiler();
+    auto Context = g_Platform->GetCompilerContext();
     auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
     auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 
@@ -892,7 +896,7 @@ void Program::CreateKernels()
     {
         auto name = kernelMeta->name;
         auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
-        kernel.reset(get_kernel(m_OwnedBinary.get(), name, nullptr));
+        kernel.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr));
         if (kernel)
             SignBlob(kernel->binary.data, kernel->binary.size);
     }
