@@ -1461,6 +1461,7 @@ private:
 
     void RecordImpl() final
     {
+        auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
         if (ImageTypesCopyCompatible(m_Source->m_Desc.image_type, m_Dest->m_Desc.image_type))
         {
             for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
@@ -1474,7 +1475,7 @@ private:
                     m_Args.SrcY + m_Args.Height,
                     m_Args.SrcZ + m_Args.Depth
                 };
-                m_Parent->GetDevice().ImmCtx().ResourceCopyRegion(
+                ImmCtx.ResourceCopyRegion(
                     m_Dest->GetUnderlyingResource(),
                     m_Args.FirstDstArraySlice + i,
                     m_Args.DstX,
@@ -1492,6 +1493,46 @@ private:
             // It cannot support copying arrays of rows or arrays of slices
             assert(m_Args.Depth == 1);
             assert(m_Args.NumArraySlices == 1);
+
+            // Since D3D12 can't support this, we'll allocate a temp buffer in the form of a Tex2D
+            // The translation layer converts these to CopyTextureRegion ops, which don't have any
+            // dimensionality on the footprint desc for the buffer.
+            D3D12TranslationLayer::ResourceCreationArgs Args = {};
+            Args.m_appDesc.m_Subresources = 1;
+            Args.m_appDesc.m_SubresourcesPerPlane = 1;
+            Args.m_appDesc.m_NonOpaquePlaneCount = 1;
+            Args.m_appDesc.m_MipLevels = 1;
+            Args.m_appDesc.m_ArraySize = 1;
+            Args.m_appDesc.m_Depth = 1;
+            Args.m_appDesc.m_Width = m_Args.Width;
+            Args.m_appDesc.m_Height = m_Args.Height;
+            Args.m_appDesc.m_Format = m_Source->GetUnderlyingResource()->AppDesc()->Format();
+            Args.m_appDesc.m_Samples = 1;
+            Args.m_appDesc.m_Quality = 0;
+            Args.m_appDesc.m_resourceDimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
+            Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_NONE;
+            Args.m_desc12 = CD3DX12_RESOURCE_DESC::Tex2D(
+                Args.m_appDesc.m_Format,
+                Args.m_appDesc.m_Width,
+                Args.m_appDesc.m_Height,
+                1, 1, 1, 0, D3D12_RESOURCE_FLAG_NONE, D3D12_TEXTURE_LAYOUT_ROW_MAJOR);
+            Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
+
+            auto tempResource = D3D12TranslationLayer::Resource::CreateResource(&ImmCtx, Args, D3D12TranslationLayer::ResourceAllocationContext::ImmediateContextThreadTemporary);
+            D3D12_BOX SrcBox =
+            {
+                m_Args.SrcX,
+                m_Args.SrcY,
+                m_Args.SrcZ,
+                m_Args.SrcX + m_Args.Width,
+                m_Args.SrcY + m_Args.Height,
+                m_Args.SrcZ + m_Args.Depth
+            };
+            ImmCtx.CopyAndConvertSubresourceRegion(tempResource.get(), 0,
+                m_Source->GetUnderlyingResource(), m_Args.FirstSrcArraySlice, 0, 0, 0, &SrcBox);
+            ImmCtx.CopyAndConvertSubresourceRegion(m_Dest->GetUnderlyingResource(), m_Args.FirstDstArraySlice,
+                tempResource.get(), 0, m_Args.DstX, m_Args.DstY, m_Args.DstZ, nullptr);
         }
     }
     void OnComplete() final
