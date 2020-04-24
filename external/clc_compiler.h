@@ -110,6 +110,7 @@ struct clc_dxil_metadata {
    } *args;
    unsigned kernel_inputs_cbv_id;
    unsigned kernel_inputs_buf_size;
+   unsigned global_work_offset_cbv_id;
    size_t num_uavs;
 
    struct {

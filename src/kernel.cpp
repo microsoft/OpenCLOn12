@@ -139,9 +139,13 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     , m_PSO(&Parent.GetDevice().ImmCtx(), D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC{ &m_Shader })
 {
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
-    m_CBs.resize(m_pDxil->metadata.num_consts + 1);
-    m_CBOffsets.resize(m_pDxil->metadata.num_consts + 1);
-    m_KernelArgsCbData.resize(m_pDxil->metadata.kernel_inputs_buf_size);
+    m_CBs.resize(m_pDxil->metadata.num_consts + 2);
+    m_CBOffsets.resize(m_pDxil->metadata.num_consts + 2);
+    size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
+    KernelInputsCbSize = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT,
+                                                              D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+    m_KernelArgsCbData.resize(KernelInputsCbSize);
+    m_CBOffsets[m_pDxil->metadata.global_work_offset_cbv_id] = (UINT)(KernelInputsCbSize - D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 
     // Fill out the fixed data in the kernel args buffer
     for (cl_uint i = 0; i < m_pDxil->kernel->num_args; ++i)
@@ -174,8 +178,13 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         {
             return ReportError("Invalid argument size, must be sizeof(cl_mem) for global arguments", CL_INVALID_ARG_SIZE);
         }
-        cl_mem resource = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
-        D3D12TranslationLayer::UAV* uav = resource ? &reinterpret_cast<Resource*>(resource)->GetUAV() : nullptr;
+        cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
+        Resource* resource = static_cast<Resource*>(mem);
+        if (resource && resource->m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+        {
+            return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
+        }
+        D3D12TranslationLayer::UAV* uav = resource ? &static_cast<Resource*>(resource)->GetUAV() : nullptr;
         m_UAVs[m_pDxil->metadata.args[arg_index].buf_id] = uav;
         break;
     }
