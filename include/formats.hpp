@@ -173,3 +173,55 @@ constexpr cl_image_format GetCLImageFormatForDXGIFormat(DXGI_FORMAT fmt)
     }
     return {};
 }
+
+inline cl_uint GetNumChannelsInOrder(cl_channel_order order)
+{
+    switch (order)
+    {
+    default:
+    case CL_RGBA: return 4;
+    case CL_ARGB: return 4;
+    case CL_BGRA: return 4;
+    case CL_RGB: return 3;
+    case CL_RG: return 2;
+    case CL_R: return 1;
+    case CL_A: return 1;
+    }
+}
+
+inline cl_uint GetChannelSizeBits(cl_channel_type type)
+{
+    switch (type)
+    {
+    default:
+    case CL_UNSIGNED_INT32:
+    case CL_SIGNED_INT32:
+    case CL_FLOAT:
+        return 32;
+    case CL_UNSIGNED_INT16:
+    case CL_SIGNED_INT16:
+    case CL_UNORM_INT16:
+    case CL_SNORM_INT16:
+    case CL_HALF_FLOAT:
+        return 16;
+    case CL_UNSIGNED_INT8:
+    case CL_SIGNED_INT8:
+    case CL_UNORM_INT8:
+    case CL_SNORM_INT8:
+        return 8;
+    case CL_UNORM_INT_101010:
+        return 10;
+    }
+}
+
+inline cl_uint GetFormatSizeBytes(cl_image_format format)
+{
+    switch (format.image_channel_data_type)
+    {
+    case CL_UNORM_SHORT_565:
+        return 2;
+    default:
+        return GetChannelSizeBits(format.image_channel_data_type) *
+            GetNumChannelsInOrder(format.image_channel_order);
+    }
+}

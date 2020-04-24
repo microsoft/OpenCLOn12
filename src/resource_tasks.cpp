@@ -8,6 +8,94 @@ using D3D12TranslationLayer::ImmediateContext;
 using UpdateSubresourcesScenario = ImmediateContext::UpdateSubresourcesScenario;
 using CPrepareUpdateSubresourcesHelper = ImmediateContext::CPrepareUpdateSubresourcesHelper;
 
+template <typename ReportErrorT>
+static cl_int ProcessImageDimensions(
+    ReportErrorT&& ReportError,
+    size_t const* origin,
+    size_t const* region,
+    Resource& resource,
+    cl_ushort& FirstArraySlice,
+    cl_ushort& NumArraySlices,
+    cl_uint& Height, cl_uint& Depth,
+    cl_uint& Y, cl_uint& Z)
+{
+    switch (resource.m_Desc.image_type)
+    {
+    default:
+    case CL_MEM_OBJECT_BUFFER:
+        return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
+
+    case CL_MEM_OBJECT_IMAGE1D:
+    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
+        if (origin[1] != 0 || origin[2] != 0 ||
+            region[1] != 1 || region[2] != 1)
+        {
+            return ReportError("For 1D images, origin/region dimensions beyond the first must be 0/1 respectively.", CL_INVALID_VALUE);
+        }
+        break;
+
+    case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+        if (origin[1] > resource.m_Desc.image_array_size ||
+            region[1] > resource.m_Desc.image_array_size ||
+            origin[1] + region[1] > resource.m_Desc.image_array_size)
+        {
+            return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
+        }
+        FirstArraySlice = (cl_ushort)origin[1];
+        NumArraySlices = (cl_ushort)region[1];
+
+        if (origin[2] != 0 || region[2] != 1)
+        {
+            return ReportError("For 1D image arrays, origin[2] must be 0 and region[2] must be 1.", CL_INVALID_VALUE);
+        }
+        break;
+
+    case CL_MEM_OBJECT_IMAGE2D:
+    case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+    case CL_MEM_OBJECT_IMAGE3D:
+        if (origin[1] > resource.m_Desc.image_height ||
+            region[1] > resource.m_Desc.image_height ||
+            origin[1] + region[1] > resource.m_Desc.image_height)
+        {
+            return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
+        }
+        Y = (cl_uint)origin[1];
+        Height = (cl_uint)region[1];
+
+        switch (resource.m_Desc.image_type)
+        {
+        case CL_MEM_OBJECT_IMAGE2D:
+            if (origin[2] != 0 || region[2] != 0)
+            {
+                return ReportError("For 2D images, origin[2] must be 0 and region[2] must be 1.", CL_INVALID_VALUE);
+            }
+            break;
+        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+            if (origin[2] > resource.m_Desc.image_array_size ||
+                region[2] > resource.m_Desc.image_array_size ||
+                origin[2] + region[2] > resource.m_Desc.image_array_size)
+            {
+                return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
+            }
+            FirstArraySlice = (cl_ushort)origin[2];
+            NumArraySlices = (cl_ushort)region[2];
+            break;
+        case CL_MEM_OBJECT_IMAGE3D:
+            if (origin[2] > resource.m_Desc.image_depth ||
+                region[2] > resource.m_Desc.image_depth ||
+                origin[2] + region[2] > resource.m_Desc.image_depth)
+            {
+                return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
+            }
+            Z = (cl_uint)origin[2];
+            Depth = (cl_uint)region[2];
+            break;
+        }
+        break;
+    }
+    return CL_SUCCESS;
+}
+
 class MemWriteFillTask : public Task
 {
 public:
@@ -557,79 +645,10 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
         ptr, (cl_uint)input_row_pitch, (cl_uint)input_slice_pitch
     };
 
-    switch (resource.m_Desc.image_type)
+    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
+    if (imageResult != CL_SUCCESS)
     {
-    default:
-    case CL_MEM_OBJECT_BUFFER:
-        return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
-
-    case CL_MEM_OBJECT_IMAGE1D:
-    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
-        if (origin[1] != 0 || origin[2] != 0 ||
-            region[1] != 0 || region[2] != 0)
-        {
-            return ReportError("For 1D images, origin/region dimensions beyond the first must be 0.", CL_INVALID_VALUE);
-        }
-        break;
-
-    case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-        if (origin[1] > resource.m_Desc.image_array_size ||
-            region[1] > resource.m_Desc.image_array_size ||
-            origin[1] + region[1] > resource.m_Desc.image_array_size)
-        {
-            return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
-        }
-        CmdArgs.FirstArraySlice = (cl_ushort)origin[1];
-        CmdArgs.NumArraySlices = (cl_ushort)region[1];
-
-        if (origin[2] != 0 || region[2] != 0)
-        {
-            return ReportError("For 1D image arrays, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-        }
-        break;
-
-    case CL_MEM_OBJECT_IMAGE2D:
-    case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-    case CL_MEM_OBJECT_IMAGE3D:
-        if (origin[1] > resource.m_Desc.image_height ||
-            region[1] > resource.m_Desc.image_height ||
-            origin[1] + region[1] > resource.m_Desc.image_height)
-        {
-            return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
-        }
-        CmdArgs.DstY = (cl_uint)origin[1];
-        CmdArgs.Height = (cl_uint)region[1];
-
-        switch (resource.m_Desc.image_type)
-        {
-        case CL_MEM_OBJECT_IMAGE2D:
-            if (origin[2] != 0 || region[2] != 0)
-            {
-                return ReportError("For 2D images, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-            }
-            break;
-        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-            if (origin[2] > resource.m_Desc.image_array_size ||
-                region[2] > resource.m_Desc.image_array_size ||
-                origin[2] + region[2] > resource.m_Desc.image_array_size)
-            {
-                return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
-            }
-            CmdArgs.FirstArraySlice = (cl_ushort)origin[2];
-            CmdArgs.NumArraySlices = (cl_ushort)region[2];
-            break;
-        case CL_MEM_OBJECT_IMAGE3D:
-            if (origin[2] > resource.m_Desc.image_depth ||
-                region[2] > resource.m_Desc.image_depth ||
-                origin[2] + region[2] > resource.m_Desc.image_depth)
-            {
-                return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
-            }
-            CmdArgs.DstZ = (cl_uint)origin[2];
-            CmdArgs.Depth = (cl_uint)region[2];
-            break;
-        }
-        break;
+        return imageResult;
     }
 
     try
@@ -809,79 +828,10 @@ clEnqueueFillImage(cl_command_queue   command_queue,
     // fill_color is either 4 floats, 4 ints, or 4 uints
     memcpy(CmdArgs.Pattern, fill_color, sizeof(CmdArgs.Pattern));
 
-    switch (resource.m_Desc.image_type)
+    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
+    if (imageResult != CL_SUCCESS)
     {
-    default:
-    case CL_MEM_OBJECT_BUFFER:
-        return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
-
-    case CL_MEM_OBJECT_IMAGE1D:
-    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
-        if (origin[1] != 0 || origin[2] != 0 ||
-            region[1] != 0 || region[2] != 0)
-        {
-            return ReportError("For 1D images, origin/region dimensions beyond the first must be 0.", CL_INVALID_VALUE);
-        }
-        break;
-
-    case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-        if (origin[1] > resource.m_Desc.image_array_size ||
-            region[1] > resource.m_Desc.image_array_size ||
-            origin[1] + region[1] > resource.m_Desc.image_array_size)
-        {
-            return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
-        }
-        CmdArgs.FirstArraySlice = (cl_ushort)origin[1];
-        CmdArgs.NumArraySlices = (cl_ushort)region[1];
-
-        if (origin[2] != 0 || region[2] != 0)
-        {
-            return ReportError("For 1D image arrays, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-        }
-        break;
-
-    case CL_MEM_OBJECT_IMAGE2D:
-    case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-    case CL_MEM_OBJECT_IMAGE3D:
-        if (origin[1] > resource.m_Desc.image_height ||
-            region[1] > resource.m_Desc.image_height ||
-            origin[1] + region[1] > resource.m_Desc.image_height)
-        {
-            return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
-        }
-        CmdArgs.DstY = (cl_uint)origin[1];
-        CmdArgs.Height = (cl_uint)region[1];
-
-        switch (resource.m_Desc.image_type)
-        {
-        case CL_MEM_OBJECT_IMAGE2D:
-            if (origin[2] != 0 || region[2] != 0)
-            {
-                return ReportError("For 2D images, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-            }
-            break;
-        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-            if (origin[2] > resource.m_Desc.image_array_size ||
-                region[2] > resource.m_Desc.image_array_size ||
-                origin[2] + region[2] > resource.m_Desc.image_array_size)
-            {
-                return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
-            }
-            CmdArgs.FirstArraySlice = (cl_ushort)origin[2];
-            CmdArgs.NumArraySlices = (cl_ushort)region[2];
-            break;
-        case CL_MEM_OBJECT_IMAGE3D:
-            if (origin[2] > resource.m_Desc.image_depth ||
-                region[2] > resource.m_Desc.image_depth ||
-                origin[2] + region[2] > resource.m_Desc.image_depth)
-            {
-                return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
-            }
-            CmdArgs.DstZ = (cl_uint)origin[2];
-            CmdArgs.Depth = (cl_uint)region[2];
-            break;
-        }
-        break;
+        return imageResult;
     }
 
     try
@@ -1306,79 +1256,10 @@ clEnqueueReadImage(cl_command_queue     command_queue,
     CmdArgs.DstRowPitch = (cl_uint)row_pitch;
     CmdArgs.DstSlicePitch = (cl_uint)slice_pitch;
 
-    switch (resource.m_Desc.image_type)
+    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+    if (imageResult != CL_SUCCESS)
     {
-    default:
-    case CL_MEM_OBJECT_BUFFER:
-        return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
-
-    case CL_MEM_OBJECT_IMAGE1D:
-    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
-        if (origin[1] != 0 || origin[2] != 0 ||
-            region[1] != 0 || region[2] != 0)
-        {
-            return ReportError("For 1D images, origin/region dimensions beyond the first must be 0.", CL_INVALID_VALUE);
-        }
-        break;
-
-    case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-        if (origin[1] > resource.m_Desc.image_array_size ||
-            region[1] > resource.m_Desc.image_array_size ||
-            origin[1] + region[1] > resource.m_Desc.image_array_size)
-        {
-            return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
-        }
-        CmdArgs.FirstArraySlice = (cl_ushort)origin[1];
-        CmdArgs.NumArraySlices = (cl_ushort)region[1];
-
-        if (origin[2] != 0 || region[2] != 0)
-        {
-            return ReportError("For 1D image arrays, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-        }
-        break;
-
-    case CL_MEM_OBJECT_IMAGE2D:
-    case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-    case CL_MEM_OBJECT_IMAGE3D:
-        if (origin[1] > resource.m_Desc.image_height ||
-            region[1] > resource.m_Desc.image_height ||
-            origin[1] + region[1] > resource.m_Desc.image_height)
-        {
-            return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
-        }
-        CmdArgs.SrcY = (cl_uint)origin[1];
-        CmdArgs.Height = (cl_uint)region[1];
-
-        switch (resource.m_Desc.image_type)
-        {
-        case CL_MEM_OBJECT_IMAGE2D:
-            if (origin[2] != 0 || region[2] != 0)
-            {
-                return ReportError("For 2D images, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-            }
-            break;
-        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-            if (origin[2] > resource.m_Desc.image_array_size ||
-                region[2] > resource.m_Desc.image_array_size ||
-                origin[2] + region[2] > resource.m_Desc.image_array_size)
-            {
-                return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
-            }
-            CmdArgs.FirstArraySlice = (cl_ushort)origin[2];
-            CmdArgs.NumArraySlices = (cl_ushort)region[2];
-            break;
-        case CL_MEM_OBJECT_IMAGE3D:
-            if (origin[2] > resource.m_Desc.image_depth ||
-                region[2] > resource.m_Desc.image_depth ||
-                origin[2] + region[2] > resource.m_Desc.image_depth)
-            {
-                return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
-            }
-            CmdArgs.SrcZ = (cl_uint)origin[2];
-            CmdArgs.Depth = (cl_uint)region[2];
-            break;
-        }
-        break;
+        return imageResult;
     }
 
     cl_int ret = CL_SUCCESS;
@@ -1529,10 +1410,10 @@ private:
                 m_Args.SrcY + m_Args.Height,
                 m_Args.SrcZ + m_Args.Depth
             };
-            ImmCtx.CopyAndConvertSubresourceRegion(tempResource.get(), 0,
-                m_Source->GetUnderlyingResource(), m_Args.FirstSrcArraySlice, 0, 0, 0, &SrcBox);
-            ImmCtx.CopyAndConvertSubresourceRegion(m_Dest->GetUnderlyingResource(), m_Args.FirstDstArraySlice,
-                tempResource.get(), 0, m_Args.DstX, m_Args.DstY, m_Args.DstZ, nullptr);
+            ImmCtx.ResourceCopyRegion(tempResource.get(), 0, 0, 0, 0,
+                m_Source->GetUnderlyingResource(), m_Args.FirstSrcArraySlice, &SrcBox);
+            ImmCtx.ResourceCopyRegion(m_Dest->GetUnderlyingResource(), m_Args.FirstDstArraySlice,
+                m_Args.DstX, m_Args.DstY, m_Args.DstZ, tempResource.get(), 0, nullptr);
         }
     }
     void OnComplete() final
@@ -1674,96 +1555,21 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
     CopyResourceTask::Args CmdArgs = {};
     CmdArgs.SrcX = (cl_uint)src_origin[0];
     CmdArgs.DstX = (cl_uint)dst_origin[0];
-    CmdArgs.Width = 1;
+    CmdArgs.Width = (cl_uint)region[0];
     CmdArgs.Height = 1;
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
-    auto ProcessImageDimensions = [&CmdArgs, &region, ReportError](decltype(src_origin) origin, decltype(source)& resource,
-        cl_ushort& FirstArraySlice,
-        cl_uint& Y, cl_uint& Z)
+    auto imageResult = ProcessImageDimensions(ReportError, src_origin, region, source, CmdArgs.FirstSrcArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+    if (imageResult != CL_SUCCESS)
     {
-        switch (resource.m_Desc.image_type)
-        {
-        default:
-        case CL_MEM_OBJECT_BUFFER:
-            return ReportError("image must be an image object.", CL_INVALID_MEM_OBJECT);
-
-        case CL_MEM_OBJECT_IMAGE1D:
-        case CL_MEM_OBJECT_IMAGE1D_BUFFER:
-            if (origin[1] != 0 || origin[2] != 0 ||
-                region[1] != 0 || region[2] != 0)
-            {
-                return ReportError("For 1D images, origin/region dimensions beyond the first must be 0.", CL_INVALID_VALUE);
-            }
-            break;
-
-        case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-            if (origin[1] > resource.m_Desc.image_array_size ||
-                region[1] > resource.m_Desc.image_array_size ||
-                origin[1] + region[1] > resource.m_Desc.image_array_size)
-            {
-                return ReportError("For 1D image arrays, origin[1] and region[1] must be less than the image_array_size.", CL_INVALID_VALUE);
-            }
-            FirstArraySlice = (cl_ushort)origin[1];
-            CmdArgs.NumArraySlices = (cl_ushort)region[1];
-
-            if (origin[2] != 0 || region[2] != 0)
-            {
-                return ReportError("For 1D image arrays, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-            }
-            break;
-
-        case CL_MEM_OBJECT_IMAGE2D:
-        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-        case CL_MEM_OBJECT_IMAGE3D:
-            if (origin[1] > resource.m_Desc.image_height ||
-                region[1] > resource.m_Desc.image_height ||
-                origin[1] + region[1] > resource.m_Desc.image_height)
-            {
-                return ReportError("For 2D and 3D images, origin[1] and region[1] must be less than the image_height.", CL_INVALID_VALUE);
-            }
-            Y = (cl_uint)origin[1];
-            CmdArgs.Height = (cl_uint)region[1];
-
-            switch (resource.m_Desc.image_type)
-            {
-            case CL_MEM_OBJECT_IMAGE2D:
-                if (origin[2] != 0 || region[2] != 0)
-                {
-                    return ReportError("For 2D images, origin[2] and region[2] must be 0.", CL_INVALID_VALUE);
-                }
-                break;
-            case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-                if (origin[2] > resource.m_Desc.image_array_size ||
-                    region[2] > resource.m_Desc.image_array_size ||
-                    origin[2] + region[2] > resource.m_Desc.image_array_size)
-                {
-                    return ReportError("For 2D image arrays, origin[2] and region[2] must be less than the image_array_size.", CL_INVALID_VALUE);
-                }
-                FirstArraySlice = (cl_ushort)origin[2];
-                CmdArgs.NumArraySlices = (cl_ushort)region[2];
-                break;
-            case CL_MEM_OBJECT_IMAGE3D:
-                if (origin[2] > resource.m_Desc.image_depth ||
-                    region[2] > resource.m_Desc.image_depth ||
-                    origin[2] + region[2] > resource.m_Desc.image_depth)
-                {
-                    return ReportError("For 3D images, origin[2] and region[2] must be less than the image_depth.", CL_INVALID_VALUE);
-                }
-                Z = (cl_uint)origin[2];
-                CmdArgs.Depth = (cl_uint)region[2];
-                break;
-            }
-            break;
-        }
-        return CL_SUCCESS;
-    };
-
-    auto result = ProcessImageDimensions(src_origin, source, CmdArgs.FirstSrcArraySlice, CmdArgs.SrcY, CmdArgs.SrcZ);
-    if (result != CL_SUCCESS) return result;
-    result = ProcessImageDimensions(dst_origin, dest, CmdArgs.FirstDstArraySlice, CmdArgs.DstY, CmdArgs.DstZ);
-    if (result != CL_SUCCESS) return result;
+        return imageResult;
+    }
+    imageResult = ProcessImageDimensions(ReportError, dst_origin, region, dest, CmdArgs.FirstDstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
+    if (imageResult != CL_SUCCESS)
+    {
+        return imageResult;
+    }
 
     if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
     {
@@ -2118,7 +1924,117 @@ clEnqueueCopyBufferRect(cl_command_queue    command_queue,
     return CL_SUCCESS;
 }
 
-#pragma warning(disable: 4100)
+class CopyBufferAndImageTask : public Task
+{
+public:
+    struct Args
+    {
+        cl_uint ImageX;
+        cl_uint ImageY;
+        cl_uint ImageZ;
+        cl_uint Width;
+        cl_uint Height;
+        cl_uint Depth;
+        size_t BufferOffset;
+        cl_uint BufferPitch;
+        cl_ushort FirstImageArraySlice;
+        cl_ushort NumArraySlices;
+    };
+
+    CopyBufferAndImageTask(Context& Parent, Resource& Source, Resource& Dest,
+        cl_command_queue CommandQueue, Args const& args, cl_command_type type)
+        : Task(Parent, type, CommandQueue)
+        , m_Source(&Source)
+        , m_Dest(&Dest)
+        , m_Args(args)
+    {
+    }
+
+private:
+    Resource::ref_ptr_int m_Source;
+    Resource::ref_ptr_int m_Dest;
+    const Args m_Args;
+
+    void FillBufferDesc(D3D12_TEXTURE_COPY_LOCATION& Buffer, size_t BufferOffset, Resource* pImage)
+    {
+        Buffer.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        Buffer.PlacedFootprint.Offset = BufferOffset;
+        Buffer.PlacedFootprint.Footprint.Width = m_Args.Width;
+        Buffer.PlacedFootprint.Footprint.Height = m_Args.Height;
+        Buffer.PlacedFootprint.Footprint.Depth = m_Args.Depth;
+        Buffer.PlacedFootprint.Footprint.RowPitch = m_Args.BufferPitch;
+        Buffer.PlacedFootprint.Footprint.Format = pImage->GetUnderlyingResource()->AppDesc()->Format();
+    }
+    void MoveToNextArraySlice(D3D12_TEXTURE_COPY_LOCATION& Desc)
+    {
+        if (Desc.Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT)
+        {
+            Desc.PlacedFootprint.Offset += 
+                D3D12TranslationLayer::Align(Desc.PlacedFootprint.Footprint.RowPitch * Desc.PlacedFootprint.Footprint.Height,
+                                             (UINT)D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+        }
+        else
+        {
+            Desc.SubresourceIndex++;
+        }
+    }
+    void RecordImpl() final
+    {
+        D3D12_TEXTURE_COPY_LOCATION Src, Dest;
+        D3D12TranslationLayer::CViewSubresourceSubset SrcSubresources, DestSubresources;
+        UINT DstX = 0, DstY = 0, DstZ = 0;
+        D3D12_BOX SrcBox;
+        if (m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+        {
+            FillBufferDesc(Src, m_Source->m_Offset, m_Dest.Get());
+            SrcSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
+            SrcBox = { 0, 0, 0, m_Args.Width, m_Args.Height, m_Args.Depth };
+
+            Dest = CD3DX12_TEXTURE_COPY_LOCATION(m_Dest->GetUnderlyingResource()->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
+            DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(
+                D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, 0, m_Args.FirstImageArraySlice, 0), 1, (UINT16)m_Dest->m_Desc.image_array_size, 1);
+            DstX = m_Args.ImageX;
+            DstY = m_Args.ImageY;
+            DstZ = m_Args.ImageZ;
+        }
+        else
+        {
+            Src = CD3DX12_TEXTURE_COPY_LOCATION(m_Source->GetUnderlyingResource()->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
+            SrcSubresources = D3D12TranslationLayer::CViewSubresourceSubset(
+                D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, 0, m_Args.FirstImageArraySlice, 0), 1, (UINT16)m_Source->m_Desc.image_array_size, 1);
+            SrcBox =
+            {
+                m_Args.ImageX,
+                m_Args.ImageY,
+                m_Args.ImageZ,
+                m_Args.ImageX + m_Args.Width,
+                m_Args.ImageY + m_Args.Height,
+                m_Args.ImageZ + m_Args.Depth
+            };
+
+            FillBufferDesc(Dest, m_Dest->m_Offset, m_Source.Get());
+            DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
+        }
+
+        auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+        ImmCtx.GetResourceStateManager().TransitionSubresources(m_Source->GetUnderlyingResource(), SrcSubresources, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        ImmCtx.GetResourceStateManager().TransitionSubresources(m_Dest->GetUnderlyingResource(), DestSubresources, D3D12_RESOURCE_STATE_COPY_DEST);
+        for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
+        {
+            ImmCtx.GetGraphicsCommandList()->CopyTextureRegion(&Dest, DstX, DstY, DstZ, &Src, &SrcBox);
+            MoveToNextArraySlice(Src);
+            MoveToNextArraySlice(Dest);
+        }
+        ImmCtx.PostCopy(m_Source->GetUnderlyingResource(), SrcSubresources.begin().StartSubresource(),
+                        m_Dest->GetUnderlyingResource(), DestSubresources.begin().StartSubresource(),
+                        m_Args.NumArraySlices);
+    }
+    void OnComplete() final
+    {
+        m_Source.Release();
+        m_Dest.Release();
+    }
+};
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
@@ -2131,9 +2047,88 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (!src_image || !dst_buffer)
+    {
+        return ReportError("src_image and dst_buffer must not be NULL.", CL_INVALID_MEM_OBJECT);
+    }
+
+    Resource& image = *static_cast<Resource*>(src_image);
+    Resource& buffer = *static_cast<Resource*>(dst_buffer);
+    if (image.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("src_image must be an image.", CL_INVALID_MEM_OBJECT);
+    }
+    if (buffer.m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("dst_buffer must be a buffer.", CL_INVALID_MEM_OBJECT);
+    }
+
+    if (&buffer.m_Parent.get() != &context ||
+        &image.m_Parent.get() != &context)
+    {
+        return ReportError("Both the buffer and image must belong to the same context as the queue.", CL_INVALID_CONTEXT);
+    }
+
+    CopyBufferAndImageTask::Args CmdArgs = {};
+    CmdArgs.Width = (cl_uint)region[0];
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
+    CmdArgs.NumArraySlices = 1;
+
+    auto imageResult = ProcessImageDimensions(ReportError, src_origin, region, image, CmdArgs.FirstImageArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.ImageY, CmdArgs.ImageZ);
+    if (imageResult != CL_SUCCESS)
+    {
+        return imageResult;
+    }
+
+    cl_uint elementSize = GetFormatSizeBytes(image.m_Format);
+    size_t rowPitch = elementSize * CmdArgs.Width;
+    if (rowPitch % D3D12_TEXTURE_DATA_PITCH_ALIGNMENT != 0)
+    {
+        return ReportError("Cannot copy between buffers and images with less than 256-byte alignment.", CL_INVALID_IMAGE_SIZE);
+    }
+    size_t slicePitch = elementSize * CmdArgs.Height;
+    if (CmdArgs.NumArraySlices > 1 &&
+        slicePitch % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0)
+    {
+        return ReportError("Cannot copy between buffers and image arrays with less than 512-byte alignment per array element.", CL_INVALID_IMAGE_SIZE);
+    }
+
+    size_t bufferSize = slicePitch * CmdArgs.Depth * CmdArgs.NumArraySlices;
+    if (dst_offset > buffer.m_Desc.image_width ||
+        bufferSize > buffer.m_Desc.image_width ||
+        dst_offset + bufferSize > buffer.m_Desc.image_width)
+    {
+        return ReportError("dst_offset cannot exceed the buffer bounds.", CL_INVALID_VALUE);
+    }
+
+    try
+    {
+        std::unique_ptr<Task> task(new CopyBufferAndImageTask(context, image, buffer, command_queue, CmdArgs, CL_COMMAND_COPY_IMAGE_TO_BUFFER));
+        auto Lock = context.GetDevice().GetTaskPoolLock();
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+        queue.QueueTask(task.get(), Lock);
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return CL_SUCCESS;
 }
 
+#pragma warning(disable: 4100)
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyBufferToImage(cl_command_queue command_queue,
