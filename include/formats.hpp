@@ -218,6 +218,8 @@ inline cl_uint GetFormatSizeBytes(cl_image_format format)
 {
     switch (format.image_channel_data_type)
     {
+    case 0:
+        return 1;
     case CL_UNORM_SHORT_565:
         return 2;
     default:

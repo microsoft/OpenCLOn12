@@ -173,3 +173,38 @@ public:
 private:
     void RecordImpl() final { }
 };
+
+class Resource;
+// Map tasks will be enqueued on a queue, and also tracked on the resource which has been mapped.
+// That'll allow Unmap to do the right thing, by looking up the type of map operation that was
+// done for a given pointer.
+class MapTask : public Task
+{
+public:
+    struct Args
+    {
+        cl_uint SrcX;
+        cl_uint SrcY;
+        cl_uint SrcZ;
+        cl_uint Width;
+        cl_uint Height;
+        cl_uint Depth;
+        cl_ushort FirstArraySlice;
+        cl_ushort NumArraySlices;
+    };
+
+    MapTask(Context& Parent, cl_command_queue command_queue, Resource& resource, cl_map_flags flags, cl_command_type command, Args const& args);
+    virtual void Unmap(bool IsResourceBeingDestroyed) = 0;
+    void* GetPointer() const { return m_Pointer; }
+    size_t GetRowPitch() const { return m_RowPitch; }
+    size_t GetSlicePitch() const { return m_SlicePitch; }
+
+protected:
+    void* m_Pointer = nullptr;
+    size_t m_RowPitch = 0, m_SlicePitch = 0;
+    Resource& m_Resource;
+    const cl_map_flags m_MapFlags;
+    const Args m_Args;
+
+    void OnComplete() override;
+};

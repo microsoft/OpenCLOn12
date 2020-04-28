@@ -1,5 +1,6 @@
 #include "resources.hpp"
 #include "formats.hpp"
+#include "task.hpp"
 
 constexpr cl_mem_flags ValidMemFlags =
     CL_MEM_READ_WRITE |
@@ -738,7 +739,7 @@ Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::Resource
             nullptr,
             D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
     }
-    return new Resource(Parent, std::move(Underlying), nullptr, image_format, image_desc, flags);
+    return new Resource(Parent, std::move(Underlying), pHostPointer, image_format, image_desc, flags);
 }
 
 Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
@@ -927,6 +928,14 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
         }
 
         m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
+    }
+}
+
+Resource::~Resource()
+{
+    for (auto& map : m_OutstandingMaps)
+    {
+        map.second->Unmap(true);
     }
 }
 

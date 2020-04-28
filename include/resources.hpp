@@ -2,6 +2,8 @@
 
 #include "context.hpp"
 
+class MapTask;
+
 class Resource : public CLChildBase<Resource, Context, cl_mem>
 {
 public:
@@ -25,11 +27,14 @@ public:
 
     D3D12TranslationLayer::SRV& GetSRV() { return m_SRV.value(); }
     D3D12TranslationLayer::UAV& GetUAV() { return m_UAV.value(); }
+    ~Resource();
 
 protected:
     UnderlyingResourcePtr m_Underlying;
     std::optional<D3D12TranslationLayer::SRV> m_SRV;
     std::optional<D3D12TranslationLayer::UAV> m_UAV;
+
+    std::unordered_map<void*, ::ref_ptr_int<MapTask>> m_OutstandingMaps;
 
     Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHostPointer, size_t size, cl_mem_flags flags);
     Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags);

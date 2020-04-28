@@ -171,6 +171,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
 
     D3D12TranslationLayer::CSubresourceSubset subresources =
         m_Target->GetUnderlyingResource()->GetFullSubresourceSubset();
+    const cl_uint FormatBytes = GetFormatSizeBytes(m_Target->m_Format);
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
         subresources.m_BeginArray = (UINT16)(m_Args.FirstArraySlice + i);
@@ -192,7 +193,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
                     const char* pSubresourceData = reinterpret_cast<const char*>(WriteArgs.pData);
                     pSubresourceData += (i + z + m_Args.SrcZ) * WriteArgs.SlicePitch;
                     pSubresourceData += (y + m_Args.SrcY) * WriteArgs.RowPitch;
-                    pSubresourceData += m_Args.SrcX;
+                    pSubresourceData += FormatBytes * m_Args.SrcX;
 
                     UploadData.pSysMem = pSubresourceData;
                     UploadData.SysMemPitch = WriteArgs.RowPitch;
@@ -924,19 +925,20 @@ void MemReadTask::RecordImpl()
             D3D12TranslationLayer::MAP_TYPE_READ, false,
             nullptr, &MapRet);
 
-        if (m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+        const cl_uint FormatBytes = GetFormatSizeBytes(m_Source->m_Format);
+        if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX == 0)
         {
-            assert(i == 0);
             for (cl_uint z = 0; z < m_Args.Depth; ++z)
             {
                 for (cl_uint y = 0; y < m_Args.Height; ++y)
                 {
+                    assert(i == 0 || z == 0);
                     char* pDest = reinterpret_cast<char*>(m_Args.pData) +
-                        (z + m_Args.DstZ) * m_Args.DstSlicePitch +
+                        (z + i + m_Args.DstZ) * m_Args.DstSlicePitch +
                         (y + m_Args.DstY) * m_Args.DstRowPitch +
                         m_Args.DstX;
                     const char* pSrc = reinterpret_cast<const char*>(MapRet.pData) +
-                        (z + m_Args.SrcZ) * m_Args.SrcBufferSlicePitch +
+                        (z + i + m_Args.SrcZ) * m_Args.SrcBufferSlicePitch +
                         (y + m_Args.SrcY) * m_Args.SrcBufferRowPitch +
                         m_Args.SrcX;
                     memcpy(pDest, pSrc, m_Args.Width);
@@ -945,12 +947,11 @@ void MemReadTask::RecordImpl()
         }
         else
         {
-            assert(m_Args.DstZ == 0 && m_Args.DstY == 0 && m_Args.DstX == 0);
             char* pDest = reinterpret_cast<char*>(m_Args.pData) +
                 i * m_Args.Depth * m_Args.DstSlicePitch;
             D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
             D3D12_SUBRESOURCE_DATA Src = { MapRet.pData, (LONG_PTR)MapRet.RowPitch, (LONG_PTR)MapRet.DepthPitch };
-            MemcpySubresource(&Dest, &Src, MapRet.RowPitch, m_Args.Height, m_Args.Depth);
+            MemcpySubresource(&Dest, &Src, FormatBytes * m_Args.Width, m_Args.Height, m_Args.Depth);
         }
     }
     
@@ -2128,8 +2129,6 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
     return CL_SUCCESS;
 }
 
-#pragma warning(disable: 4100)
-
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueCopyBufferToImage(cl_command_queue command_queue,
     cl_mem           src_buffer,
@@ -2141,8 +2140,209 @@ clEnqueueCopyBufferToImage(cl_command_queue command_queue,
     const cl_event* event_wait_list,
     cl_event* event) CL_API_SUFFIX__VERSION_1_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (!src_buffer || !dst_image)
+    {
+        return ReportError("dst_image and src_buffer must not be NULL.", CL_INVALID_MEM_OBJECT);
+    }
+
+    Resource& image = *static_cast<Resource*>(dst_image);
+    Resource& buffer = *static_cast<Resource*>(src_buffer);
+    if (image.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("src_image must be an image.", CL_INVALID_MEM_OBJECT);
+    }
+    if (buffer.m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("dst_buffer must be a buffer.", CL_INVALID_MEM_OBJECT);
+    }
+
+    if (&buffer.m_Parent.get() != &context ||
+        &image.m_Parent.get() != &context)
+    {
+        return ReportError("Both the buffer and image must belong to the same context as the queue.", CL_INVALID_CONTEXT);
+    }
+
+    CopyBufferAndImageTask::Args CmdArgs = {};
+    CmdArgs.Width = (cl_uint)region[0];
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
+    CmdArgs.NumArraySlices = 1;
+
+    auto imageResult = ProcessImageDimensions(ReportError, dst_origin, region, image, CmdArgs.FirstImageArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.ImageY, CmdArgs.ImageZ);
+    if (imageResult != CL_SUCCESS)
+    {
+        return imageResult;
+    }
+
+    cl_uint elementSize = GetFormatSizeBytes(image.m_Format);
+    size_t rowPitch = elementSize * CmdArgs.Width;
+    if (rowPitch % D3D12_TEXTURE_DATA_PITCH_ALIGNMENT != 0)
+    {
+        return ReportError("Cannot copy between buffers and images with less than 256-byte alignment.", CL_INVALID_IMAGE_SIZE);
+    }
+    size_t slicePitch = elementSize * CmdArgs.Height;
+    if (CmdArgs.NumArraySlices > 1 &&
+        slicePitch % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0)
+    {
+        return ReportError("Cannot copy between buffers and image arrays with less than 512-byte alignment per array element.", CL_INVALID_IMAGE_SIZE);
+    }
+
+    size_t bufferSize = slicePitch * CmdArgs.Depth * CmdArgs.NumArraySlices;
+    if (src_offset > buffer.m_Desc.image_width ||
+        bufferSize > buffer.m_Desc.image_width ||
+        src_offset + bufferSize > buffer.m_Desc.image_width)
+    {
+        return ReportError("dst_offset cannot exceed the buffer bounds.", CL_INVALID_VALUE);
+    }
+
+    try
+    {
+        std::unique_ptr<Task> task(new CopyBufferAndImageTask(context, buffer, image, command_queue, CmdArgs, CL_COMMAND_COPY_BUFFER_TO_IMAGE));
+        auto Lock = context.GetDevice().GetTaskPoolLock();
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+        queue.QueueTask(task.get(), Lock);
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return CL_SUCCESS;
 }
+
+MapTask::MapTask(Context& Parent, cl_command_queue command_queue, Resource& resource, cl_map_flags flags, cl_command_type command, Args const& args)
+    : Task(Parent, command, command_queue)
+    , m_Resource(resource)
+    , m_Args(args)
+    , m_MapFlags(flags)
+{
+    m_Resource.AddInternalRef();
+}
+
+void MapTask::OnComplete()
+{
+    m_Resource.ReleaseInternalRef();
+}
+
+class MapUseHostPtrResourceTask : public MapTask
+{
+public:
+    MapUseHostPtrResourceTask(Context& Parent, cl_command_queue command_queue, cl_map_flags flags, Resource& resource, Args const& args, cl_command_type command)
+        : MapTask(Parent, command_queue, resource, flags, command, args)
+    {
+        m_Pointer = (byte*)resource.m_pHostPointer +
+            resource.m_Desc.image_slice_pitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
+            resource.m_Desc.image_row_pitch * m_Args.SrcY +
+            GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX;
+        m_RowPitch = resource.m_Desc.image_row_pitch;
+        m_SlicePitch = resource.m_Desc.image_slice_pitch;
+    }
+
+private:
+    void RecordImpl() final
+    {
+        if (m_MapFlags & CL_MAP_READ)
+        {
+            MemReadTask::Args ReadArgs = {};
+            ReadArgs.SrcX = ReadArgs.DstX = m_Args.SrcX;
+            ReadArgs.SrcY = ReadArgs.DstY = m_Args.SrcY;
+            ReadArgs.SrcZ = ReadArgs.DstZ = m_Args.SrcZ;
+            ReadArgs.Width = m_Args.Width;
+            ReadArgs.Height = m_Args.Height;
+            ReadArgs.Depth = m_Args.Depth;
+            ReadArgs.FirstArraySlice = m_Args.FirstArraySlice;
+            ReadArgs.NumArraySlices = m_Args.NumArraySlices;
+            ReadArgs.pData = m_Resource.m_pHostPointer;
+            ReadArgs.DstRowPitch = (cl_uint)m_Resource.m_Desc.image_row_pitch;
+            ReadArgs.DstSlicePitch = (cl_uint)m_Resource.m_Desc.image_slice_pitch;
+            MemReadTask(m_Parent.get(), m_Resource, CL_COMMAND_READ_BUFFER, m_CommandQueue.Get(), ReadArgs).Record();
+        }
+    }
+    void Unmap(bool IsResourceBeingDestroyed) final
+    {
+        // Don't create the write-back task if the resource is being destroyed.
+        // A) This is an optimization since clearly the resource contents don't need to be updated.
+        // B) The task would add-ref the resource, which would result in a double-delete
+        if ((m_MapFlags & CL_MAP_WRITE) && !IsResourceBeingDestroyed)
+        {
+            MemWriteFillTask::Args WriteArgs = {};
+            MemWriteFillTask::WriteData PointerArgs = {};
+            PointerArgs.pData = m_Resource.m_pHostPointer;
+            PointerArgs.RowPitch = (cl_uint)m_Resource.m_Desc.image_row_pitch;
+            PointerArgs.SlicePitch = (cl_uint)m_Resource.m_Desc.image_slice_pitch;
+            WriteArgs.Data = PointerArgs;
+            WriteArgs.SrcX = WriteArgs.DstX = m_Args.SrcX;
+            WriteArgs.SrcY = WriteArgs.DstY = m_Args.SrcY;
+            WriteArgs.SrcZ = WriteArgs.DstZ = m_Args.SrcZ;
+            WriteArgs.Width = m_Args.Width;
+            WriteArgs.Height = m_Args.Height;
+            WriteArgs.Depth = m_Args.Depth;
+            WriteArgs.FirstArraySlice = m_Args.FirstArraySlice;
+            WriteArgs.NumArraySlices = m_Args.NumArraySlices;
+            MemWriteFillTask(m_Parent.get(), m_Resource, CL_COMMAND_WRITE_BUFFER, m_CommandQueue.Get(), WriteArgs, true).Record();
+        }
+    }
+};
+
+constexpr static D3D12_RANGE EmptyRange = {};
+class MapSynchronizeTask : public MapTask
+{
+public:
+    MapSynchronizeTask(Context& Parent, cl_command_queue command_queue, cl_map_flags flags, Resource& resource, Args const& args, cl_command_type command)
+        : MapTask(Parent, command_queue, resource, flags, command, args)
+    {
+        void* basePointer = nullptr;
+        D3D12TranslationLayer::ThrowFailure(resource.GetUnderlyingResource()->GetUnderlyingResource()->Map(0, &EmptyRange, &basePointer));
+        auto& Placement = resource.GetUnderlyingResource()->GetSubresourcePlacement(args.FirstArraySlice);
+        m_RowPitch = Placement.Footprint.RowPitch;
+        m_SlicePitch = args.NumArraySlices > 1 ?
+            (UINT)(resource.GetUnderlyingResource()->GetSubresourcePlacement(args.FirstArraySlice + 1).Offset - Placement.Offset) :
+            resource.GetUnderlyingResource()->DepthPitch(args.FirstArraySlice);
+
+        m_Pointer = (byte*)resource.m_pHostPointer +
+            m_SlicePitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
+            m_RowPitch * m_Args.SrcY +
+            GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX;
+    }
+
+private:
+    void RecordImpl() final
+    {
+        D3D12TranslationLayer::MAP_TYPE MapType = [](cl_map_flags flags)
+        {
+            switch (flags)
+            {
+            default:
+            case CL_MAP_READ | CL_MAP_WRITE: return D3D12TranslationLayer::MAP_TYPE_READWRITE;
+            case CL_MAP_READ: return D3D12TranslationLayer::MAP_TYPE_READ;
+            case CL_MAP_WRITE: return D3D12TranslationLayer::MAP_TYPE_WRITE;
+            }
+        }(m_MapFlags);
+        for (cl_uint i = 0; i < m_Args.NumArraySlices; ++i)
+        {
+            m_Resource.GetUnderlyingResource()->m_pParent->SynchronizeForMap(
+                m_Resource.GetUnderlyingResource(),
+                m_Args.FirstArraySlice + i, MapType, false);
+        };
+    }
+    void Unmap([[maybe_unused]] bool IsResourceBeingDestroyed) final
+    {
+        m_Resource.GetUnderlyingResource()->GetUnderlyingResource()->Unmap(0, &EmptyRange);
+    }
+};
+
+#pragma warning(disable: 4100)
 
 extern CL_API_ENTRY void * CL_API_CALL
 clEnqueueMapBuffer(cl_command_queue command_queue,
@@ -2156,7 +2356,14 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
     cl_event *       event,
     cl_int *         errcode_ret) CL_API_SUFFIX__VERSION_1_0
 {
-    *errcode_ret = CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_COMMAND_QUEUE;
+        return nullptr;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter(errcode_ret);
     return nullptr;
 }
 
