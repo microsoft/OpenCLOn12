@@ -104,41 +104,6 @@ clSVMFree(cl_context        context,
 
 /* Sampler APIs */
 
-#ifdef CL_VERSION_2_0
-
-extern CL_API_ENTRY cl_sampler CL_API_CALL
-clCreateSamplerWithProperties(cl_context                     context,
-    const cl_sampler_properties *  sampler_properties,
-    cl_int *                       errcode_ret) CL_API_SUFFIX__VERSION_2_0
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
-
-#endif
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clRetainSampler(cl_sampler sampler) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clReleaseSampler(cl_sampler sampler) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clGetSamplerInfo(cl_sampler         sampler,
-    cl_sampler_info    param_name,
-    size_t             param_value_size,
-    void *             param_value,
-    size_t *           param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
 #ifdef CL_VERSION_1_2
 
 extern CL_API_ENTRY cl_program CL_API_CALL
@@ -403,14 +368,3 @@ clUnloadCompiler(void) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
     return CL_INVALID_PLATFORM;
 }
 
-/* Deprecated OpenCL 2.0 APIs */
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_2_DEPRECATED cl_sampler CL_API_CALL
-clCreateSampler(cl_context          context,
-    cl_bool             normalized_coords,
-    cl_addressing_mode  addressing_mode,
-    cl_filter_mode      filter_mode,
-    cl_int *            errcode_ret) CL_EXT_SUFFIX__VERSION_1_2_DEPRECATED
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
