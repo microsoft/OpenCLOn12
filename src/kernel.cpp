@@ -307,3 +307,20 @@ clGetKernelArgInfo(cl_kernel       kernel_,
 
     return CL_INVALID_VALUE;
 }
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetKernelWorkGroupInfo(cl_kernel                  kernel,
+    cl_device_id               device,
+    cl_kernel_work_group_info  param_name,
+    size_t                     param_value_size,
+    void *                     param_value,
+    size_t *                   param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    UNREFERENCED_PARAMETER(kernel);
+    UNREFERENCED_PARAMETER(device);
+    UNREFERENCED_PARAMETER(param_name);
+    UNREFERENCED_PARAMETER(param_value_size);
+    UNREFERENCED_PARAMETER(param_value);
+    UNREFERENCED_PARAMETER(param_value_size_ret);
+    return CL_INVALID_PLATFORM;
+}

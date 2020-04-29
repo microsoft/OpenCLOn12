@@ -188,17 +188,6 @@ clSetKernelExecInfo(cl_kernel            kernel,
 
 #endif
 
-extern CL_API_ENTRY cl_int CL_API_CALL
-clGetKernelWorkGroupInfo(cl_kernel                  kernel,
-    cl_device_id               device,
-    cl_kernel_work_group_info  param_name,
-    size_t                     param_value_size,
-    void *                     param_value,
-    size_t *                   param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
-{
-    return CL_INVALID_PLATFORM;
-}
-
 #ifdef CL_VERSION_2_1
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -231,15 +220,6 @@ clEnqueueMigrateMemObjects(cl_command_queue       command_queue,
 }
 
 #endif
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clSetMemObjectDestructorCallback(cl_mem memobj,
-    void (CL_CALLBACK * pfn_notify)(cl_mem memobj,
-        void * user_data),
-    void * user_data) CL_API_SUFFIX__VERSION_1_1
-{
-    return CL_INVALID_PLATFORM;
-}
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueNativeKernel(cl_command_queue  command_queue,

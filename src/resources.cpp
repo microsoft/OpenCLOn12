@@ -940,6 +940,11 @@ Resource::~Resource()
             map->Unmap(true);
         }
     }
+
+    for (auto& callback : m_DestructorCallbacks)
+    {
+        callback.m_pfn(this, callback.m_userData);
+    }
 }
 
 void Resource::AddMapTask(MapTask *task)
@@ -982,10 +987,34 @@ void Resource::RemoveMapTask(MapTask *task)
     m_OutstandingMaps.erase(iter);
 }
 
+void Resource::AddDestructionCallback(DestructorCallback::Fn pfn, void* pUserData)
+{
+    std::lock_guard DestructorLock(m_DestructorLock);
+    m_DestructorCallbacks.push_back({ pfn, pUserData });
+}
+
 cl_image_desc Resource::GetBufferDesc(size_t size, cl_mem_object_type type)
 {
     cl_image_desc desc = {};
     desc.image_width = size;
     desc.image_type = type;
     return desc;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clSetMemObjectDestructorCallback(cl_mem memobj,
+    void (CL_CALLBACK * pfn_notify)(cl_mem memobj,
+                                    void * user_data),
+    void * user_data) CL_API_SUFFIX__VERSION_1_1
+{
+    if (!memobj)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+    if (!pfn_notify)
+    {
+        return CL_INVALID_VALUE;
+    }
+    static_cast<Resource*>(memobj)->AddDestructionCallback(pfn_notify, user_data);
+    return CL_SUCCESS;
 }

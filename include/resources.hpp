@@ -9,6 +9,12 @@ class Resource : public CLChildBase<Resource, Context, cl_mem>
 public:
     using UnderlyingResource = D3D12TranslationLayer::Resource;
     using UnderlyingResourcePtr = D3D12TranslationLayer::unique_comptr<UnderlyingResource>;
+    struct DestructorCallback
+    {
+        using Fn = void(CL_CALLBACK *)(cl_mem, void*);
+        Fn m_pfn;
+        void* m_userData;
+    };
 
     const cl_mem_flags m_Flags;
     void* const m_pHostPointer;
@@ -33,6 +39,8 @@ public:
     MapTask* GetMapTask(void* MapPtr);
     void RemoveMapTask(MapTask*);
 
+    void AddDestructionCallback(DestructorCallback::Fn pfn, void* pUserData);
+
 protected:
     UnderlyingResourcePtr m_Underlying;
     std::optional<D3D12TranslationLayer::SRV> m_SRV;
@@ -41,6 +49,9 @@ protected:
     mutable std::mutex m_MapLock;
     std::unordered_map<void*, std::vector<::ref_ptr_int<MapTask>>> m_OutstandingMaps;
     cl_uint m_MapCount = 0;
+
+    mutable std::mutex m_DestructorLock;
+    std::vector<DestructorCallback> m_DestructorCallbacks;
 
     Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHostPointer, size_t size, cl_mem_flags flags);
     Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags);
