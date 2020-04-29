@@ -933,10 +933,53 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
 
 Resource::~Resource()
 {
-    for (auto& map : m_OutstandingMaps)
+    for (auto&& [ptr, vec] : m_OutstandingMaps)
     {
-        map.second->Unmap(true);
+        for (auto& map : vec)
+        {
+            map->Unmap(true);
+        }
     }
+}
+
+void Resource::AddMapTask(MapTask *task)
+{
+    std::lock_guard MapLock(m_MapLock);
+    m_OutstandingMaps[task->GetPointer()].emplace_back(task);
+    ++m_MapCount;
+}
+
+MapTask* Resource::GetMapTask(void* ptr)
+{
+    std::lock_guard MapLock(m_MapLock);
+    auto iter = m_OutstandingMaps.find(ptr);
+    if (iter == m_OutstandingMaps.end())
+        return nullptr;
+
+    auto& vec = iter->second;
+    assert(!vec.empty());
+    return vec.front().Get();
+}
+
+void Resource::RemoveMapTask(MapTask *task)
+{
+    std::lock_guard MapLock(m_MapLock);
+    auto iter = m_OutstandingMaps.find(task->GetPointer());
+    if (iter == m_OutstandingMaps.end())
+        return;
+
+    auto& vec = iter->second;
+    auto vecIter = std::find_if(vec.begin(), vec.end(), [task](::ref_ptr_int<MapTask> const& ptr) { return ptr.Get() == task; });
+    if (vecIter == vec.end())
+        return;
+
+    --m_MapCount;
+
+    vec.erase(vecIter);
+    if (!vec.empty())
+        return;
+
+    m_OutstandingMaps.erase(iter);
 }
 
 cl_image_desc Resource::GetBufferDesc(size_t size, cl_mem_object_type type)

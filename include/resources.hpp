@@ -23,18 +23,24 @@ public:
     static Resource* CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
 
     UnderlyingResource* GetUnderlyingResource() const { return m_Underlying.get(); }
-    cl_uint GetMapCount() const { return 0; }
+    cl_uint GetMapCount() const { std::lock_guard MapLock(m_MapLock); return m_MapCount; }
 
     D3D12TranslationLayer::SRV& GetSRV() { return m_SRV.value(); }
     D3D12TranslationLayer::UAV& GetUAV() { return m_UAV.value(); }
     ~Resource();
+
+    void AddMapTask(MapTask*);
+    MapTask* GetMapTask(void* MapPtr);
+    void RemoveMapTask(MapTask*);
 
 protected:
     UnderlyingResourcePtr m_Underlying;
     std::optional<D3D12TranslationLayer::SRV> m_SRV;
     std::optional<D3D12TranslationLayer::UAV> m_UAV;
 
-    std::unordered_map<void*, ::ref_ptr_int<MapTask>> m_OutstandingMaps;
+    mutable std::mutex m_MapLock;
+    std::unordered_map<void*, std::vector<::ref_ptr_int<MapTask>>> m_OutstandingMaps;
+    cl_uint m_MapCount = 0;
 
     Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHostPointer, size_t size, cl_mem_flags flags);
     Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags);

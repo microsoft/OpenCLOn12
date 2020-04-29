@@ -3,6 +3,7 @@
 #include "resources.hpp"
 #include "formats.hpp"
 #include <variant>
+#include <wil/resource.h>
 
 using D3D12TranslationLayer::ImmediateContext;
 using UpdateSubresourcesScenario = ImmediateContext::UpdateSubresourcesScenario;
@@ -2310,7 +2311,7 @@ public:
             (UINT)(resource.GetUnderlyingResource()->GetSubresourcePlacement(args.FirstArraySlice + 1).Offset - Placement.Offset) :
             resource.GetUnderlyingResource()->DepthPitch(args.FirstArraySlice);
 
-        m_Pointer = (byte*)resource.m_pHostPointer +
+        m_Pointer = (byte*)basePointer +
             m_SlicePitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
             m_RowPitch * m_Args.SrcY +
             GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX;
@@ -2342,7 +2343,74 @@ private:
     }
 };
 
-#pragma warning(disable: 4100)
+class MapCopyTask : public MapTask
+{
+public:
+    MapCopyTask(Context& Parent, cl_command_queue command_queue, cl_map_flags flags, Resource& resource, Args const& args, cl_command_type command)
+        : MapTask(Parent, command_queue, resource, flags, command, args)
+    {
+        cl_mem_flags stagingFlags = CL_MEM_HOST_READ_ONLY | CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR;
+        if (resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+        {
+            m_MappableResource.Attach(static_cast<Resource*>(clCreateBuffer(&Parent, stagingFlags, args.Width, nullptr, nullptr)));
+        }
+        else
+        {
+            cl_image_desc NewDesc = resource.m_Desc;
+            NewDesc.image_width = args.Width;
+            NewDesc.image_height = args.Height;
+            NewDesc.image_depth = args.Depth;
+            NewDesc.image_array_size = args.NumArraySlices;
+            m_MappableResource.Attach(static_cast<Resource*>(clCreateImage(&Parent, stagingFlags, &resource.m_Format, &NewDesc, nullptr, nullptr)));
+        }
+
+        m_UnderlyingMapTask.reset(new MapSynchronizeTask(Parent, command_queue, flags, *m_MappableResource.Get(), args, command));
+        m_RowPitch = m_UnderlyingMapTask->GetRowPitch();
+        m_SlicePitch = m_UnderlyingMapTask->GetSlicePitch();
+        m_Pointer = m_UnderlyingMapTask->GetPointer();
+    }
+
+private:
+    void RecordImpl() final
+    {
+        if (m_MapFlags & CL_MAP_READ)
+        {
+            CopyResourceTask::Args CopyArgs = {};
+            // Leave Dst coords as 0
+            CopyArgs.SrcX = m_Args.SrcX;
+            CopyArgs.SrcY = m_Args.SrcY;
+            CopyArgs.SrcZ = m_Args.SrcZ;
+            CopyArgs.FirstSrcArraySlice = m_Args.FirstArraySlice;
+            CopyArgs.Width = m_Args.Width;
+            CopyArgs.Height = m_Args.Height;
+            CopyArgs.Depth = m_Args.Depth;
+            CopyArgs.NumArraySlices = m_Args.NumArraySlices;
+            CopyResourceTask(m_Parent.get(), m_Resource, *m_MappableResource.Get(), m_CommandQueue.Get(), CopyArgs, CL_COMMAND_COPY_IMAGE).Record();
+        }
+        m_UnderlyingMapTask->Record();
+    }
+    void Unmap(bool IsResourceBeingDestroyed) final
+    {
+        static_cast<MapTask*>(m_UnderlyingMapTask.get())->Unmap(IsResourceBeingDestroyed);
+        if ((m_MapFlags & CL_MAP_WRITE) && !IsResourceBeingDestroyed)
+        {
+            CopyResourceTask::Args CopyArgs = {};
+            // Leave Src coords as 0
+            CopyArgs.DstX = m_Args.SrcX;
+            CopyArgs.DstY = m_Args.SrcY;
+            CopyArgs.DstZ = m_Args.SrcZ;
+            CopyArgs.FirstDstArraySlice = m_Args.FirstArraySlice;
+            CopyArgs.Width = m_Args.Width;
+            CopyArgs.Height = m_Args.Height;
+            CopyArgs.Depth = m_Args.Depth;
+            CopyArgs.NumArraySlices = m_Args.NumArraySlices;
+            CopyResourceTask(m_Parent.get(), *m_MappableResource.Get(), m_Resource, m_CommandQueue.Get(), CopyArgs, CL_COMMAND_COPY_IMAGE).Record();
+        }
+    }
+
+    Resource::ref_ptr_int m_MappableResource;
+    std::unique_ptr<MapSynchronizeTask> m_UnderlyingMapTask;
+};
 
 extern CL_API_ENTRY void * CL_API_CALL
 clEnqueueMapBuffer(cl_command_queue command_queue,
@@ -2364,7 +2432,109 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
     auto& queue = *static_cast<CommandQueue*>(command_queue);
     auto& context = queue.GetContext();
     auto ReportError = context.GetErrorReporter(errcode_ret);
-    return nullptr;
+    if (!buffer)
+    {
+        return ReportError("buffer must not be null.", CL_INVALID_MEM_OBJECT);
+    }
+
+    Resource& resource = *static_cast<Resource*>(buffer);
+    if (resource.m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("buffer must be a buffer object.", CL_INVALID_MEM_OBJECT);
+    }
+    if (&resource.m_Parent.get() != &context)
+    {
+        return ReportError("buffer must belong to the same context as the queue.", CL_INVALID_CONTEXT);
+    }
+
+    if ((resource.m_Flags & CL_MEM_HOST_NO_ACCESS) ||
+        ((resource.m_Flags & CL_MEM_HOST_READ_ONLY) && (map_flags & (CL_MAP_WRITE | CL_MAP_WRITE_INVALIDATE_REGION))) ||
+        ((resource.m_Flags & CL_MEM_HOST_WRITE_ONLY) && (map_flags & CL_MAP_READ)))
+    {
+        return ReportError("Resource flags preclude operation requested by map flags.", CL_INVALID_OPERATION);
+    }
+
+    if (offset > resource.m_Desc.image_width ||
+        size > resource.m_Desc.image_width ||
+        offset + size > resource.m_Desc.image_width)
+    {
+        return ReportError("offset and size must fit within the resource size.", CL_INVALID_VALUE);
+    }
+
+    switch (map_flags)
+    {
+    case CL_MAP_WRITE_INVALIDATE_REGION:
+        // TODO: Support buffer renaming if we're invalidating a whole buffer
+        map_flags = CL_MAP_WRITE;
+        break;
+    case CL_MAP_READ:
+    case CL_MAP_WRITE:
+    case CL_MAP_READ | CL_MAP_WRITE:
+        break;
+    default:
+        return ReportError("map_flags must contain read and/or write bits, or must be equal to CL_MAP_WRITE_INVALIDATE_REGION.", CL_INVALID_VALUE);
+    }
+
+    MapTask::Args CmdArgs = {};
+    CmdArgs.SrcX = (cl_uint)offset;
+    CmdArgs.Width = (cl_uint)size;
+    CmdArgs.NumArraySlices = 1;
+
+    try
+    {
+        std::unique_ptr<MapTask> task;
+        if (resource.m_Flags & CL_MEM_USE_HOST_PTR)
+        {
+            task.reset(new MapUseHostPtrResourceTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_BUFFER));
+        }
+        else if (resource.m_Flags & CL_MEM_ALLOC_HOST_PTR)
+        {
+            task.reset(new MapSynchronizeTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_BUFFER));
+        }
+        else
+        {
+            task.reset(new MapCopyTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_BUFFER));
+        }
+
+        resource.AddMapTask(task.get());
+        auto RemoveMapTask = wil::scope_exit([&task, &resource]()
+        {
+            resource.RemoveMapTask(task.get());
+        });
+
+        {
+            auto Lock = context.GetDevice().GetTaskPoolLock();
+            task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+            queue.QueueTask(task.get(), Lock);
+            if (blocking_map)
+            {
+                queue.Flush(Lock);
+            }
+        }
+
+        cl_int taskError = CL_SUCCESS;
+        if (blocking_map)
+        {
+            taskError = task->WaitForCompletion();
+        }
+
+        // No more exceptions
+        if (errcode_ret)
+        {
+            *errcode_ret = taskError;
+        }
+
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+        RemoveMapTask.release();
+
+        return task->GetPointer();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
 }
 
 extern CL_API_ENTRY void * CL_API_CALL
@@ -2381,9 +2551,148 @@ clEnqueueMapImage(cl_command_queue  command_queue,
     cl_event *        event,
     cl_int *          errcode_ret) CL_API_SUFFIX__VERSION_1_0
 {
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
+    if (!command_queue)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_COMMAND_QUEUE;
+        return nullptr;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+    if (!image)
+    {
+        return ReportError("image must not be null.", CL_INVALID_MEM_OBJECT);
+    }
+
+    Resource& resource = *static_cast<Resource*>(image);
+    if (resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+    {
+        return ReportError("image must not be a buffer object.", CL_INVALID_MEM_OBJECT);
+    }
+    if (&resource.m_Parent.get() != &context)
+    {
+        return ReportError("image must belong to the same context as the queue.", CL_INVALID_CONTEXT);
+    }
+
+    if ((resource.m_Flags & CL_MEM_HOST_NO_ACCESS) ||
+        ((resource.m_Flags & CL_MEM_HOST_READ_ONLY) && (map_flags & (CL_MAP_WRITE | CL_MAP_WRITE_INVALIDATE_REGION))) ||
+        ((resource.m_Flags & CL_MEM_HOST_WRITE_ONLY) && (map_flags & CL_MAP_READ)))
+    {
+        return ReportError("Resource flags preclude operation requested by map flags.", CL_INVALID_OPERATION);
+    }
+
+    switch (map_flags)
+    {
+    case CL_MAP_WRITE_INVALIDATE_REGION:
+        // TODO: Support buffer renaming if we're invalidating a whole buffer
+        map_flags = CL_MAP_WRITE;
+        break;
+    case CL_MAP_READ:
+    case CL_MAP_WRITE:
+    case CL_MAP_READ | CL_MAP_WRITE:
+        break;
+    default:
+        return ReportError("map_flags must contain read and/or write bits, or must be equal to CL_MAP_WRITE_INVALIDATE_REGION.", CL_INVALID_VALUE);
+    }
+
+    MapTask::Args CmdArgs = {};
+    CmdArgs.SrcX = (cl_uint)origin[0];
+    CmdArgs.Width = (cl_uint)region[0];
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
+    CmdArgs.NumArraySlices = 1;
+
+    cl_int imageResult = ProcessImageDimensions(context.GetErrorReporter(), origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+    if (imageResult != CL_SUCCESS)
+    {
+        if (errcode_ret)
+            *errcode_ret = imageResult;
+        return nullptr;
+    }
+
+    try
+    {
+        std::unique_ptr<MapTask> task;
+        if (resource.m_Flags & CL_MEM_USE_HOST_PTR)
+        {
+            task.reset(new MapUseHostPtrResourceTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_IMAGE));
+        } else if (resource.m_Flags & CL_MEM_ALLOC_HOST_PTR)
+        {
+            task.reset(new MapSynchronizeTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_IMAGE));
+        } else
+        {
+            task.reset(new MapCopyTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_IMAGE));
+        }
+
+        resource.AddMapTask(task.get());
+        auto RemoveMapTask = wil::scope_exit([&task, &resource]()
+        {
+            resource.RemoveMapTask(task.get());
+        });
+
+        {
+            auto Lock = context.GetDevice().GetTaskPoolLock();
+            task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+            queue.QueueTask(task.get(), Lock);
+            if (blocking_map)
+            {
+                queue.Flush(Lock);
+            }
+        }
+
+        cl_int taskError = CL_SUCCESS;
+        if (blocking_map)
+        {
+            taskError = task->WaitForCompletion();
+        }
+
+        // No more exceptions
+        if (errcode_ret)
+        {
+            *errcode_ret = taskError;
+        }
+
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+        RemoveMapTask.release();
+
+        if (image_slice_pitch)
+            *image_slice_pitch = task->GetSlicePitch();
+        if (image_row_pitch)
+            *image_row_pitch = task->GetRowPitch();
+        return task->GetPointer();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
 }
+
+class UnmapTask : public Task
+{
+public:
+    UnmapTask(Context& Parent, cl_command_queue command_queue, MapTask* task)
+        : Task(Parent, CL_COMMAND_UNMAP_MEM_OBJECT, command_queue)
+        , m_MapTask(task)
+        , m_Resource(&task->GetResource())
+    {
+    }
+
+private:
+    ::ref_ptr_int<MapTask> m_MapTask;
+    Resource::ref_ptr_int m_Resource;
+
+    void RecordImpl() final
+    {
+        m_MapTask->Unmap(false);
+    }
+    void OnComplete() final
+    {
+        m_MapTask.Release();
+        m_Resource.Release();
+    }
+};
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueUnmapMemObject(cl_command_queue command_queue,
@@ -2393,5 +2702,45 @@ clEnqueueUnmapMemObject(cl_command_queue command_queue,
     const cl_event * event_wait_list,
     cl_event *       event) CL_API_SUFFIX__VERSION_1_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    auto& queue = *static_cast<CommandQueue*>(command_queue);
+    auto& context = queue.GetContext();
+    auto ReportError = context.GetErrorReporter();
+    if (!memobj)
+    {
+        return ReportError("memobj must not be null.", CL_INVALID_MEM_OBJECT);
+    }
+
+    Resource& resource = *static_cast<Resource*>(memobj);
+    if (&resource.m_Parent.get() != &context)
+    {
+        return ReportError("memobj must belong to the same context as the queue.", CL_INVALID_CONTEXT);
+    }
+
+    MapTask* mapTask = resource.GetMapTask(mapped_ptr);
+    if (!mapTask)
+    {
+        return ReportError("mapped_ptr must be a valid pointer returned from a previous map operation.", CL_INVALID_VALUE);
+    }
+
+    try
+    {
+        std::unique_ptr<Task> task(new UnmapTask(context, command_queue, mapTask));
+        auto Lock = context.GetDevice().GetTaskPoolLock();
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
+        queue.QueueTask(task.get(), Lock);
+
+        // No more exceptions
+        if (event)
+            *event = task.release();
+        else
+            task.release()->Release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    return CL_SUCCESS;
 }

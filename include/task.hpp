@@ -198,6 +198,7 @@ public:
     void* GetPointer() const { return m_Pointer; }
     size_t GetRowPitch() const { return m_RowPitch; }
     size_t GetSlicePitch() const { return m_SlicePitch; }
+    Resource& GetResource() const { return m_Resource; }
 
 protected:
     void* m_Pointer = nullptr;

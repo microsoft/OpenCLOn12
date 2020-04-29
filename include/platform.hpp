@@ -113,6 +113,7 @@ public:
     void Release() noexcept { if (m_pPtr) { m_pPtr->Release(); m_pPtr = nullptr; } }
     TClass* Detach() noexcept { auto pPtr = m_pPtr; m_pPtr = nullptr; return pPtr; }
     TClass* Get() const noexcept { return m_pPtr; }
+    void Attach(TClass* p) noexcept { Release(); m_pPtr = p; }
 
     ref_ptr(TClass* p) noexcept : m_pPtr(p) { Retain(); }
     ref_ptr(TClass* p, adopt_ref const&) noexcept : m_pPtr(p) { }
@@ -134,6 +135,7 @@ public:
     void Release() noexcept { if (m_pPtr) { m_pPtr->ReleaseInternalRef(); m_pPtr = nullptr; } }
     TClass* Detach() noexcept { auto pPtr = m_pPtr; m_pPtr = nullptr; return pPtr; }
     TClass* Get() const noexcept { return m_pPtr; }
+    void Attach(TClass* p) noexcept { Release(); m_pPtr = p; }
 
     ref_ptr_int(TClass* p) noexcept : m_pPtr(p) { Retain(); }
     ref_ptr_int(TClass* p, adopt_ref const&) noexcept : m_pPtr(p) { }
