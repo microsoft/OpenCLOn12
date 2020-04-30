@@ -417,7 +417,11 @@ void Device::ExecuteTasks(Submission& tasks)
             }
             catch (...)
             {
-                for (; i < tasks.size(); ++i)
+                if ((cl_int)tasks[i]->GetState() > 0)
+                {
+                    tasks[i]->Complete(CL_OUT_OF_RESOURCES, Lock);
+                }
+                for (++i; i < tasks.size(); ++i)
                 {
                     auto& task = tasks[i];
                     task->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, Lock);

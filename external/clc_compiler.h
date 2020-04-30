@@ -95,23 +95,34 @@ struct clc_object {
 };
 
 #define CLC_MAX_CONSTS 32
-#define CLC_MAX_CONST_ARGS 8
-#define CLC_MAX_READ_IMAGE_ARGS 128
-#define CLC_MAX_WRITE_IMAGE_ARGS 8
-
-#define CLC_MAX_ARGS (CLC_MAX_CONST_ARGS + CLC_MAX_READ_IMAGE_ARGS + \
-                      CLC_MAX_WRITE_IMAGE_ARGS)
+#define CLC_MAX_BINDINGS_PER_ARG 3
 
 struct clc_dxil_metadata {
    struct {
       unsigned offset;
       unsigned size;
-      unsigned buf_id;
+      union {
+         struct {
+            unsigned buf_ids[CLC_MAX_BINDINGS_PER_ARG];
+            unsigned num_buf_ids;
+         } image;
+         struct {
+            unsigned sampler_id;
+         } sampler;
+         struct {
+            unsigned buf_id;
+         } globalptr;
+         struct {
+            unsigned sharedmem_offset;
+	 } localptr;
+      };
    } *args;
    unsigned kernel_inputs_cbv_id;
    unsigned kernel_inputs_buf_size;
    unsigned global_work_offset_cbv_id;
    size_t num_uavs;
+   size_t num_srvs;
+   size_t num_samplers;
 
    struct {
       void *data;
@@ -120,11 +131,8 @@ struct clc_dxil_metadata {
    } consts[CLC_MAX_CONSTS];
    size_t num_consts;
 
-   struct {
-      int image_index;
-      int cbuf_offset;
-   } image_channels[CLC_MAX_READ_IMAGE_ARGS + CLC_MAX_WRITE_IMAGE_ARGS];
-   size_t num_image_channels;
+   uint16_t local_size[3];
+   uint16_t local_size_hint[3];
 };
 
 struct clc_dxil_object {
@@ -157,10 +165,24 @@ clc_link(struct clc_context *ctx,
 
 void clc_free_object(struct clc_object *obj);
 
+struct clc_runtime_arg_info {
+   union {
+      struct {
+         unsigned size;
+      } localptr;
+   };
+};
+
+struct clc_runtime_kernel_conf {
+   uint16_t local_size[3];
+   struct clc_runtime_arg_info *args;
+};
+
 struct clc_dxil_object *
 clc_to_dxil(struct clc_context *ctx,
             const struct clc_object *obj,
             const char *entrypoint,
+            const struct clc_runtime_kernel_conf *conf,
             const struct clc_logger *logger);
 
 void clc_free_dxil_object(struct clc_dxil_object *dxil);

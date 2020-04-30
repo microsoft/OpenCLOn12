@@ -30,6 +30,7 @@ public:
     cl_int Link(const char* options, cl_uint num_input_programs, const cl_program* input_programs, Callback pfn_notify, void* user_data);
 
     const clc_dxil_object* GetKernel(const char* name) const;
+    const clc_object* GetSpirV() const { return m_OwnedBinary.get(); }
 
     friend cl_int CL_API_CALL clGetProgramInfo(cl_program, cl_program_info, size_t, void*, size_t*);
     friend cl_int CL_API_CALL clGetProgramBuildInfo(cl_program, cl_device_id, cl_program_build_info, size_t, void*, size_t*);

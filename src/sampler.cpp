@@ -170,7 +170,7 @@ clGetSamplerInfo(cl_sampler         sampler_,
     }
 
     Sampler& sampler = *static_cast<Sampler*>(sampler_);
-    auto desc = sampler.GetDesc();
+    auto& desc = sampler.m_Desc;
     auto RetValue = [&](auto&& param)
     {
         return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);

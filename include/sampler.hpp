@@ -13,10 +13,9 @@ public:
     };
     Sampler(Context& Parent, Desc const& desc);
 
-    Desc const& GetDesc() const { return m_Desc; }
     D3D12TranslationLayer::Sampler& GetUnderlying() { return m_UnderlyingSampler; }
 
-private:
     const Desc m_Desc;
+private:
     D3D12TranslationLayer::Sampler m_UnderlyingSampler;
 };

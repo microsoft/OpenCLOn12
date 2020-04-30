@@ -11,9 +11,20 @@ public:
     const std::array<uint32_t, 3> m_DispatchDims;
 
     const std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
+    const std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
+    const std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
+    std::vector<clc_runtime_arg_info> m_ArgInfo;
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     const std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
+
+    std::mutex m_SpecializeLock;
+    std::condition_variable m_SpecializeEvent;
+    // TODO: Cache these
+    unique_dxil m_Specialized = {nullptr, nullptr};
+    std::unique_ptr<D3D12TranslationLayer::Shader> m_Shader;
+    std::unique_ptr<D3D12TranslationLayer::PipelineState> m_PSO;
+    bool m_SpecializeError = false;
 
     void RecordImpl() final;
     void OnComplete() final
@@ -21,11 +32,14 @@ public:
         m_Kernel.Release();
     }
 
-    ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset)
+    ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset, std::array<uint32_t, 3> const& localSize)
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
         , m_Kernel(&kernel)
         , m_DispatchDims(dims)
         , m_UAVs(kernel.m_UAVs)
+        , m_SRVs(kernel.m_SRVs)
+        , m_Samplers(kernel.m_Samplers)
+        , m_ArgInfo(kernel.m_ArgMetadataToCompiler)
         , m_CBs(kernel.m_CBs)
         , m_CBOffsets(kernel.m_CBOffsets)
     {
@@ -73,6 +87,45 @@ public:
 
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[GlobalOffsetsCBIndex] = m_KernelArgsCb.get();
+
+        m_Parent->GetDevice().QueueProgramOp([this, localSize]()
+        {
+            try
+            {
+                auto& Compiler = g_Platform->GetCompiler();
+                auto Context = g_Platform->GetCompilerContext();
+                auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
+                auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
+
+                clc_runtime_kernel_conf config = {};
+                memcpy(config.local_size, localSize.data(), sizeof(localSize));
+                config.args = m_ArgInfo.data();
+
+                auto spirv = m_Kernel->m_Parent->GetSpirV();
+                auto name = m_Kernel->m_pDxil->kernel->name;
+                unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
+
+                auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&m_Parent->GetDevice().ImmCtx(), specialized->binary.data, specialized->binary.size, m_Kernel->m_ShaderDecls);
+                D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
+                auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(&m_Parent->GetDevice().ImmCtx(), Desc);
+
+                {
+                    std::lock_guard lock(m_SpecializeLock);
+                    std::swap(m_Specialized, specialized);
+                    std::swap(m_Shader, CS);
+                    std::swap(m_PSO, PSO);
+                }
+                m_SpecializeEvent.notify_all();
+            }
+            catch (...)
+            {
+                {
+                    std::lock_guard lock(m_SpecializeLock);
+                    m_SpecializeError = true;
+                }
+                m_SpecializeEvent.notify_all();
+            }
+        });
     }
 };
 
@@ -140,10 +193,13 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
 
     std::array<uint32_t, 3> DispatchDimensions = { 1, 1, 1 };
     std::array<uint32_t, 3> LocalSizes = { 1, 1, 1 };
+    auto RequiredDims = kernel.GetRequiredLocalDims();
+    auto DimsHint = kernel.GetLocalDimsHint();
     for (cl_uint i = 0; i < work_dim; ++i)
     {
         uint32_t& LocalSize = LocalSizes[i];
-        LocalSize = local_work_size ? (uint32_t)local_work_size[i] : 1u;
+        LocalSize = local_work_size ? (uint32_t)local_work_size[i] :
+            (DimsHint ? DimsHint[i] : 1u);
         if (global_work_size[i] % LocalSize != 0)
         {
             return ReportError("local_work_size must evenly divide the global_work_size.", CL_INVALID_WORK_GROUP_SIZE);
@@ -154,10 +210,9 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
             return ReportError("global_work_size / local_work_size is too large.", CL_INVALID_GLOBAL_WORK_SIZE);
         }
 
-        // TODO:
-        if (LocalSize != 1)
+        if (RequiredDims && RequiredDims[i] != LocalSize)
         {
-            return ReportError("local_work_size must be 1.", CL_INVALID_WORK_GROUP_SIZE);
+            return ReportError("local_work_size does not match required size declared by kernel.", CL_INVALID_WORK_GROUP_SIZE);
         }
     }
     if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
@@ -173,7 +228,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
 
     try
     {
-        std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets));
+        std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes));
 
         auto Lock = context.GetDevice().GetTaskPoolLock();
         if (num_events_in_wait_list)
@@ -242,9 +297,24 @@ constexpr UINT c_NumConstants[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT]
 
 void ExecuteKernel::RecordImpl()
 {
+    std::unique_lock lock(m_SpecializeLock);
+    while (!m_PSO.get() && !m_SpecializeError)
+    {
+        m_SpecializeEvent.wait(lock);
+    }
+
+    if (m_SpecializeError)
+    {
+        auto Lock = m_Parent->GetDevice().GetTaskPoolLock();
+        Complete(CL_BUILD_PROGRAM_FAILURE, Lock);
+        throw std::exception("Failed to specialize");
+    }
+
     auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
     ImmCtx.SetConstantBuffers<D3D12TranslationLayer::e_CS>(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
-    ImmCtx.SetPipelineState(&m_Kernel->m_PSO);
+    ImmCtx.SetShaderResources<D3D12TranslationLayer::e_CS>(0, (UINT)m_SRVs.size(), m_SRVs.data());
+    ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());
+    ImmCtx.SetPipelineState(m_PSO.get());
     ImmCtx.Dispatch(m_DispatchDims[0], m_DispatchDims[1], m_DispatchDims[2]);
 }

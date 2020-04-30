@@ -896,7 +896,7 @@ void Program::CreateKernels()
     {
         auto name = kernelMeta->name;
         auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
-        kernel.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr));
+        kernel.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, nullptr /*logger*/));
         if (kernel)
             SignBlob(kernel->binary.data, kernel->binary.size);
     }

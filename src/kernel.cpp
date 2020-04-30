@@ -1,4 +1,5 @@
 #include "kernel.hpp"
+#include "sampler.hpp"
 #include "clc_compiler.h"
 
 extern CL_API_ENTRY cl_kernel CL_API_CALL
@@ -130,17 +131,77 @@ clSetKernelArg(cl_kernel    kernel,
     return static_cast<Kernel*>(kernel)->SetArg(arg_index, arg_size, arg_value);
 }
 
+static cl_mem_object_type MemObjectTypeFromName(const char* name)
+{
+    if (strcmp(name, "image1d_buffer_t") == 0) return CL_MEM_OBJECT_IMAGE1D_BUFFER;
+    if (strcmp(name, "image1d_t") == 0) return CL_MEM_OBJECT_IMAGE1D;
+    if (strcmp(name, "image1d_array_t") == 0) return CL_MEM_OBJECT_IMAGE1D_ARRAY;
+    if (strcmp(name, "image2d_t") == 0) return CL_MEM_OBJECT_IMAGE2D;
+    if (strcmp(name, "image2d_array_t") == 0) return CL_MEM_OBJECT_IMAGE2D_ARRAY;
+    if (strcmp(name, "image3d_t") == 0) return CL_MEM_OBJECT_IMAGE3D;
+    return 0;
+}
+
+static D3D12TranslationLayer::RESOURCE_DIMENSION ResourceDimensionFromMemObjectType(cl_mem_object_type type)
+{
+    switch (type)
+    {
+    case CL_MEM_OBJECT_IMAGE1D: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE1D;
+    case CL_MEM_OBJECT_IMAGE1D_ARRAY: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE1DARRAY;
+    case CL_MEM_OBJECT_IMAGE1D_BUFFER: return D3D12TranslationLayer::RESOURCE_DIMENSION::BUFFER;
+    case CL_MEM_OBJECT_IMAGE2D: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE2D;
+    case CL_MEM_OBJECT_IMAGE2D_ARRAY: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE2DARRAY;
+    case CL_MEM_OBJECT_IMAGE3D: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE3D;
+    }
+    return D3D12TranslationLayer::RESOURCE_DIMENSION::UNKNOWN;
+}
+
+static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object const* pDxil)
+{
+    auto& metadata = pDxil->metadata;
+    D3D12TranslationLayer::SShaderDecls decls = {};
+    decls.m_NumCBs = (UINT)metadata.num_consts + 2;
+    decls.m_NumSamplers = (UINT)metadata.num_samplers;
+    decls.m_ResourceDecls.resize(metadata.num_srvs);
+    decls.m_UAVDecls.resize(metadata.num_uavs);
+
+    for (cl_uint i = 0; i < pDxil->kernel->num_args; ++i)
+    {
+        auto& arg = pDxil->kernel->args[i];
+        if (arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL)
+        {
+            cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
+            if (imageType != 0)
+            {
+                auto dim = ResourceDimensionFromMemObjectType(imageType);
+                bool uav = (arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_WRITE) != 0;
+                auto& declVector = uav ? decls.m_UAVDecls : decls.m_ResourceDecls;
+                for (cl_uint j = 0; j < metadata.args[i].image.num_buf_ids; ++j)
+                    declVector[metadata.args[i].image.buf_ids[j]] = dim;
+            }
+            else if (strcmp(arg.type_name, "sampler_t") != 0)
+            {
+                decls.m_UAVDecls[metadata.args[i].globalptr.buf_id] =
+                    D3D12TranslationLayer::RESOURCE_DIMENSION::RAW_BUFFER;
+            }
+        }
+    }
+    return decls;
+}
+
 Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     : CLChildBase(Parent)
     , m_pDxil(pDxil)
-    , m_Shader(&Parent.GetDevice().ImmCtx(), pDxil->binary.data, pDxil->binary.size, D3D12TranslationLayer::SShaderDecls{})
+    , m_ShaderDecls(DeclsFromMetadata(pDxil))
     , m_RootSig(&Parent.GetDevice().ImmCtx(), 
-        D3D12TranslationLayer::RootSignatureDesc(&m_Shader, false))
-    , m_PSO(&Parent.GetDevice().ImmCtx(), D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC{ &m_Shader })
+        D3D12TranslationLayer::RootSignatureDesc(&m_ShaderDecls, false))
 {
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
+    m_SRVs.resize(m_pDxil->metadata.num_srvs);
+    m_Samplers.resize(m_pDxil->metadata.num_samplers);
     m_CBs.resize(m_pDxil->metadata.num_consts + 2);
     m_CBOffsets.resize(m_pDxil->metadata.num_consts + 2);
+    m_ArgMetadataToCompiler.resize(m_pDxil->kernel->num_args);
     size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
     KernelInputsCbSize = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT,
                                                               D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
@@ -150,10 +211,12 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     // Fill out the fixed data in the kernel args buffer
     for (cl_uint i = 0; i < m_pDxil->kernel->num_args; ++i)
     {
-        if (m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL)
+        if (m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL &&
+            MemObjectTypeFromName(m_pDxil->kernel->args[i].type_name) == 0 &&
+            strcmp(m_pDxil->kernel->args[i].type_name, "sampler_t") != 0)
         {
             auto& arg = m_pDxil->metadata.args[i];
-            cl_uint value = arg.buf_id << 28;
+            cl_uint value = arg.globalptr.buf_id << 28;
             byte* KernelArgBase = m_KernelArgsCbData.data() + arg.offset;
             *reinterpret_cast<cl_uint*>(KernelArgBase) = value;
         }
@@ -161,6 +224,8 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
 
     // TODO: Do we need constant buffers for global constant data?
 }
+
+Kernel::~Kernel() = default;
 
 cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
@@ -170,22 +235,98 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         return ReportError("Argument index out of bounds", CL_INVALID_ARG_INDEX);
     }
 
-    switch (m_pDxil->kernel->args[arg_index].address_qualifier)
+    auto& arg = m_pDxil->kernel->args[arg_index];
+    switch (arg.address_qualifier)
     {
     case CLC_KERNEL_ARG_ADDRESS_GLOBAL:
     {
+        static_assert(sizeof(cl_mem) == sizeof(cl_sampler));
         if (arg_size != sizeof(cl_mem))
         {
             return ReportError("Invalid argument size, must be sizeof(cl_mem) for global arguments", CL_INVALID_ARG_SIZE);
         }
-        cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
-        Resource* resource = static_cast<Resource*>(mem);
-        if (resource && resource->m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+
+        cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
+        if (imageType != 0)
         {
-            return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
+            cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
+            Resource* resource = static_cast<Resource*>(mem);
+            bool validImageType = true;
+            if (resource)
+            {
+                validImageType = resource->m_Desc.image_type == imageType;
+            }
+
+            if (!validImageType)
+            {
+                return ReportError("Invalid image type.", CL_INVALID_ARG_VALUE);
+            }
+
+            if (arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_WRITE)
+            {
+                if (resource && (resource->m_Flags & CL_MEM_READ_ONLY))
+                {
+                    return ReportError("Invalid mem object flags, binding read-only image to writable image argument.", CL_INVALID_ARG_VALUE);
+                }
+                if ((arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_READ) == 0 &&
+                    resource && (resource->m_Flags & CL_MEM_WRITE_ONLY))
+                {
+                    return ReportError("Invalid mem object flags, binding write-only image to read-write image argument.", CL_INVALID_ARG_VALUE);
+                }
+                D3D12TranslationLayer::UAV* uav = resource ? &resource->GetUAV() : nullptr;
+                for (cl_uint i = 0; i < m_pDxil->metadata.args[arg_index].image.num_buf_ids; ++i)
+                {
+                    m_UAVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = uav;
+                }
+            }
+            else
+            {
+                if (resource && (resource->m_Flags & CL_MEM_READ_ONLY))
+                {
+                    return ReportError("Invalid mem object flags, binding write-only image to read-only image argument.", CL_INVALID_ARG_VALUE);
+                }
+                D3D12TranslationLayer::SRV* srv = resource ? &resource->GetSRV() : nullptr;
+                for (cl_uint i = 0; i < m_pDxil->metadata.args[arg_index].image.num_buf_ids; ++i)
+                {
+                    m_SRVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = srv;
+                }
+            }
+
+            // Store image format in the kernel args
+            cl_image_format* ImageFormatInKernelArgs = reinterpret_cast<cl_image_format*>(
+                m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset);
+            *ImageFormatInKernelArgs = {};
+            if (resource)
+            {
+                *ImageFormatInKernelArgs = resource->m_Format;
+                // The SPIR-V expects the values coming from the intrinsics to be 0-indexed, and implicitly
+                // adds the necessary values to put it back into the CL constant range
+                ImageFormatInKernelArgs->image_channel_data_type -= CL_SNORM_INT8;
+                ImageFormatInKernelArgs->image_channel_order -= CL_R;
+            }
         }
-        D3D12TranslationLayer::UAV* uav = resource ? &static_cast<Resource*>(resource)->GetUAV() : nullptr;
-        m_UAVs[m_pDxil->metadata.args[arg_index].buf_id] = uav;
+        else if (strcmp(arg.type_name, "sampler_t") == 0)
+        {
+            cl_sampler samp = arg_value ? *reinterpret_cast<cl_sampler const*>(arg_value) : nullptr;
+            Sampler* sampler = static_cast<Sampler*>(samp);
+            D3D12TranslationLayer::Sampler* underlying = sampler ? &sampler->GetUnderlying() : nullptr;
+            m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = underlying;
+            // Store normalized coords in the kernel args
+            *reinterpret_cast<cl_uint*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset) =
+                sampler ? sampler->m_Desc.NormalizedCoords : 1u;
+        }
+        else
+        {
+            cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
+            Resource* resource = static_cast<Resource*>(mem);
+            if (resource && resource->m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+            {
+                return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
+            }
+            D3D12TranslationLayer::UAV* uav = resource ? &resource->GetUAV() : nullptr;
+            m_UAVs[m_pDxil->metadata.args[arg_index].globalptr.buf_id] = uav;
+        }
+
         break;
     }
 
@@ -215,10 +356,25 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         {
             return ReportError("Argument value must be null for local arguments", CL_INVALID_ARG_VALUE);
         }
+        m_ArgMetadataToCompiler[arg_index].localptr.size = (cl_uint)arg_size;
         break;
     }
 
     return CL_SUCCESS;
+}
+
+uint16_t const* Kernel::GetRequiredLocalDims() const
+{
+    if (m_pDxil->metadata.local_size[0] != 0)
+        return m_pDxil->metadata.local_size;
+    return nullptr;
+}
+
+uint16_t const* Kernel::GetLocalDimsHint() const
+{
+    if (m_pDxil->metadata.local_size_hint[0] != 0)
+        return m_pDxil->metadata.local_size_hint;
+    return nullptr;
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
