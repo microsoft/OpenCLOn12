@@ -28,6 +28,8 @@ public:
     void ReportError(const char* Error);
     auto GetErrorReporter(cl_int* errcode_ret)
     {
+        if (errcode_ret)
+            *errcode_ret = CL_SUCCESS;
         return [=](const char* ErrorMsg, cl_int ErrorCode)
         {
             if (ErrorMsg)

@@ -70,19 +70,19 @@ TEST(OpenCLOn12, SimpleKernel)
         output[get_global_id(0)] = get_global_id(0);\n\
     }\n";
 
+    const size_t width = 4;
+    cl::Buffer buffer(context, (cl_mem_flags)(CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_WRITE), width * sizeof(uint32_t));
+
     cl::Program program(context, kernel_source, true /*build*/);
     cl::Kernel kernel(program, "main_test");
 
-    const size_t width = 4;
-    cl::Buffer buffer(context, CL_MEM_ALLOC_HOST_PTR | CL_MEM_READ_WRITE, width * sizeof(uint32_t));
-
     kernel.setArg(0, buffer);
-    queue.enqueueNDRangeKernel(kernel, 1, 4);
+    queue.enqueueNDRangeKernel(kernel, 1, width);
 
     uint32_t result[width] = {};
     std::fill_n(result, width, 0xdeaddead);
 
-    queue.enqueueReadBuffer(buffer, true, 0, buffer.getInfo<CL_MEM_SIZE>(), result);
+    queue.enqueueReadBuffer(buffer, true, 0, sizeof(result), result);
 
     for (uint32_t i = 0; i < width; ++i)
     {

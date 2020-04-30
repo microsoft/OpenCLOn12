@@ -4,6 +4,8 @@
 #include "resources.hpp"
 #include "clc_compiler.h"
 
+extern void SignBlob(void* pBlob, size_t size);
+
 class ExecuteKernel : public Task
 {
 public:
@@ -104,6 +106,8 @@ public:
                 auto spirv = m_Kernel->m_Parent->GetSpirV();
                 auto name = m_Kernel->m_pDxil->kernel->name;
                 unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
+
+                SignBlob(specialized->binary.data, specialized->binary.size);
 
                 auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&m_Parent->GetDevice().ImmCtx(), specialized->binary.data, specialized->binary.size, m_Kernel->m_ShaderDecls);
                 D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
