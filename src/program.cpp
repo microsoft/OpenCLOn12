@@ -213,19 +213,18 @@ clBuildProgram(cl_program           program_,
     Context& context = program.GetContext();
     auto ReportError = context.GetErrorReporter();
 
-    if (num_devices == 0 || device_list == nullptr)
-    {
-        return ReportError("num_devices must not be zero and device_list must not be NULL.", CL_INVALID_VALUE);
-    }
-    if (num_devices != 1)
+    if (num_devices > 1)
     {
         return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
     }
 
-    Device* device = static_cast<Device*>(device_list[0]);
-    if (device != &context.GetDevice())
+    if (device_list)
     {
-        return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+        Device* device = static_cast<Device*>(device_list[0]);
+        if (device != &context.GetDevice())
+        {
+            return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+        }
     }
 
     return program.Build(options, pfn_notify, user_data);
@@ -251,19 +250,18 @@ clCompileProgram(cl_program           program_,
     Context& context = program.GetContext();
     auto ReportError = context.GetErrorReporter();
 
-    if (num_devices == 0 || device_list == nullptr)
-    {
-        return ReportError("num_devices must not be zero and device_list must not be NULL.", CL_INVALID_VALUE);
-    }
-    if (num_devices != 1)
+    if (num_devices > 1)
     {
         return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
     }
 
-    Device* device = static_cast<Device*>(device_list[0]);
-    if (device != &context.GetDevice())
+    if (device_list)
     {
-        return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+        Device* device = static_cast<Device*>(device_list[0]);
+        if (device != &context.GetDevice())
+        {
+            return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+        }
     }
 
     return program.Compile(options, num_input_headers, input_headers, header_include_names, pfn_notify, user_data);
@@ -289,19 +287,18 @@ clLinkProgram(cl_context           context_,
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter(errcode_ret);
 
-    if (num_devices == 0 || device_list == nullptr)
-    {
-        return ReportError("num_devices must not be zero and device_list must not be NULL.", CL_INVALID_VALUE);
-    }
-    if (num_devices != 1)
+    if (num_devices > 1)
     {
         return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
     }
 
-    Device* device = static_cast<Device*>(device_list[0]);
-    if (device != &context.GetDevice())
+    if (device_list)
     {
-        return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+        Device* device = static_cast<Device*>(device_list[0]);
+        if (device != &context.GetDevice())
+        {
+            return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+        }
     }
 
     try

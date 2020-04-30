@@ -446,3 +446,19 @@ void Device::ExecuteTasks(Submission& tasks)
         Flush(Lock);
     }
 }
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clRetainDevice(cl_device_id device) CL_API_SUFFIX__VERSION_1_2
+{
+    if (!device)
+        return CL_INVALID_DEVICE;
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clReleaseDevice(cl_device_id device) CL_API_SUFFIX__VERSION_1_2
+{
+    if (!device)
+        return CL_INVALID_DEVICE;
+    return CL_SUCCESS;
+}
