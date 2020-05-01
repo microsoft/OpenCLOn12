@@ -926,6 +926,14 @@ void MemReadTask::RecordImpl()
             D3D12TranslationLayer::MAP_TYPE_READ, false,
             nullptr, &MapRet);
 
+        size_t SrcRowPitch = m_Args.SrcBufferRowPitch;
+        size_t SrcSlicePitch = m_Args.SrcBufferSlicePitch;
+        if (m_Source->m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+        {
+            SrcRowPitch = MapRet.RowPitch;
+            SrcSlicePitch = MapRet.DepthPitch;
+        }
+
         const cl_uint FormatBytes = GetFormatSizeBytes(m_Source->m_Format);
         if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX == 0)
         {
@@ -937,12 +945,12 @@ void MemReadTask::RecordImpl()
                     char* pDest = reinterpret_cast<char*>(m_Args.pData) +
                         (z + i + m_Args.DstZ) * m_Args.DstSlicePitch +
                         (y + m_Args.DstY) * m_Args.DstRowPitch +
-                        m_Args.DstX;
+                        m_Args.DstX * FormatBytes;
                     const char* pSrc = reinterpret_cast<const char*>(MapRet.pData) +
-                        (z + i + m_Args.SrcZ) * m_Args.SrcBufferSlicePitch +
-                        (y + m_Args.SrcY) * m_Args.SrcBufferRowPitch +
-                        m_Args.SrcX;
-                    memcpy(pDest, pSrc, m_Args.Width);
+                        (z + i + m_Args.SrcZ) * SrcSlicePitch +
+                        (y + m_Args.SrcY) * SrcRowPitch +
+                        m_Args.SrcX * FormatBytes;
+                    memcpy(pDest, pSrc, m_Args.Width * FormatBytes);
                 }
             }
         }

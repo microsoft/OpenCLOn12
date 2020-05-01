@@ -224,6 +224,6 @@ inline cl_uint GetFormatSizeBytes(cl_image_format format)
         return 2;
     default:
         return GetChannelSizeBits(format.image_channel_data_type) *
-            GetNumChannelsInOrder(format.image_channel_order);
+            GetNumChannelsInOrder(format.image_channel_order) / 8;
     }
 }

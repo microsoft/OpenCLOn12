@@ -34,7 +34,7 @@ public:
         m_Kernel.Release();
     }
 
-    ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset, std::array<uint32_t, 3> const& localSize)
+    ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset, std::array<uint16_t, 3> const& localSize)
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
         , m_Kernel(&kernel)
         , m_DispatchDims(dims)
@@ -51,7 +51,7 @@ public:
         assert(m_CBOffsets[KernelArgCBIndex] == 0 && m_CBOffsets[GlobalOffsetsCBIndex] != 0);
         assert(m_CBs.size() == m_CBOffsets.size());
 
-        memcpy(kernel.m_KernelArgsCbData.data() + m_CBOffsets[GlobalOffsetsCBIndex], offset.data(), sizeof(offset));
+        memcpy(kernel.m_KernelArgsCbData.data() + m_CBOffsets[GlobalOffsetsCBIndex] * 16, offset.data(), sizeof(offset));
 
         D3D12TranslationLayer::ResourceCreationArgs Args = {};
         Args.m_appDesc.m_Subresources = 1;
@@ -100,7 +100,7 @@ public:
                 auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 
                 clc_runtime_kernel_conf config = {};
-                memcpy(config.local_size, localSize.data(), sizeof(localSize));
+                std::copy(std::begin(localSize), std::end(localSize), config.local_size);
                 config.args = m_ArgInfo.data();
 
                 auto spirv = m_Kernel->m_Parent->GetSpirV();
@@ -189,20 +189,20 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
             GlobalWorkItemOffsets[i] = (uint32_t)global_work_offset[i];
         }
     }
-    if (local_work_size != nullptr &&
-        std::any_of(local_work_size, local_work_size + work_dim, [](size_t s) { return s != 1; }))
-    {
-        return ReportError("local_work_size must all be 1 on this platform.", CL_INVALID_WORK_GROUP_SIZE);
-    }
 
     std::array<uint32_t, 3> DispatchDimensions = { 1, 1, 1 };
-    std::array<uint32_t, 3> LocalSizes = { 1, 1, 1 };
+    std::array<uint16_t, 3> LocalSizes = { 1, 1, 1 };
     auto RequiredDims = kernel.GetRequiredLocalDims();
     auto DimsHint = kernel.GetLocalDimsHint();
     for (cl_uint i = 0; i < work_dim; ++i)
     {
-        uint32_t& LocalSize = LocalSizes[i];
-        LocalSize = local_work_size ? (uint32_t)local_work_size[i] :
+        uint16_t& LocalSize = LocalSizes[i];
+        if (local_work_size && local_work_size[i] > std::numeric_limits<uint16_t>::max())
+        {
+            return ReportError("local_work_size is too large.", CL_INVALID_WORK_GROUP_SIZE);
+        }
+
+        LocalSize = local_work_size ? (uint16_t)local_work_size[i] :
             (DimsHint ? DimsHint[i] : 1u);
         if (global_work_size[i] % LocalSize != 0)
         {

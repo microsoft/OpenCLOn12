@@ -179,7 +179,7 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
                 for (cl_uint j = 0; j < metadata.args[i].image.num_buf_ids; ++j)
                     declVector[metadata.args[i].image.buf_ids[j]] = dim;
             }
-            else if (strcmp(arg.type_name, "sampler_t") != 0)
+            else
             {
                 decls.m_UAVDecls[metadata.args[i].globalptr.buf_id] =
                     D3D12TranslationLayer::RESOURCE_DIMENSION::RAW_BUFFER;
@@ -206,14 +206,13 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     KernelInputsCbSize = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT,
                                                               D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
     m_KernelArgsCbData.resize(KernelInputsCbSize);
-    m_CBOffsets[m_pDxil->metadata.global_work_offset_cbv_id] = (UINT)(KernelInputsCbSize - D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+    m_CBOffsets[m_pDxil->metadata.global_work_offset_cbv_id] = (UINT)(KernelInputsCbSize - D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT) / 16;
 
     // Fill out the fixed data in the kernel args buffer
     for (cl_uint i = 0; i < m_pDxil->kernel->num_args; ++i)
     {
         if (m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL &&
-            MemObjectTypeFromName(m_pDxil->kernel->args[i].type_name) == 0 &&
-            strcmp(m_pDxil->kernel->args[i].type_name, "sampler_t") != 0)
+            MemObjectTypeFromName(m_pDxil->kernel->args[i].type_name) == 0)
         {
             auto& arg = m_pDxil->metadata.args[i];
             cl_uint value = arg.globalptr.buf_id << 28;
@@ -240,17 +239,16 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
     {
     case CLC_KERNEL_ARG_ADDRESS_GLOBAL:
     {
-        static_assert(sizeof(cl_mem) == sizeof(cl_sampler));
         if (arg_size != sizeof(cl_mem))
         {
             return ReportError("Invalid argument size, must be sizeof(cl_mem) for global arguments", CL_INVALID_ARG_SIZE);
         }
 
         cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
+        cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
+        Resource* resource = static_cast<Resource*>(mem);
         if (imageType != 0)
         {
-            cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
-            Resource* resource = static_cast<Resource*>(mem);
             bool validImageType = true;
             if (resource)
             {
@@ -268,7 +266,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 {
                     return ReportError("Invalid mem object flags, binding read-only image to writable image argument.", CL_INVALID_ARG_VALUE);
                 }
-                if ((arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_READ) == 0 &&
+                if ((arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_READ) != 0 &&
                     resource && (resource->m_Flags & CL_MEM_WRITE_ONLY))
                 {
                     return ReportError("Invalid mem object flags, binding write-only image to read-write image argument.", CL_INVALID_ARG_VALUE);
@@ -281,7 +279,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             }
             else
             {
-                if (resource && (resource->m_Flags & CL_MEM_READ_ONLY))
+                if (resource && (resource->m_Flags & CL_MEM_WRITE_ONLY))
                 {
                     return ReportError("Invalid mem object flags, binding write-only image to read-only image argument.", CL_INVALID_ARG_VALUE);
                 }
@@ -305,20 +303,8 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 ImageFormatInKernelArgs->image_channel_order -= CL_R;
             }
         }
-        else if (strcmp(arg.type_name, "sampler_t") == 0)
-        {
-            cl_sampler samp = arg_value ? *reinterpret_cast<cl_sampler const*>(arg_value) : nullptr;
-            Sampler* sampler = static_cast<Sampler*>(samp);
-            D3D12TranslationLayer::Sampler* underlying = sampler ? &sampler->GetUnderlying() : nullptr;
-            m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = underlying;
-            // Store normalized coords in the kernel args
-            *reinterpret_cast<cl_uint*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset) =
-                sampler ? sampler->m_Desc.NormalizedCoords : 1u;
-        }
         else
         {
-            cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
-            Resource* resource = static_cast<Resource*>(mem);
             if (resource && resource->m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
             {
                 return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
@@ -340,11 +326,28 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         break;
 
     case CLC_KERNEL_ARG_ADDRESS_PRIVATE:
-        if (arg_size != m_pDxil->metadata.args[arg_index].size)
+        if (strcmp(arg.type_name, "sampler_t") == 0)
         {
-            return ReportError("Invalid argument size", CL_INVALID_ARG_SIZE);
+            if (arg_size != sizeof(cl_sampler))
+            {
+                return ReportError("Invalid argument size, must be sizeof(cl_mem) for global arguments", CL_INVALID_ARG_SIZE);
+            }
+            cl_sampler samp = arg_value ? *reinterpret_cast<cl_sampler const*>(arg_value) : nullptr;
+            Sampler* sampler = static_cast<Sampler*>(samp);
+            D3D12TranslationLayer::Sampler* underlying = sampler ? &sampler->GetUnderlying() : nullptr;
+            m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = underlying;
+            // Store normalized coords in the kernel args
+            *reinterpret_cast<cl_uint*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset) =
+                sampler ? sampler->m_Desc.NormalizedCoords : 1u;
         }
-        memcpy(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset, arg_value, arg_size);
+        else
+        {
+            if (arg_size != m_pDxil->metadata.args[arg_index].size)
+            {
+                return ReportError("Invalid argument size", CL_INVALID_ARG_SIZE);
+            }
+            memcpy(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset, arg_value, arg_size);
+        }
         break;
 
     case CLC_KERNEL_ARG_ADDRESS_LOCAL:

@@ -9,6 +9,10 @@
 #include "cl2.hpp"
 #include <memory>
 #include <utility>
+#include <algorithm>
+#include <numeric>
+
+#include <d3d12.h>
 
 std::pair<cl::Context, cl::Device> GetWARPContext()
 {
@@ -90,8 +94,61 @@ TEST(OpenCLOn12, SimpleKernel)
     }
 }
 
-int main()
+TEST(OpenCLOn12, SimpleImages)
 {
-    testing::InitGoogleTest();
+    auto&& [context, device] = GetWARPContext();
+    cl::CommandQueue queue(context, device);
+
+    const char* kernel_source =
+    "__kernel void main_test(read_only image2d_t input, write_only image2d_t output, float foo)\n\
+    {\n\
+        int2 coord = (int2)(get_global_id(0), get_global_id(1));\n\
+        write_imagef(output, coord, read_imagef(input, coord) + foo);\n\
+    }\n";
+
+    const size_t width = 16;
+    const size_t height = 16;
+    cl::NDRange offset(0, 0);
+    cl::NDRange localSize(4, 4);
+    cl::NDRange globalSize(width, height);
+
+    float InputData[width * height * 4];
+    std::iota(InputData, std::end(InputData), 1.0f);
+
+    cl::Image2D input(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                      cl::ImageFormat(CL_RGBA, CL_FLOAT), width, height,
+                      sizeof(float) * width * 4, InputData);
+
+    cl::Image2D output(context, CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY,
+                       cl::ImageFormat(CL_RGBA, CL_FLOAT), width, height);
+
+    cl::Program program(context, kernel_source, true /*build*/);
+    cl::Kernel kernel(program, "main_test");
+
+    kernel.setArg(0, input);
+    kernel.setArg(1, output);
+    queue.enqueueNDRangeKernel(kernel, offset, globalSize, localSize);
+
+    float OutputData[width * height * 4];
+    cl::array<cl::size_type, 3> origin{}, region{ width, height };
+    queue.enqueueReadImage(output, true, origin, region, sizeof(float) * width * 4,
+                           sizeof(float) * width * height * 4, OutputData);
+
+    for (int i = 0; i < std::extent_v<decltype(InputData)>; ++i)
+    {
+        EXPECT_EQ(InputData[i], OutputData[i]);
+    }
+}
+
+int main(int argc, char** argv)
+{
+    ID3D12Debug* pDebug = nullptr;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&pDebug))))
+    {
+        pDebug->EnableDebugLayer();
+        pDebug->Release();
+    }
+
+    testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

@@ -318,9 +318,9 @@ clCreateImage(cl_context              context_,
 
     Args.m_appDesc.m_NonOpaquePlaneCount = 1;
     Args.m_appDesc.m_MipLevels = 1;
-    Args.m_appDesc.m_Depth = (UINT)image_desc->image_depth;
-    Args.m_appDesc.m_Width = (UINT)image_desc->image_width;
-    Args.m_appDesc.m_Height = (UINT)image_desc->image_height;
+    Args.m_appDesc.m_Depth = max((UINT)image_desc->image_depth, 1u);
+    Args.m_appDesc.m_Width = max((UINT)image_desc->image_width, 1u);
+    Args.m_appDesc.m_Height = max((UINT)image_desc->image_height, 1u);
     Args.m_appDesc.m_Format = GetDXGIFormatForCLImageFormat(*image_format);
     Args.m_appDesc.m_Samples = 1;
     Args.m_appDesc.m_Quality = 0;
@@ -890,7 +890,7 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
         {
         case CL_MEM_OBJECT_IMAGE1D:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-            SRVDesc.Texture1D.MipLevels = 0;
+            SRVDesc.Texture1D.MipLevels = 1;
             SRVDesc.Texture1D.MostDetailedMip = 0;
             SRVDesc.Texture1D.ResourceMinLODClamp = 0;
             break;
@@ -898,13 +898,13 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
             SRVDesc.Texture1DArray.FirstArraySlice = 0;
             SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-            SRVDesc.Texture1DArray.MipLevels = 0;
+            SRVDesc.Texture1DArray.MipLevels = 1;
             SRVDesc.Texture1DArray.MostDetailedMip = 0;
             SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
             break;
         case CL_MEM_OBJECT_IMAGE2D:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            SRVDesc.Texture2D.MipLevels = 0;
+            SRVDesc.Texture2D.MipLevels = 1;
             SRVDesc.Texture2D.MostDetailedMip = 0;
             SRVDesc.Texture2D.PlaneSlice = 0;
             SRVDesc.Texture2D.ResourceMinLODClamp = 0;
@@ -913,14 +913,14 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
             SRVDesc.Texture2DArray.FirstArraySlice = 0;
             SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-            SRVDesc.Texture2DArray.MipLevels = 0;
+            SRVDesc.Texture2DArray.MipLevels = 1;
             SRVDesc.Texture2DArray.MostDetailedMip = 0;
             SRVDesc.Texture2DArray.PlaneSlice = 0;
             SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
             break;
         case CL_MEM_OBJECT_IMAGE3D:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-            SRVDesc.Texture3D.MipLevels = 0;
+            SRVDesc.Texture3D.MipLevels = 1;
             SRVDesc.Texture3D.MostDetailedMip = 0;
             SRVDesc.Texture3D.ResourceMinLODClamp = 0;
             break;
