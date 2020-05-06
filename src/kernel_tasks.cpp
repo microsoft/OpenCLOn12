@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include "kernel.hpp"
 #include "task.hpp"
 #include "queue.hpp"

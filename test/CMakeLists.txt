@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 add_subdirectory(googletest)
 
 file(GLOB SRC CONFIGURE_DEPENDS *.cpp)

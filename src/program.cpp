@@ -1,4 +1,5 @@
-#pragma once
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include "program.hpp"
 #include "clc_compiler.h"
 #include "kernel.hpp"

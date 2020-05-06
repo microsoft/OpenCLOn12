@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include "gtest/gtest.h"
 
 #define CL_TARGET_OPENCL_VERSION 120

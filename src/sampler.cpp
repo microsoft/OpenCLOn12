@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include "sampler.hpp"
 
 static D3D12_SAMPLER_DESC TranslateSamplerDesc(Sampler::Desc const& desc)

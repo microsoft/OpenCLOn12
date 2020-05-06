@@ -1,3 +1,5 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #include "platform.hpp"
 #include "clc_compiler.h"
 
