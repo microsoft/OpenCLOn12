@@ -93,7 +93,7 @@ clGetEventInfo(cl_event         event,
     }
     case CL_EVENT_REFERENCE_COUNT: return RetValue(task.GetRefCount());
     }
-    return CL_INVALID_VALUE;
+    return task.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 extern CL_API_ENTRY cl_event CL_API_CALL

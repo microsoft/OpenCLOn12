@@ -66,7 +66,7 @@ clCreateCommandQueueWithProperties(cl_context               context_,
         PropertyBits = static_cast<cl_command_queue_properties>(*FoundPropertyBits);
     }
     constexpr cl_command_queue_properties ValidPropertyBits = CL_QUEUE_PROFILING_ENABLE | CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE;
-    if (PropertyBits & ValidPropertyBits)
+    if (PropertyBits & ~ValidPropertyBits)
     {
         return ReportError("Invalid properties specified.", CL_INVALID_QUEUE_PROPERTIES);
     }
@@ -131,7 +131,7 @@ clGetCommandQueueInfo(cl_command_queue      command_queue,
             param_value_size, param_value, param_value_size_ret);
     }
 
-    return CL_INVALID_VALUE;
+    return queue.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 /*
@@ -277,11 +277,15 @@ void CommandQueue::AddAllTasksAsDependencies(Task* p, TaskPoolLock const& lock)
 {
     for (auto& task : m_OutstandingTasks)
     {
+        if (task.Get() == m_LastQueuedTask || task.Get() == m_LastQueuedBarrier)
+            continue;
         cl_event TaskAsEvent = task.Get();
         p->AddDependencies(&TaskAsEvent, 1, lock);
     }
     for (auto& task : m_QueuedTasks)
     {
+        if (task.Get() == m_LastQueuedTask || task.Get() == m_LastQueuedBarrier)
+            continue;
         cl_event TaskAsEvent = task.Get();
         p->AddDependencies(&TaskAsEvent, 1, lock);
     }

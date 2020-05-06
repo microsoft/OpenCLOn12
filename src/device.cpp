@@ -113,7 +113,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: // Fallthrough
         case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*UAVs*/ return ImageRetValueOrZero((cl_uint)64);
 
-        case CL_DEVICE_IL_VERSION: return RetValue("DXIL_6.5");
+        case CL_DEVICE_IL_VERSION: return RetValue("");
 
         case CL_DEVICE_IMAGE2D_MAX_WIDTH: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
         case CL_DEVICE_IMAGE2D_MAX_HEIGHT: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
@@ -176,7 +176,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DRIVER_VERSION: return RetValue("0.0.1");
         case CL_DEVICE_PROFILE: return RetValue(pDevice->m_Parent->Profile);
         case CL_DEVICE_VERSION: return RetValue(pDevice->m_Parent->Version);
-        case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.0");
+        case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.2");
 
         case CL_DEVICE_EXTENSIONS: return RetValue("");
 
@@ -216,7 +216,13 @@ Device::~Device() = default;
 
 void Device::InitD3D()
 {
-    THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&m_spDevice)));
+    if (m_ImmCtx)
+    {
+        return;
+    }
+
+    THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_spDevice)));
+    //THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&m_spDevice)));
     THROW_IF_FAILED(m_spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options)));
 
     m_Callbacks.m_pfnPostSubmit = []() {};
@@ -250,9 +256,13 @@ cl_bool Device::IsAvailable() const noexcept
 
 cl_ulong Device::GetGlobalMemSize() const noexcept
 {
-    size_t memory = 0;
-    m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedAdapterMemory, sizeof(memory), &memory);
-    return memory;
+    size_t localMemory = 0;
+    m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedAdapterMemory, sizeof(localMemory), &localMemory);
+    size_t nonlocalMemory = 0;
+    m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedSystemMemory, sizeof(nonlocalMemory), &nonlocalMemory);
+    size_t sharedMemory = 0;
+    m_spAdapter->GetProperty(DXCoreAdapterProperty::SharedSystemMemory, sizeof(sharedMemory), &sharedMemory);
+    return ((cl_ulong)localMemory + nonlocalMemory + sharedMemory);
 }
 
 DXCoreHardwareID const& Device::GetHardwareIds() const noexcept

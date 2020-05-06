@@ -415,7 +415,7 @@ clGetProgramInfo(cl_program         program_,
     }
     }
 
-    return CL_INVALID_VALUE;
+    return program.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -451,7 +451,7 @@ clGetProgramBuildInfo(cl_program            program_,
     case CL_PROGRAM_BINARY_TYPE: return RetValue(program.m_BinaryType);
     }
 
-    return CL_INVALID_VALUE;
+    return program.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 Program::Program(Context& Parent, std::string Source)

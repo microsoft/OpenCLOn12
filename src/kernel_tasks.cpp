@@ -235,15 +235,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
         std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes));
 
         auto Lock = context.GetDevice().GetTaskPoolLock();
-        if (num_events_in_wait_list)
-        {
-            task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
-        }
-        else
-        {
-            queue.AddAllTasksAsDependencies(task.get(), Lock);
-        }
-
+        task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
         // No more exceptions
@@ -321,4 +313,6 @@ void ExecuteKernel::RecordImpl()
     ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());
     ImmCtx.SetPipelineState(m_PSO.get());
     ImmCtx.Dispatch(m_DispatchDims[0], m_DispatchDims[1], m_DispatchDims[2]);
+
+    ImmCtx.ClearState();
 }

@@ -28,29 +28,22 @@ void ModifyResourceArgsForMemFlags(D3D12TranslationLayer::ResourceCreationArgs& 
         flags |= CL_MEM_READ_WRITE;
     if (flags & CL_MEM_ALLOC_HOST_PTR)
     {
-        auto& usage = Args.m_appDesc.m_usage;
-        switch (flags & (DeviceReadWriteFlagsMask | HostReadWriteFlagsMask))
+        Args.m_heapDesc.Properties = CD3DX12_HEAP_PROPERTIES(D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE, D3D12_MEMORY_POOL_L0);
+        switch (flags & HostReadWriteFlagsMask)
         {
-        case (CL_MEM_WRITE_ONLY | CL_MEM_HOST_READ_ONLY):
-            usage = D3D12TranslationLayer::RESOURCE_USAGE_STAGING;
+        default:
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
+            break;
+        case CL_MEM_HOST_NO_ACCESS:
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_NONE;
+            break;
+        case CL_MEM_HOST_READ_ONLY:
             Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ;
             break;
-        default:
-            usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
-            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
+        case CL_MEM_HOST_WRITE_ONLY:
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
             break;
         }
-        Args.m_heapDesc.Properties.Type =
-            (usage == D3D12TranslationLayer::RESOURCE_USAGE_STAGING) ? D3D12_HEAP_TYPE_READBACK : D3D12_HEAP_TYPE_UPLOAD;
-    }
-    else
-    {
-        if ((flags & CL_MEM_HOST_NO_ACCESS) == 0)
-        {
-            Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
-            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
-        }
-        Args.m_heapDesc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
     }
 }
 
@@ -637,7 +630,7 @@ clGetMemObjectInfo(cl_mem           memobj,
     case CL_MEM_ASSOCIATED_MEMOBJECT: return RetValue(resource.m_ParentBuffer.Get());
     case CL_MEM_OFFSET: return RetValue(resource.m_Offset);
     }
-    return CL_INVALID_VALUE;
+    return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -669,13 +662,14 @@ clGetImageInfo(cl_mem           image,
     case CL_IMAGE_ROW_PITCH: return RetValue(resource.m_Desc.image_row_pitch);
     case CL_IMAGE_SLICE_PITCH: return RetValue(resource.m_Desc.image_slice_pitch);
     case CL_IMAGE_WIDTH: return RetValue(resource.m_Desc.image_width);
+    case CL_IMAGE_HEIGHT: return RetValue(resource.m_Desc.image_height);
     case CL_IMAGE_DEPTH: return RetValue(resource.m_Desc.image_depth);
     case CL_IMAGE_ARRAY_SIZE: return RetValue(resource.m_Desc.image_array_size);
     case CL_IMAGE_BUFFER: return RetValue(resource.m_Desc.buffer);
     case CL_IMAGE_NUM_MIP_LEVELS: return RetValue(resource.m_Desc.num_mip_levels);
     case CL_IMAGE_NUM_SAMPLES: return RetValue(resource.m_Desc.num_samples);
     }
-    return CL_INVALID_VALUE;
+    return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 Resource* Resource::CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags)
@@ -754,7 +748,7 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
     , m_Underlying(std::move(Underlying))
     , m_Desc(GetBufferDesc(size, CL_MEM_OBJECT_BUFFER))
 {
-    if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
+    if ((flags & DeviceReadWriteFlagsMask) != 0)
     {
         D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
         auto& UAVDesc = UAVDescWrapper.m_Desc12;
@@ -767,18 +761,6 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
         UAVDesc.Buffer.NumElements = (UINT)(size / 4);
         UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
         m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
-    }
-    if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
-    {
-        D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
-        SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        SRVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-        SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        SRVDesc.Buffer.StructureByteStride = 0;
-        SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-        SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-        SRVDesc.Buffer.NumElements = (UINT)(size / 4);
-        m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
     }
 }
 
@@ -827,6 +809,20 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
 
             m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
         }
+    }
+    else if ((flags & DeviceReadWriteFlagsMask) != 0)
+    {
+        D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
+        auto& UAVDesc = UAVDescWrapper.m_Desc12;
+        UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        UAVDesc.Buffer.CounterOffsetInBytes = 0;
+        UAVDesc.Buffer.StructureByteStride = 0;
+        UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        UAVDesc.Buffer.FirstElement = m_Offset / 4;
+        UAVDesc.Buffer.NumElements = (UINT)(size / 4);
+        UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
+        m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
     }
 }
 

@@ -66,7 +66,7 @@ static cl_int ProcessImageDimensions(
         switch (resource.m_Desc.image_type)
         {
         case CL_MEM_OBJECT_IMAGE2D:
-            if (origin[2] != 0 || region[2] != 0)
+            if (origin[2] != 0 || region[2] != 1)
             {
                 return ReportError("For 2D images, origin[2] must be 0 and region[2] must be 1.", CL_INVALID_VALUE);
             }
@@ -885,9 +885,13 @@ public:
     {
     }
 
+    void CopyBits(void* pData, int Subresource, size_t SrcRowPitch, size_t SrcSlicePitch);
+
 private:
     Resource::ref_ptr_int m_Source;
     const Args m_Args;
+    
+    void RecordViaCopy();
 
     void RecordImpl() final;
     void OnComplete() final
@@ -896,8 +900,45 @@ private:
     }
 };
 
+void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, size_t SrcSlicePitch)
+{
+    const cl_uint FormatBytes = GetFormatSizeBytes(m_Source->m_Format);
+    if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX == 0)
+    {
+        for (cl_uint z = 0; z < m_Args.Depth; ++z)
+        {
+            for (cl_uint y = 0; y < m_Args.Height; ++y)
+            {
+                char* pDest = reinterpret_cast<char*>(m_Args.pData) +
+                    (z + Subresource + m_Args.DstZ) * m_Args.DstSlicePitch +
+                    (y + m_Args.DstY) * m_Args.DstRowPitch +
+                    m_Args.DstX * FormatBytes;
+                const char* pSrc = reinterpret_cast<const char*>(pData) +
+                    (z + m_Args.SrcZ) * SrcSlicePitch +
+                    (y + m_Args.SrcY) * SrcRowPitch +
+                    m_Args.SrcX * FormatBytes;
+                memcpy(pDest, pSrc, m_Args.Width * FormatBytes);
+            }
+        }
+    }
+    else
+    {
+        char* pDest = reinterpret_cast<char*>(m_Args.pData) +
+            (Subresource * m_Args.DstZ) * m_Args.DstSlicePitch;
+        D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
+        D3D12_SUBRESOURCE_DATA Src = { pData, (LONG_PTR)SrcRowPitch, (LONG_PTR)SrcSlicePitch };
+        MemcpySubresource(&Dest, &Src, FormatBytes * m_Args.Width, m_Args.Height, m_Args.Depth);
+    }
+}
+
 void MemReadTask::RecordImpl()
 {
+    if (!(m_Source->m_Flags & CL_MEM_ALLOC_HOST_PTR))
+    {
+        RecordViaCopy();
+        return;
+    }
+
     auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
@@ -934,36 +975,10 @@ void MemReadTask::RecordImpl()
             SrcSlicePitch = MapRet.DepthPitch;
         }
 
-        const cl_uint FormatBytes = GetFormatSizeBytes(m_Source->m_Format);
-        if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX == 0)
-        {
-            for (cl_uint z = 0; z < m_Args.Depth; ++z)
-            {
-                for (cl_uint y = 0; y < m_Args.Height; ++y)
-                {
-                    assert(i == 0 || z == 0);
-                    char* pDest = reinterpret_cast<char*>(m_Args.pData) +
-                        (z + i + m_Args.DstZ) * m_Args.DstSlicePitch +
-                        (y + m_Args.DstY) * m_Args.DstRowPitch +
-                        m_Args.DstX * FormatBytes;
-                    const char* pSrc = reinterpret_cast<const char*>(MapRet.pData) +
-                        (z + i + m_Args.SrcZ) * SrcSlicePitch +
-                        (y + m_Args.SrcY) * SrcRowPitch +
-                        m_Args.SrcX * FormatBytes;
-                    memcpy(pDest, pSrc, m_Args.Width * FormatBytes);
-                }
-            }
-        }
-        else
-        {
-            char* pDest = reinterpret_cast<char*>(m_Args.pData) +
-                i * m_Args.Depth * m_Args.DstSlicePitch;
-            D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
-            D3D12_SUBRESOURCE_DATA Src = { MapRet.pData, (LONG_PTR)MapRet.RowPitch, (LONG_PTR)MapRet.DepthPitch };
-            MemcpySubresource(&Dest, &Src, FormatBytes * m_Args.Width, m_Args.Height, m_Args.Depth);
-        }
+        CopyBits(MapRet.pData, i, SrcRowPitch, SrcSlicePitch);
+
+        ImmCtx.Unmap(m_Source->GetUnderlyingResource(), i, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
     }
-    
 }
 
 cl_int clEnqueueReadBufferRectImpl(cl_command_queue    command_queue,
@@ -2357,10 +2372,22 @@ public:
     MapCopyTask(Context& Parent, cl_command_queue command_queue, cl_map_flags flags, Resource& resource, Args const& args, cl_command_type command)
         : MapTask(Parent, command_queue, resource, flags, command, args)
     {
-        cl_mem_flags stagingFlags = CL_MEM_HOST_READ_ONLY | CL_MEM_WRITE_ONLY | CL_MEM_ALLOC_HOST_PTR;
+        D3D12TranslationLayer::ResourceCreationArgs Args = *resource.GetUnderlyingResource()->Parent();
+        Args.m_appDesc.m_Subresources = args.NumArraySlices;
+        Args.m_appDesc.m_SubresourcesPerPlane = args.NumArraySlices;
+        Args.m_appDesc.m_ArraySize = args.NumArraySlices;
+        Args.m_appDesc.m_Depth = args.Depth;
+        Args.m_appDesc.m_Width = args.Width;
+        Args.m_appDesc.m_Height = args.Height;
+        Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_STAGING;
+        Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_NONE;
+        Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
+        Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_READBACK);
+
+        cl_mem_flags stagingFlags = CL_MEM_ALLOC_HOST_PTR;
         if (resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
-            m_MappableResource.Attach(static_cast<Resource*>(clCreateBuffer(&Parent, stagingFlags, args.Width, nullptr, nullptr)));
+            m_MappableResource.Attach(Resource::CreateBuffer(Parent, Args, nullptr, stagingFlags));
         }
         else
         {
@@ -2369,7 +2396,9 @@ public:
             NewDesc.image_height = args.Height;
             NewDesc.image_depth = args.Depth;
             NewDesc.image_array_size = args.NumArraySlices;
-            m_MappableResource.Attach(static_cast<Resource*>(clCreateImage(&Parent, stagingFlags, &resource.m_Format, &NewDesc, nullptr, nullptr)));
+            NewDesc.image_row_pitch = 0;
+            NewDesc.image_slice_pitch = 0;
+            m_MappableResource.Attach(Resource::CreateImage(Parent, Args, nullptr, resource.m_Format, NewDesc, stagingFlags));
         }
 
         m_UnderlyingMapTask.reset(new MapSynchronizeTask(Parent, command_queue, flags, *m_MappableResource.Get(), args, command));
@@ -2624,10 +2653,8 @@ clEnqueueMapImage(cl_command_queue  command_queue,
         if (resource.m_Flags & CL_MEM_USE_HOST_PTR)
         {
             task.reset(new MapUseHostPtrResourceTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_IMAGE));
-        } else if (resource.m_Flags & CL_MEM_ALLOC_HOST_PTR)
-        {
-            task.reset(new MapSynchronizeTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_IMAGE));
-        } else
+        }
+        else
         {
             task.reset(new MapCopyTask(context, command_queue, map_flags, resource, CmdArgs, CL_COMMAND_MAP_IMAGE));
         }
@@ -2751,4 +2778,39 @@ clEnqueueUnmapMemObject(cl_command_queue command_queue,
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
     return CL_SUCCESS;
+}
+
+void MemReadTask::RecordViaCopy()
+{
+    MapTask::Args MapArgs = {};
+    MapArgs.SrcX = m_Args.SrcX;
+    MapArgs.SrcY = m_Args.SrcY;
+    MapArgs.SrcZ = m_Args.SrcZ;
+    MapArgs.Width = m_Args.Width;
+    MapArgs.Height = m_Args.Height;
+    MapArgs.Depth = m_Args.Depth;
+    MapArgs.FirstArraySlice = m_Args.FirstArraySlice;
+    MapArgs.NumArraySlices = m_Args.NumArraySlices;
+    if (m_CommandType == CL_COMMAND_READ_BUFFER_RECT)
+    {
+        MapArgs = {};
+        MapArgs.Width = (cl_uint)m_Source->m_Desc.image_width;
+    }
+    MapCopyTask MapCopy(m_Parent.get(), m_CommandQueue.Get(), CL_MAP_READ, *m_Source.Get(), MapArgs, CL_COMMAND_MAP_IMAGE);
+    MapCopy.Record();
+
+    MemReadTask::Args MemReadArgs = m_Args;
+    if (m_CommandType != CL_COMMAND_READ_BUFFER_RECT)
+    {
+        MemReadArgs.SrcX = 0;
+        MemReadArgs.SrcY = 0;
+        MemReadArgs.SrcZ = 0;
+        MemReadArgs.FirstArraySlice = 0;
+        MemReadArgs.SrcBufferRowPitch = (cl_uint)MapCopy.GetRowPitch();
+        MemReadArgs.SrcBufferSlicePitch = (cl_uint)MapCopy.GetSlicePitch();
+    }
+    MemReadTask Read(m_Parent.get(), *m_Source.Get(), m_CommandType, m_CommandQueue.Get(), MemReadArgs);
+    Read.CopyBits(MapCopy.GetPointer(), 0, MemReadArgs.SrcBufferRowPitch, MemReadArgs.SrcBufferSlicePitch);
+
+    static_cast<MapTask&>(MapCopy).Unmap(false);
 }

@@ -3,6 +3,7 @@
 #include "program.hpp"
 #include "resources.hpp"
 
+class Sampler;
 class Kernel : public CLChildBase<Kernel, Program, cl_kernel>
 {
 private:
@@ -17,6 +18,8 @@ private:
     std::vector<cl_uint> m_CBOffsets;
     std::vector<byte> m_KernelArgsCbData;
     std::vector<struct clc_runtime_arg_info> m_ArgMetadataToCompiler;
+
+    std::vector<::ref_ptr<Sampler>> m_ConstSamplers;
 
     friend class ExecuteKernel;
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelInfo(cl_kernel, cl_kernel_info, size_t, void*, size_t*);

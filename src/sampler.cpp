@@ -184,6 +184,6 @@ clGetSamplerInfo(cl_sampler         sampler_,
     case CL_SAMPLER_ADDRESSING_MODE: return RetValue(desc.AddressingMode);
     case CL_SAMPLER_FILTER_MODE: return RetValue(desc.FilterMode);
     }
-    return CL_INVALID_VALUE;
+    return sampler.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 

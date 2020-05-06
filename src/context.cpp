@@ -215,7 +215,7 @@ clGetContextInfo(cl_context         context_,
             param_value_size, param_value, param_value_size_ret);
     }
 
-    return CL_INVALID_VALUE;
+    return context->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 Context::Context(Platform& Platform, Device& Device, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)

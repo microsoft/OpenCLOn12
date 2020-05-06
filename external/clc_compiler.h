@@ -96,6 +96,7 @@ struct clc_object {
 
 #define CLC_MAX_CONSTS 32
 #define CLC_MAX_BINDINGS_PER_ARG 3
+#define CLC_MAX_SAMPLERS 16
 
 struct clc_dxil_metadata {
    struct {
@@ -130,6 +131,14 @@ struct clc_dxil_metadata {
       unsigned cbv_id;
    } consts[CLC_MAX_CONSTS];
    size_t num_consts;
+
+   struct {
+      unsigned sampler_id;
+      unsigned addressing_mode;
+      unsigned normalized_coords;
+      unsigned filter_mode;
+   } const_samplers[CLC_MAX_SAMPLERS];
+   size_t num_const_samplers;
 
    uint16_t local_size[3];
    uint16_t local_size_hint[3];
@@ -170,6 +179,9 @@ struct clc_runtime_arg_info {
       struct {
          unsigned size;
       } localptr;
+      struct {
+         unsigned normalized_coords;
+      } sampler;
    };
 };
 

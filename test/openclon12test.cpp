@@ -130,7 +130,7 @@ TEST(OpenCLOn12, SimpleImages)
     queue.enqueueNDRangeKernel(kernel, offset, globalSize, localSize);
 
     float OutputData[width * height * 4];
-    cl::array<cl::size_type, 3> origin{}, region{ width, height };
+    cl::array<cl::size_type, 3> origin{}, region{ width, height, 1 };
     queue.enqueueReadImage(output, true, origin, region, sizeof(float) * width * 4,
                            sizeof(float) * width * height * 4, OutputData);
 

@@ -97,13 +97,21 @@ Platform::Platform(cl_icd_dispatch* dispatch)
         THROW_IF_FAILED(m_spAdapters->GetAdapter(i, IID_PPV_ARGS(&spAdapter)));
         m_Devices[i] = std::make_unique<Device>(*this, spAdapter.Get());
     }
+
+    // TODO: Find some runtime way to enable this logic to force WARP
+    //(void)std::remove_if(m_Devices.begin(), m_Devices.end(), [](std::unique_ptr<Device> const& a)
+    //{
+    //    auto&& hwids = a->GetHardwareIds();
+    //    return hwids.deviceID != 0x8c && hwids.vendorID != 0x1414;
+    //});
+    //m_Devices.resize(1);
 }
 
 Platform::~Platform() = default;
 
 cl_uint Platform::GetNumDevices() const noexcept
 {
-    return m_spAdapters->GetAdapterCount();
+    return (cl_uint)m_Devices.size();
 }
 
 cl_device_id Platform::GetDevice(cl_uint i) const noexcept

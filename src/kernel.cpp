@@ -208,6 +208,15 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     m_KernelArgsCbData.resize(KernelInputsCbSize);
     m_CBOffsets[m_pDxil->metadata.global_work_offset_cbv_id] = (UINT)(KernelInputsCbSize - D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT) / 16;
 
+    m_ConstSamplers.resize(m_pDxil->metadata.num_const_samplers);
+    for (cl_uint i = 0; i < m_pDxil->metadata.num_const_samplers; ++i)
+    {
+        auto& samplerMeta = m_pDxil->metadata.const_samplers[i];
+        Sampler::Desc desc = { samplerMeta.normalized_coords, samplerMeta.addressing_mode, samplerMeta.filter_mode };
+        m_ConstSamplers[i] = new Sampler(m_Parent->GetContext(), desc);
+        m_Samplers[samplerMeta.sampler_id] = &m_ConstSamplers[i]->GetUnderlying();
+    }
+
     // Fill out the fixed data in the kernel args buffer
     for (cl_uint i = 0; i < m_pDxil->kernel->num_args; ++i)
     {
@@ -336,9 +345,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             Sampler* sampler = static_cast<Sampler*>(samp);
             D3D12TranslationLayer::Sampler* underlying = sampler ? &sampler->GetUnderlying() : nullptr;
             m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = underlying;
-            // Store normalized coords in the kernel args
-            *reinterpret_cast<cl_uint*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset) =
-                sampler ? sampler->m_Desc.NormalizedCoords : 1u;
+            m_ArgMetadataToCompiler[arg_index].sampler.normalized_coords = sampler ? sampler->m_Desc.NormalizedCoords : 1u;
         }
         else
         {
@@ -407,7 +414,7 @@ clGetKernelInfo(cl_kernel       kernel_,
     case CL_KERNEL_ATTRIBUTES: return RetValue("");
     }
 
-    return CL_INVALID_VALUE;
+    return kernel.m_Parent->GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -464,7 +471,7 @@ clGetKernelArgInfo(cl_kernel       kernel_,
         return CL_KERNEL_ARG_INFO_NOT_AVAILABLE;
     }
 
-    return CL_INVALID_VALUE;
+    return kernel.m_Parent->GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
