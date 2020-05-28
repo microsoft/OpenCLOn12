@@ -24,7 +24,8 @@ clGetDeviceIDs(cl_platform_id   platform,
     {
         auto pPlatform = Platform::CastFrom(platform);
         cl_uint NumDevices = 0;
-        if (device_type & CL_DEVICE_TYPE_GPU)
+        if ((device_type & CL_DEVICE_TYPE_GPU) ||
+            device_type == CL_DEVICE_TYPE_DEFAULT)
         {
             NumDevices += pPlatform->GetNumDevices();
         }
@@ -107,10 +108,10 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_NATIVE_VECTOR_WIDTH_HALF: return RetValue((cl_uint)8);
 
         case CL_DEVICE_MAX_CLOCK_FREQUENCY: return RetValue((cl_uint)12);
-        case CL_DEVICE_ADDRESS_BITS: return RetValue(32u);
+        case CL_DEVICE_ADDRESS_BITS: return RetValue(64u);
         case CL_DEVICE_MAX_MEM_ALLOC_SIZE: return RetValue(min((size_t)pDevice->GetGlobalMemSize() / 4, (size_t)1024 * 1024 * 1024));
 
-        case CL_DEVICE_IMAGE_SUPPORT: return ImageRetValue((cl_bool)CL_FALSE, (cl_bool)CL_TRUE);
+        case CL_DEVICE_IMAGE_SUPPORT: return ImageRetValue((cl_bool)CL_TRUE, (cl_bool)CL_FALSE);
         case CL_DEVICE_MAX_READ_IMAGE_ARGS: /*SRVs*/ return ImageRetValueOrZero((cl_uint)128);
         case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: // Fallthrough
         case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*UAVs*/ return ImageRetValueOrZero((cl_uint)64);

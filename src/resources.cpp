@@ -750,7 +750,7 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
     , m_Underlying(std::move(Underlying))
     , m_Desc(GetBufferDesc(size, CL_MEM_OBJECT_BUFFER))
 {
-    if ((flags & DeviceReadWriteFlagsMask) != 0)
+    if (m_Underlying->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
     {
         D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
         auto& UAVDesc = UAVDescWrapper.m_Desc12;
@@ -776,55 +776,58 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     , m_Offset(offset)
     , m_Desc(GetBufferDesc(size, type))
 {
-    if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
+    if (m_Underlying->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
     {
-        DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-        UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
-        assert(m_Offset == 0);
+        if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
+        {
+            DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
+            UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
+            assert(m_Offset == 0);
 
-        if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
+            if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
+            {
+                D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
+                auto &UAVDesc = UAVDescWrapper.m_Desc12;
+                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+                UAVDesc.Format = DXGIFormat;
+                UAVDesc.Buffer.CounterOffsetInBytes = 0;
+                UAVDesc.Buffer.StructureByteStride = 0;
+                UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+                UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+                UAVDesc.Buffer.NumElements = (UINT)(size / FormatByteSize);
+
+                UAVDescWrapper.m_D3D11UAVFlags = 0;
+
+                m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
+            }
+            if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
+            {
+                D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+                SRVDesc.Format = DXGIFormat;
+                SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                SRVDesc.Buffer.StructureByteStride = 0;
+                SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+                SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+                SRVDesc.Buffer.NumElements = (UINT)(size / FormatByteSize);
+
+                m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
+            }
+        }
+        else
         {
             D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-            auto &UAVDesc = UAVDescWrapper.m_Desc12;
+            auto& UAVDesc = UAVDescWrapper.m_Desc12;
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-            UAVDesc.Format = DXGIFormat;
+            UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
             UAVDesc.Buffer.CounterOffsetInBytes = 0;
             UAVDesc.Buffer.StructureByteStride = 0;
-            UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-            UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-            UAVDesc.Buffer.NumElements = (UINT)(size / FormatByteSize);
-
-            UAVDescWrapper.m_D3D11UAVFlags = 0;
-
+            UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+            UAVDesc.Buffer.FirstElement = m_Offset / 4;
+            UAVDesc.Buffer.NumElements = (UINT)(size / 4);
+            UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
             m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
         }
-        if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
-        {
-            D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            SRVDesc.Format = DXGIFormat;
-            SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            SRVDesc.Buffer.StructureByteStride = 0;
-            SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-            SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-            SRVDesc.Buffer.NumElements = (UINT)(size / FormatByteSize);
-
-            m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
-        }
-    }
-    else if ((flags & DeviceReadWriteFlagsMask) != 0)
-    {
-        D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-        auto& UAVDesc = UAVDescWrapper.m_Desc12;
-        UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-        UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-        UAVDesc.Buffer.CounterOffsetInBytes = 0;
-        UAVDesc.Buffer.StructureByteStride = 0;
-        UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-        UAVDesc.Buffer.FirstElement = m_Offset / 4;
-        UAVDesc.Buffer.NumElements = (UINT)(size / 4);
-        UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
-        m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
     }
 }
 
@@ -836,96 +839,102 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
     , m_Desc(image_desc)
     , m_Flags(flags)
 {
-    DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-    if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
+    if ((flags & DeviceReadWriteFlagsMask) == 0)
+        flags |= CL_MEM_READ_WRITE;
+
+    if (m_Underlying->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
     {
-        D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-        auto &UAVDesc = UAVDescWrapper.m_Desc12;
-        UAVDesc.Format = DXGIFormat;
-        switch (image_desc.image_type)
+        DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
+        if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
         {
-        case CL_MEM_OBJECT_IMAGE1D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
-            UAVDesc.Texture1D.MipSlice = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
-            UAVDesc.Texture1DArray.FirstArraySlice = 0;
-            UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-            UAVDesc.Texture1DArray.MipSlice = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE2D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-            UAVDesc.Texture2D.MipSlice = 0;
-            UAVDesc.Texture2D.PlaneSlice = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
-            UAVDesc.Texture2DArray.FirstArraySlice = 0;
-            UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-            UAVDesc.Texture2DArray.MipSlice = 0;
-            UAVDesc.Texture2DArray.PlaneSlice = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE3D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-            UAVDesc.Texture3D.FirstWSlice = 0;
-            UAVDesc.Texture3D.WSize = (UINT)image_desc.image_depth;
-            UAVDesc.Texture3D.MipSlice = 0;
-            break;
-        default: assert(false);
+            D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
+            auto &UAVDesc = UAVDescWrapper.m_Desc12;
+            UAVDesc.Format = DXGIFormat;
+            switch (image_desc.image_type)
+            {
+            case CL_MEM_OBJECT_IMAGE1D:
+                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
+                UAVDesc.Texture1D.MipSlice = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
+                UAVDesc.Texture1DArray.FirstArraySlice = 0;
+                UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+                UAVDesc.Texture1DArray.MipSlice = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE2D:
+                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+                UAVDesc.Texture2D.MipSlice = 0;
+                UAVDesc.Texture2D.PlaneSlice = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+                UAVDesc.Texture2DArray.FirstArraySlice = 0;
+                UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+                UAVDesc.Texture2DArray.MipSlice = 0;
+                UAVDesc.Texture2DArray.PlaneSlice = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE3D:
+                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+                UAVDesc.Texture3D.FirstWSlice = 0;
+                UAVDesc.Texture3D.WSize = (UINT)image_desc.image_depth;
+                UAVDesc.Texture3D.MipSlice = 0;
+                break;
+            default: assert(false);
+            }
+
+            m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
         }
 
-        m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
-    }
-
-    if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
-    {
-        D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
-        SRVDesc.Format = DXGIFormat;
-        SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-
-        switch (image_desc.image_type)
+        if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
         {
-        case CL_MEM_OBJECT_IMAGE1D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-            SRVDesc.Texture1D.MipLevels = 1;
-            SRVDesc.Texture1D.MostDetailedMip = 0;
-            SRVDesc.Texture1D.ResourceMinLODClamp = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
-            SRVDesc.Texture1DArray.FirstArraySlice = 0;
-            SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-            SRVDesc.Texture1DArray.MipLevels = 1;
-            SRVDesc.Texture1DArray.MostDetailedMip = 0;
-            SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE2D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            SRVDesc.Texture2D.MipLevels = 1;
-            SRVDesc.Texture2D.MostDetailedMip = 0;
-            SRVDesc.Texture2D.PlaneSlice = 0;
-            SRVDesc.Texture2D.ResourceMinLODClamp = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-            SRVDesc.Texture2DArray.FirstArraySlice = 0;
-            SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-            SRVDesc.Texture2DArray.MipLevels = 1;
-            SRVDesc.Texture2DArray.MostDetailedMip = 0;
-            SRVDesc.Texture2DArray.PlaneSlice = 0;
-            SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
-            break;
-        case CL_MEM_OBJECT_IMAGE3D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-            SRVDesc.Texture3D.MipLevels = 1;
-            SRVDesc.Texture3D.MostDetailedMip = 0;
-            SRVDesc.Texture3D.ResourceMinLODClamp = 0;
-            break;
-        default: assert(false);
-        }
+            D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+            SRVDesc.Format = DXGIFormat;
+            SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 
-        m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
+            switch (image_desc.image_type)
+            {
+            case CL_MEM_OBJECT_IMAGE1D:
+                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
+                SRVDesc.Texture1D.MipLevels = 1;
+                SRVDesc.Texture1D.MostDetailedMip = 0;
+                SRVDesc.Texture1D.ResourceMinLODClamp = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
+                SRVDesc.Texture1DArray.FirstArraySlice = 0;
+                SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+                SRVDesc.Texture1DArray.MipLevels = 1;
+                SRVDesc.Texture1DArray.MostDetailedMip = 0;
+                SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE2D:
+                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                SRVDesc.Texture2D.MipLevels = 1;
+                SRVDesc.Texture2D.MostDetailedMip = 0;
+                SRVDesc.Texture2D.PlaneSlice = 0;
+                SRVDesc.Texture2D.ResourceMinLODClamp = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+                SRVDesc.Texture2DArray.FirstArraySlice = 0;
+                SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+                SRVDesc.Texture2DArray.MipLevels = 1;
+                SRVDesc.Texture2DArray.MostDetailedMip = 0;
+                SRVDesc.Texture2DArray.PlaneSlice = 0;
+                SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
+                break;
+            case CL_MEM_OBJECT_IMAGE3D:
+                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+                SRVDesc.Texture3D.MipLevels = 1;
+                SRVDesc.Texture3D.MostDetailedMip = 0;
+                SRVDesc.Texture3D.ResourceMinLODClamp = 0;
+                break;
+            default: assert(false);
+            }
+
+            m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
+        }
     }
 }
 

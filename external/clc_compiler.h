@@ -37,11 +37,17 @@ struct clc_named_value {
 };
 
 struct clc_compile_args {
-   const struct clc_named_value *defines;
-   unsigned num_defines;
    const struct clc_named_value *headers;
    unsigned num_headers;
    struct clc_named_value source;
+   const char * const *args;
+   unsigned num_args;
+};
+
+struct clc_linker_args {
+   const struct clc_object * const *in_objs;
+   unsigned num_in_objs;
+   unsigned create_library;
 };
 
 typedef void (*clc_msg_callback)(const char *, int, const char *);
@@ -82,10 +88,23 @@ struct clc_kernel_arg {
    enum clc_kernel_arg_address_qualifier address_qualifier;
 };
 
+enum clc_vec_hint_type {
+   CLC_VEC_HINT_TYPE_CHAR = 0,
+   CLC_VEC_HINT_TYPE_SHORT = 1,
+   CLC_VEC_HINT_TYPE_INT = 2,
+   CLC_VEC_HINT_TYPE_LONG = 3,
+   CLC_VEC_HINT_TYPE_HALF = 4,
+   CLC_VEC_HINT_TYPE_FLOAT = 5,
+   CLC_VEC_HINT_TYPE_DOUBLE = 6
+};
+
 struct clc_kernel_info {
    const char *name;
    size_t num_args;
    const struct clc_kernel_arg *args;
+
+   unsigned vec_hint_size;
+   enum clc_vec_hint_type vec_hint_type;
 };
 
 struct clc_object {
@@ -112,7 +131,7 @@ struct clc_dxil_metadata {
          } sampler;
          struct {
             unsigned buf_id;
-         } globalptr;
+         } globconstptr;
          struct {
             unsigned sharedmem_offset;
 	 } localptr;
@@ -128,7 +147,7 @@ struct clc_dxil_metadata {
    struct {
       void *data;
       size_t size;
-      unsigned cbv_id;
+      unsigned uav_id;
    } consts[CLC_MAX_CONSTS];
    size_t num_consts;
 
@@ -154,7 +173,7 @@ struct clc_dxil_object {
 };
 
 struct clc_context {
-   unsigned int dummy;
+   void *libclc_nir;
 };
 
 struct clc_context *clc_context_new(void);
@@ -168,8 +187,7 @@ clc_compile(struct clc_context *ctx,
 
 struct clc_object *
 clc_link(struct clc_context *ctx,
-         const struct clc_object **in_objs,
-         unsigned num_in_objs,
+         const struct clc_linker_args *args,
          const struct clc_logger *logger);
 
 void clc_free_object(struct clc_object *obj);
@@ -188,6 +206,7 @@ struct clc_runtime_arg_info {
 struct clc_runtime_kernel_conf {
    uint16_t local_size[3];
    struct clc_runtime_arg_info *args;
+   unsigned lower_int64;
 };
 
 struct clc_dxil_object *

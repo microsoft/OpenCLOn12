@@ -22,6 +22,7 @@ private:
     std::vector<struct clc_runtime_arg_info> m_ArgMetadataToCompiler;
 
     std::vector<::ref_ptr<Sampler>> m_ConstSamplers;
+    std::vector<::ref_ptr<Resource>> m_InlineConsts;
 
     friend class ExecuteKernel;
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelInfo(cl_kernel, cl_kernel_info, size_t, void*, size_t*);

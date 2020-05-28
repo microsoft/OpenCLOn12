@@ -170,7 +170,8 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
     for (cl_uint i = 0; i < pDxil->kernel->num_args; ++i)
     {
         auto& arg = pDxil->kernel->args[i];
-        if (arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL)
+        if (arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL ||
+            arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_CONSTANT)
         {
             cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
             if (imageType != 0)
@@ -183,7 +184,7 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
             }
             else
             {
-                decls.m_UAVDecls[metadata.args[i].globalptr.buf_id] =
+                decls.m_UAVDecls[metadata.args[i].globconstptr.buf_id] =
                     D3D12TranslationLayer::RESOURCE_DIMENSION::RAW_BUFFER;
             }
         }
@@ -201,8 +202,10 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
     m_SRVs.resize(m_pDxil->metadata.num_srvs);
     m_Samplers.resize(m_pDxil->metadata.num_samplers);
-    m_CBs.resize(m_pDxil->metadata.num_consts + 2);
-    m_CBOffsets.resize(m_pDxil->metadata.num_consts + 2);
+    unsigned num_cbs = max(m_pDxil->metadata.global_work_offset_cbv_id + 1,
+                           m_pDxil->metadata.kernel_inputs_cbv_id + 1);
+    m_CBs.resize(num_cbs);
+    m_CBOffsets.resize(num_cbs);
     m_ArgMetadataToCompiler.resize(m_pDxil->kernel->num_args);
     size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
     KernelInputsCbSize = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT,
@@ -219,20 +222,16 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
         m_Samplers[samplerMeta.sampler_id] = &m_ConstSamplers[i]->GetUnderlying();
     }
 
-    // Fill out the fixed data in the kernel args buffer
-    for (cl_uint i = 0; i < m_pDxil->kernel->num_args; ++i)
+    for (cl_uint i = 0; i < m_pDxil->metadata.num_consts; ++i)
     {
-        if (m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL &&
-            MemObjectTypeFromName(m_pDxil->kernel->args[i].type_name) == 0)
-        {
-            auto& arg = m_pDxil->metadata.args[i];
-            cl_uint value = arg.globalptr.buf_id << 28;
-            byte* KernelArgBase = m_KernelArgsCbData.data() + arg.offset;
-            *reinterpret_cast<cl_uint*>(KernelArgBase) = value;
-        }
+        auto& constMeta = m_pDxil->metadata.consts[i];
+        auto resource = static_cast<Resource*>(clCreateBuffer(&Parent.GetContext(),
+                                                              CL_MEM_COPY_HOST_PTR | CL_MEM_READ_ONLY | CL_MEM_HOST_NO_ACCESS,
+                                                              constMeta.size, constMeta.data,
+                                                              nullptr));
+        m_InlineConsts.emplace_back(resource, adopt_ref{});
+        m_UAVs[constMeta.uav_id] = &resource->GetUAV();
     }
-
-    // TODO: Do we need constant buffers for global constant data?
 }
 
 Kernel::~Kernel() = default;
@@ -249,10 +248,11 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
     switch (arg.address_qualifier)
     {
     case CLC_KERNEL_ARG_ADDRESS_GLOBAL:
+    case CLC_KERNEL_ARG_ADDRESS_CONSTANT:
     {
         if (arg_size != sizeof(cl_mem))
         {
-            return ReportError("Invalid argument size, must be sizeof(cl_mem) for global arguments", CL_INVALID_ARG_SIZE);
+            return ReportError("Invalid argument size, must be sizeof(cl_mem) for global and constant arguments", CL_INVALID_ARG_SIZE);
         }
 
         cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
@@ -320,21 +320,21 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             {
                 return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
             }
-            D3D12TranslationLayer::UAV* uav = resource ? &resource->GetUAV() : nullptr;
-            m_UAVs[m_pDxil->metadata.args[arg_index].globalptr.buf_id] = uav;
+            uint64_t *buffer_val = reinterpret_cast<uint64_t*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset);
+            if (resource)
+            {
+                auto buf_id = m_pDxil->metadata.args[arg_index].globconstptr.buf_id;
+                m_UAVs[buf_id] = &resource->GetUAV();
+                *buffer_val = (uint64_t)buf_id << 32ull;
+            }
+            else
+            {
+                *buffer_val = 0ull;
+            }
         }
 
         break;
     }
-
-    case CLC_KERNEL_ARG_ADDRESS_CONSTANT:
-        if (arg_size != sizeof(cl_mem))
-        {
-            return ReportError("Invalid argument size, must be sizeof(cl_mem) for constant arguments", CL_INVALID_ARG_SIZE);
-        }
-        // TODO: Which CB index?
-        return ReportError("Unsupported argument type", CL_OUT_OF_HOST_MEMORY);
-        break;
 
     case CLC_KERNEL_ARG_ADDRESS_PRIVATE:
         if (strcmp(arg.type_name, "sampler_t") == 0)

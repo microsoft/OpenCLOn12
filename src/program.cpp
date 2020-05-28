@@ -668,100 +668,128 @@ const clc_dxil_object* Program::GetKernel(const char* name) const
 
 cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions)
 {
-    char InDefineOrInclude = '\0';
+    using namespace std::string_view_literals;
+
+    if (SupportCompilerOptions)
+    {
+        optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
+        if (m_Parent->GetDevice().IsMCDM())
+        {
+            // Clang defines this by default for SPIR targets
+            optionsStruct.Args.push_back("-U__IMAGE_SUPPORT__");
+        }
+    }
+
+    std::string curOption;
+    auto ValidateAndPushArg = [&]()
+    {
+        if (curOption.empty())
+        {
+            return CL_SUCCESS;
+        }
+        if (curOption[0] != '-' && curOption[0] != '/')
+        {
+            if (!optionsStruct.Args.empty() &&
+                (optionsStruct.Args.back() == "-D"sv ||
+                    optionsStruct.Args.back() == "-I"sv))
+            {
+                optionsStruct.Args.push_back(curOption);
+            }
+            else
+            {
+                return CL_INVALID_BUILD_OPTIONS;
+            }
+        }
+        curOption[0] = '-';
+        if (SupportCompilerOptions)
+        {
+            if (curOption[1] == 'D' ||
+                curOption[1] == 'I' ||
+                curOption == "-cl-single-precision-constant"sv ||
+                // Note: Not valid because we don't claim support for this feature
+                //curOption == "cl-fp32-correctly-rounded-divide-sqrt"sv ||
+                curOption == "-cl-opt-disable"sv ||
+                curOption == "-Werror"sv ||
+                curOption[1] == 'w' ||
+                curOption.find("-cl-std=") == 0 ||
+                curOption == "-cl-kernel-arg-info"sv)
+            {
+                optionsStruct.Args.push_back(curOption);
+                return CL_SUCCESS;
+            }
+        }
+        if (SupportLinkerOptions)
+        {
+            if (curOption == "-create-library"sv)
+            {
+                optionsStruct.CreateLibrary = true;
+                return CL_SUCCESS;
+            }
+            else if (curOption == "-enable-link-options")
+            {
+                optionsStruct.EnableLinkOptions = true;
+                return CL_SUCCESS;
+            }
+        }
+        if (curOption == "-cl-denorms-are-zero"sv ||
+            curOption == "-cl-no-signed-zeros"sv ||
+            curOption == "-cl-unsafe-math-optimizations"sv ||
+            curOption == "-cl-finite-math-only"sv ||
+            curOption == "-cl-fast-relaxed-math"sv)
+        {
+            optionsStruct.Args.push_back(curOption);
+            return CL_SUCCESS;
+        }
+        return CL_INVALID_BUILD_OPTIONS;
+    };
+
+    bool inQuotes = false;
     while (optionsStr && *optionsStr)
     {
         switch (*optionsStr)
         {
         case ' ':
-            ++optionsStr;
-            break;
-        case '-':
-        case '/':
-        {
-            if (InDefineOrInclude)
+        case '\t':
+        case '\n':
+        case '\r':
+            if (!inQuotes)
             {
-                return CL_INVALID_BUILD_OPTIONS;
-            }
-            ++optionsStr;
-            const char* base = optionsStr;
-            const char* term = strchr(optionsStr, ' ');
-            std::string_view word = term ? std::string_view(base, term - base) : std::string_view(base);
-            optionsStr = term;
-            if (SupportCompilerOptions)
-            {
-                if (word == "D" || word == "I")
+                cl_int retVal = ValidateAndPushArg();
+                if (retVal != CL_SUCCESS)
                 {
-                    InDefineOrInclude = word[0];
-                    break;
+                    return retVal;
                 }
-                if (word[0] == 'D' || word[0] == 'I')
-                {
-                    optionsStr = base + 1;
-                    InDefineOrInclude = word[0];
-                    break;
-                }
-                // Simply validate, we're ignoring these for now
-                if (word == "cl-single-precision-constant" ||
-                    word == "cl-fp32-correctly-rounded-divide-sqrt" ||
-                    word == "cl-opt-disable" ||
-                    word == "cl-mad-enable" ||
-                    word == "w" ||
-                    word == "Werror" ||
-                    word.find("cl-std=") == 0 ||
-                    word == "cl-kernel-arg-info")
-                {
-                    break;
-                }
-            }
-            if (SupportLinkerOptions)
-            {
-                if (word == "create-library")
-                {
-                    optionsStruct.CreateLibrary = true;
-                    break;
-                }
-                if (word == "enable-link-options")
-                {
-                    if (!optionsStruct.CreateLibrary)
-                    {
-                        return CL_INVALID_BUILD_OPTIONS;
-                    }
-                    break;
-                }
-            }
-            if (word == "cl-denorms-are-zero" ||
-                word == "cl-no-signed-zeros" ||
-                word == "cl-unsafe-math-optimizations" ||
-                word == "cl-finite-math-only" ||
-                word == "cl-fast-relaxed-math")
-            {
                 break;
             }
-            return CL_INVALID_BUILD_OPTIONS;
-        }
+            // Fallthrough
         default:
-        {
-            if (!InDefineOrInclude)
+            curOption.push_back(*optionsStr);
+            break;
+        case '"':
+            inQuotes = !inQuotes;
+            break;
+        case '\\':
+            if (!inQuotes)
             {
-                return CL_INVALID_BUILD_OPTIONS;
+                curOption.push_back(*optionsStr);
             }
-            const char* base = optionsStr;
-            const char* term = strchr(optionsStr, ' ');
-            std::string_view word = term ? std::string_view(base, term - base) : std::string_view(base);
-            const char* equals = strchr(optionsStr, '=');
-            optionsStr = term;
-            if (InDefineOrInclude == 'D')
+            else
             {
-                std::string_view lhs = equals ? std::string_view(base, equals - base) : word;
-                std::string_view rhs = equals ? std::string_view(equals + 1, term - (equals + 1)) : "1";
-                optionsStruct.Defines[std::string(lhs)] = rhs;
+                switch (*(optionsStr + 1))
+                {
+                case '\\':
+                case '"':
+                    ++optionsStr;
+                default:
+                    curOption.push_back(*optionsStr);
+                    break;
+                }
             }
             break;
         }
-        }
+        ++optionsStr;
     }
-    return CL_SUCCESS;
+    return ValidateAndPushArg();
 }
 
 void Program::BuildImpl(BuildArgs const& Args)
@@ -775,19 +803,24 @@ void Program::BuildImpl(BuildArgs const& Args)
         auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
         clc_compile_args args = {};
 
-        std::vector<clc_named_value> defines;
-        for (auto& def : Args.Common.Defines)
+        std::vector<const char*> raw_args;
+        for (auto& def : Args.Common.Args)
         {
-            defines.push_back({ def.first.c_str(), def.second.c_str() });
+            raw_args.push_back(def.c_str());
         }
 
-        args.defines = defines.data();
-        args.num_defines = (unsigned)defines.size();
+        args.args = raw_args.data();
+        args.num_args = (unsigned)raw_args.size();
         args.source = { "source.cl", m_Source.c_str() };
 
         unique_spirv compiledObject(compile(Context, &args, nullptr), free);
         const clc_object* rawCompiledObject = compiledObject.get();
-        unique_spirv object(rawCompiledObject ? link(Context, &rawCompiledObject, 1, nullptr) : nullptr, free);
+
+        clc_linker_args link_args = {};
+        link_args.create_library = false;
+        link_args.in_objs = &rawCompiledObject;
+        link_args.num_in_objs = 1;
+        unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
         m_OwnedBinary = std::move(object);
     }
 
@@ -816,14 +849,14 @@ void Program::CompileImpl(CompileArgs const& Args)
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     clc_compile_args args = {};
 
-    std::vector<clc_named_value> defines;
-    for (auto& def : Args.Common.Defines)
+    std::vector<const char*> raw_args;
+    for (auto& def : Args.Common.Args)
     {
-        defines.push_back({ def.first.c_str(), def.second.c_str() });
+        raw_args.push_back(def.c_str());
     }
 
-    args.defines = defines.data();
-    args.num_defines = (unsigned)defines.size();
+    args.args = raw_args.data();
+    args.num_args = (unsigned)raw_args.size();
     args.source = { "source.cl", m_Source.c_str() };
 
     unique_spirv object(compile(Context, &args, nullptr), free);
@@ -858,13 +891,17 @@ void Program::LinkImpl(LinkArgs const& Args)
     std::transform(Args.LinkPrograms.begin(), Args.LinkPrograms.end(), std::back_inserter(objects),
         [](Program::ref_ptr_int const& program) { return program->m_OwnedBinary.get(); });
 
-    unique_spirv linkedObject(link(Context, objects.data(), (unsigned)objects.size(), nullptr), free);
+    clc_linker_args link_args = {};
+    link_args.create_library = Args.Common.CreateLibrary;
+    link_args.in_objs = objects.data();
+    link_args.num_in_objs = (unsigned)objects.size();
+    unique_spirv linkedObject(link(Context, &link_args, nullptr), free);
 
     std::lock_guard Lock(m_Lock);
     if (linkedObject)
     {
-        // TODO: Library if linker option set
-        m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+        m_BinaryType = Args.Common.CreateLibrary ? 
+            CL_PROGRAM_BINARY_TYPE_LIBRARY : CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
         m_BuildStatus = CL_BUILD_SUCCESS;
         m_OwnedBinary = std::move(linkedObject);
     }

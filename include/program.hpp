@@ -54,10 +54,9 @@ private:
 
     struct CommonOptions
     {
-        std::map<std::string, std::string> Defines;
+        std::vector<std::string> Args;
         bool CreateLibrary;
-        // TODO: Should I do the parsing of other args or should the compiler?
-        //std::vector<std::string> IncludeDirectories;
+        bool EnableLinkOptions; // Does nothing, validation only
         Callback pfn_notify;
         void* CallbackUserData;
     };

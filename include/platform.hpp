@@ -69,12 +69,12 @@ class Device;
 class Platform : public CLBase<Platform, cl_platform_id>
 {
 public:
-    static constexpr char* Profile = "FULL_PROFILE";
-    static constexpr char* Version = "OpenCL 1.2 D3D12 Implementation";
-    static constexpr char* Name = "OpenCLOn12";
-    static constexpr char* Vendor = "Microsoft";
-    static constexpr char* Extensions = "cl_khr_icd";
-    static constexpr char* ICDSuffix = "oclon12";
+    static constexpr const char* Profile = "FULL_PROFILE";
+    static constexpr const char* Version = "OpenCL 1.2 D3D12 Implementation";
+    static constexpr const char* Name = "OpenCLOn12";
+    static constexpr const char* Vendor = "Microsoft";
+    static constexpr const char* Extensions = "cl_khr_icd";
+    static constexpr const char* ICDSuffix = "oclon12";
 
     Platform(cl_icd_dispatch* dispatch);
     ~Platform();

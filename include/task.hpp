@@ -122,7 +122,6 @@ public:
 
 protected:
     void Submit();
-    // TODO: Encode barriers into here at some point.
     void Ready(std::vector<ref_ptr_int>& OtherReadyTasks, TaskPoolLock const&);
     void Started(TaskPoolLock const&);
     void Complete(cl_int error, TaskPoolLock const&);

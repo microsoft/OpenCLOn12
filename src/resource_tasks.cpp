@@ -2517,6 +2517,8 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
     MapTask::Args CmdArgs = {};
     CmdArgs.SrcX = (cl_uint)offset;
     CmdArgs.Width = (cl_uint)size;
+    CmdArgs.Height = 1;
+    CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
     try
@@ -2563,13 +2565,15 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
             *errcode_ret = taskError;
         }
 
+        auto pointer = task->GetPointer();
+
         if (event)
             *event = task.release();
         else
             task.release()->Release();
         RemoveMapTask.release();
 
-        return task->GetPointer();
+        return pointer;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -2689,17 +2693,19 @@ clEnqueueMapImage(cl_command_queue  command_queue,
             *errcode_ret = taskError;
         }
 
+        auto pointer = task->GetPointer();
+        if (image_slice_pitch)
+            *image_slice_pitch = task->GetSlicePitch();
+        if (image_row_pitch)
+            *image_row_pitch = task->GetRowPitch();
+
         if (event)
             *event = task.release();
         else
             task.release()->Release();
         RemoveMapTask.release();
 
-        if (image_slice_pitch)
-            *image_slice_pitch = task->GetSlicePitch();
-        if (image_row_pitch)
-            *image_row_pitch = task->GetRowPitch();
-        return task->GetPointer();
+        return pointer;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
