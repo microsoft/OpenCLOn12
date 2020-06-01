@@ -142,6 +142,47 @@ TEST(OpenCLOn12, SimpleImages)
     }
 }
 
+TEST(OpenCLOn12, LargeDispatch)
+{
+    auto&& [context, device] = GetWARPContext();
+    cl::CommandQueue queue(context, device);
+
+    const char* kernel_source =
+    R"(struct OutputStruct { unsigned global_id; unsigned local_id; unsigned work_group_id; };
+    __kernel void main_test(__global struct OutputStruct *output)
+    {
+        uint global_id = get_global_id(0);
+        output[global_id].global_id = global_id;
+        output[global_id].local_id = get_local_id(0);
+        output[global_id].work_group_id = get_group_id(0);
+    })";
+
+    struct OutputStruct { uint32_t global, local, work_group; };
+    const size_t widthInStructs = D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * D3D12_CS_THREAD_GROUP_MAX_X * 2;
+    const size_t widthInBytes = widthInStructs * sizeof(OutputStruct);
+    static_assert(widthInBytes < UINT32_MAX);
+    cl::NDRange offset(0);
+    cl::NDRange globalSize(widthInStructs);
+
+    cl::Buffer output(context, CL_MEM_WRITE_ONLY, widthInBytes, nullptr);
+
+    cl::Program program(context, kernel_source, true /*build*/);
+    cl::Kernel kernel(program, "main_test");
+
+    kernel.setArg(0, output);
+    queue.enqueueNDRangeKernel(kernel, offset, globalSize);
+
+    std::vector<OutputStruct> OutputData(widthInStructs);
+    queue.enqueueReadBuffer(output, true, 0, widthInBytes, OutputData.data());
+
+    for (uint32_t i = 0; i < widthInStructs; ++i)
+    {
+        EXPECT_EQ(OutputData[i].global, i);
+        EXPECT_EQ(OutputData[i].local, i % D3D12_CS_THREAD_GROUP_MAX_X);
+        EXPECT_EQ(OutputData[i].work_group, i / D3D12_CS_THREAD_GROUP_MAX_X);
+    }
+}
+
 int main(int argc, char** argv)
 {
     ID3D12Debug* pDebug = nullptr;

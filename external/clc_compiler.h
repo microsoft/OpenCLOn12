@@ -139,7 +139,7 @@ struct clc_dxil_metadata {
    } *args;
    unsigned kernel_inputs_cbv_id;
    unsigned kernel_inputs_buf_size;
-   unsigned global_work_offset_cbv_id;
+   unsigned work_properties_cbv_id;
    size_t num_uavs;
    size_t num_srvs;
    size_t num_samplers;
@@ -207,6 +207,8 @@ struct clc_runtime_kernel_conf {
    uint16_t local_size[3];
    struct clc_runtime_arg_info *args;
    unsigned lower_int64;
+   unsigned support_global_work_id_offsets;
+   unsigned support_work_group_id_offsets;
 };
 
 struct clc_dxil_object *
@@ -217,6 +219,28 @@ clc_to_dxil(struct clc_context *ctx,
             const struct clc_logger *logger);
 
 void clc_free_dxil_object(struct clc_dxil_object *dxil);
+
+/* This struct describes the layout of data expected in the CB bound at global_work_offset_cbv_id */
+struct clc_work_properties_data {
+   /* Returned from get_global_offset(), and added into get_global_id() */
+   unsigned global_offset_x;
+   unsigned global_offset_y;
+   unsigned global_offset_z;
+   /* Returned from get_work_dim() */
+   unsigned work_dim;
+   /* The number of work groups being launched (i.e. the parameters to Dispatch).
+    * If the requested global size doesn't fit in a single Dispatch, these values should
+    * indicate the total number of groups that *should* have been launched. */
+   unsigned group_count_total_x;
+   unsigned group_count_total_y;
+   unsigned group_count_total_z;
+   unsigned padding;
+   /* If the requested global size doesn't fit in a single Dispatch, subsequent dispatches
+    * should fill out these offsets to indicate how many groups have already been launched */
+   unsigned group_id_offset_x;
+   unsigned group_id_offset_y;
+   unsigned group_id_offset_z;
+};
 
 #ifdef __cplusplus
 }

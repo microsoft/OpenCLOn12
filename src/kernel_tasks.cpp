@@ -19,7 +19,7 @@ public:
     const std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
     std::vector<clc_runtime_arg_info> m_ArgInfo;
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
-    const std::vector<cl_uint> m_CBOffsets;
+    std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
 
     std::mutex m_SpecializeLock;
@@ -36,7 +36,7 @@ public:
         m_Kernel.Release();
     }
 
-    ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset, std::array<uint16_t, 3> const& localSize)
+    ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset, std::array<uint16_t, 3> const& localSize, cl_uint workDims)
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
         , m_Kernel(&kernel)
         , m_DispatchDims(dims)
@@ -44,16 +44,50 @@ public:
         , m_SRVs(kernel.m_SRVs)
         , m_Samplers(kernel.m_Samplers)
         , m_ArgInfo(kernel.m_ArgMetadataToCompiler)
-        , m_CBs(kernel.m_CBs)
-        , m_CBOffsets(kernel.m_CBOffsets)
     {
         cl_uint KernelArgCBIndex = kernel.m_pDxil->metadata.kernel_inputs_cbv_id;
-        cl_uint GlobalOffsetsCBIndex = kernel.m_pDxil->metadata.global_work_offset_cbv_id;
-        assert(m_CBs[KernelArgCBIndex] == nullptr && m_CBs[GlobalOffsetsCBIndex] == nullptr);
-        assert(m_CBOffsets[KernelArgCBIndex] == 0 && m_CBOffsets[GlobalOffsetsCBIndex] != 0);
-        assert(m_CBs.size() == m_CBOffsets.size());
+        cl_uint WorkPropertiesCBIndex = kernel.m_pDxil->metadata.work_properties_cbv_id;
+        unsigned num_cbs = max(KernelArgCBIndex + 1,
+                               WorkPropertiesCBIndex + 1);
+        m_CBs.resize(num_cbs);
+        m_CBOffsets.resize(num_cbs);
 
-        memcpy(kernel.m_KernelArgsCbData.data() + m_CBOffsets[GlobalOffsetsCBIndex] * 16, offset.data(), sizeof(offset));
+        clc_work_properties_data work_properties = {};
+        work_properties.global_offset_x = offset[0];
+        work_properties.global_offset_y = offset[1];
+        work_properties.global_offset_z = offset[2];
+        work_properties.work_dim = workDims;
+        work_properties.group_count_total_x = dims[0];
+        work_properties.group_count_total_y = dims[1];
+        work_properties.group_count_total_z = dims[2];
+
+        cl_uint numXIterations = ((dims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+        cl_uint numYIterations = ((dims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+        cl_uint numZIterations = ((dims[2] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+        cl_uint numIterations = numXIterations * numYIterations * numZIterations;
+
+        size_t KernelInputsCbSize = kernel.m_pDxil->metadata.kernel_inputs_buf_size;
+        size_t WorkPropertiesOffset = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        m_CBOffsets[WorkPropertiesCBIndex] = (UINT)WorkPropertiesOffset / 16;
+        static_assert(sizeof(work_properties) < D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        KernelInputsCbSize = WorkPropertiesOffset + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT * numIterations;
+
+        kernel.m_KernelArgsCbData.resize(KernelInputsCbSize);
+        byte* workPropertiesData = kernel.m_KernelArgsCbData.data() + WorkPropertiesOffset;
+        for (cl_uint x = 0; x < numXIterations; ++x)
+        {
+            for (cl_uint y = 0; y < numYIterations; ++y)
+            {
+                for (cl_uint z = 0; z < numZIterations; ++z)
+                {
+                    work_properties.group_id_offset_x = x * D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+                    work_properties.group_id_offset_y = y * D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+                    work_properties.group_id_offset_z = z * D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+                    memcpy(workPropertiesData, &work_properties, sizeof(work_properties));
+                    workPropertiesData += D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+                }
+            }
+        }
 
         D3D12TranslationLayer::ResourceCreationArgs Args = {};
         Args.m_appDesc.m_Subresources = 1;
@@ -90,9 +124,9 @@ public:
             D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
 
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
-        m_CBs[GlobalOffsetsCBIndex] = m_KernelArgsCb.get();
+        m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
-        m_Parent->GetDevice().QueueProgramOp([this, localSize]()
+        m_Parent->GetDevice().QueueProgramOp([this, localSize, offset, numIterations]()
         {
             try
             {
@@ -102,6 +136,8 @@ public:
                 auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 
                 clc_runtime_kernel_conf config = {};
+                config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
+                config.support_work_group_id_offsets = numIterations != 1;
                 std::copy(std::begin(localSize), std::end(localSize), config.local_size);
                 config.args = m_ArgInfo.data();
 
@@ -196,6 +232,18 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     std::array<uint16_t, 3> LocalSizes = { 1, 1, 1 };
     auto RequiredDims = kernel.GetRequiredLocalDims();
     auto DimsHint = kernel.GetLocalDimsHint();
+    const std::array<uint16_t, 3> AutoDims[3] =
+    {
+        { 64, 1, 1 },
+        { 8, 8, 1 },
+        { 4, 4, 4 }
+    };
+    const std::array<uint16_t, 3> MaxDims =
+    {
+        D3D12_CS_THREAD_GROUP_MAX_X,
+        D3D12_CS_THREAD_GROUP_MAX_Y,
+        D3D12_CS_THREAD_GROUP_MAX_Z
+    };
     for (cl_uint i = 0; i < work_dim; ++i)
     {
         uint16_t& LocalSize = LocalSizes[i];
@@ -205,36 +253,79 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
         }
 
         LocalSize = local_work_size ? (uint16_t)local_work_size[i] :
-            (DimsHint ? DimsHint[i] : 1u);
-        if (global_work_size[i] % LocalSize != 0)
+            (DimsHint ? DimsHint[i] : AutoDims[work_dim][i]);
+        if (RequiredDims)
         {
-            return ReportError("local_work_size must evenly divide the global_work_size.", CL_INVALID_WORK_GROUP_SIZE);
+            if (RequiredDims[i] != LocalSize)
+            {
+                return ReportError("local_work_size does not match required size declared by kernel.", CL_INVALID_WORK_GROUP_SIZE);
+            }
+            if (global_work_size[i] % LocalSize != 0)
+            {
+                return ReportError("local_work_size must evenly divide the global_work_size.", CL_INVALID_WORK_GROUP_SIZE);
+            }
+            if (LocalSize > MaxDims[i])
+            {
+                return ReportError("local_work_size exceeds max in one dimension.", CL_INVALID_WORK_ITEM_SIZE);
+            }
         }
-        DispatchDimensions[i] = (uint32_t)(global_work_size[i] / LocalSize);
-        if (DispatchDimensions[i] > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+        else
         {
-            return ReportError("global_work_size / local_work_size is too large.", CL_INVALID_GLOBAL_WORK_SIZE);
+            while (global_work_size[i] % LocalSize != 0 ||
+                   LocalSize > MaxDims[i])
+            {
+                // TODO: Better backoff algorithm
+                LocalSize /= 2;
+            }
         }
+    }
+    if (RequiredDims)
+    {
+        if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
+        {
+            return ReportError("local_work_size exceeds max work items per group.", CL_INVALID_WORK_GROUP_SIZE);
+        }
+    }
+    else
+    {
+        cl_uint dimension = work_dim;
+        while ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
+        {
+            // Find a dimension to shorten
+            // TODO: Better backoff algorithm
+            if (LocalSizes[dimension] > 1)
+            {
+                LocalSizes[dimension] /= 2;
+            }
+            dimension = (dimension == 0) ? work_dim : dimension - 1;
+        }
+    }
 
-        if (RequiredDims && RequiredDims[i] != LocalSize)
+    for (cl_uint i = 0; i < work_dim; ++i)
+    {
+        DispatchDimensions[i] = (uint32_t)(global_work_size[i] / LocalSizes[i]);
+        if (!RequiredDims)
         {
-            return ReportError("local_work_size does not match required size declared by kernel.", CL_INVALID_WORK_GROUP_SIZE);
+            // Try to expand local size to avoid having to loop Dispatches
+            while (DispatchDimensions[i] > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+            {
+                auto OldLocalSize = LocalSizes[i];
+                LocalSizes[i] *= 2;
+                if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP ||
+                    LocalSizes[i] > MaxDims[i] ||
+                    global_work_size[i] % LocalSizes[i] != 0)
+                {
+                    LocalSizes[i] = OldLocalSize;
+                    break;
+                }
+                DispatchDimensions[i] /= 2;
+            }
         }
-    }
-    if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
-    {
-        return ReportError("local_work_size exceeds max work items per group.", CL_INVALID_WORK_GROUP_SIZE);
-    }
-    if (LocalSizes[0] > D3D12_CS_THREAD_GROUP_MAX_X ||
-        LocalSizes[1] > D3D12_CS_THREAD_GROUP_MAX_Y ||
-        LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_Z)
-    {
-        return ReportError("local_work_size exceeds max in one dimension.", CL_INVALID_WORK_ITEM_SIZE);
     }
 
     try
     {
-        std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes));
+        std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes, work_dim));
 
         auto Lock = context.GetDevice().GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
@@ -310,11 +401,30 @@ void ExecuteKernel::RecordImpl()
 
     auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
-    ImmCtx.SetConstantBuffers<D3D12TranslationLayer::e_CS>(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
     ImmCtx.SetShaderResources<D3D12TranslationLayer::e_CS>(0, (UINT)m_SRVs.size(), m_SRVs.data());
     ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());
     ImmCtx.SetPipelineState(m_PSO.get());
-    ImmCtx.Dispatch(m_DispatchDims[0], m_DispatchDims[1], m_DispatchDims[2]);
+
+    cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+    cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+    cl_uint numZIterations = ((m_DispatchDims[2] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+    for (cl_uint x = 0; x < numXIterations; ++x)
+    {
+        for (cl_uint y = 0; y < numYIterations; ++y)
+        {
+            for (cl_uint z = 0; z < numZIterations; ++z)
+            {
+                UINT DimsX = (x == numXIterations - 1) ? (m_DispatchDims[0] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numXIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+                UINT DimsY = (y == numYIterations - 1) ? (m_DispatchDims[1] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numYIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+                UINT DimsZ = (z == numZIterations - 1) ? (m_DispatchDims[2] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numZIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
+
+                ImmCtx.SetConstantBuffers<D3D12TranslationLayer::e_CS>(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
+                ImmCtx.Dispatch(DimsX, DimsY, DimsZ);
+
+                m_CBOffsets[m_Kernel->m_pDxil->metadata.work_properties_cbv_id] += D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT / 16;
+            }
+        }
+    }
 
     ImmCtx.ClearState();
 }

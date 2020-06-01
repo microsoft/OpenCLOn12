@@ -202,16 +202,9 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
     m_SRVs.resize(m_pDxil->metadata.num_srvs);
     m_Samplers.resize(m_pDxil->metadata.num_samplers);
-    unsigned num_cbs = max(m_pDxil->metadata.global_work_offset_cbv_id + 1,
-                           m_pDxil->metadata.kernel_inputs_cbv_id + 1);
-    m_CBs.resize(num_cbs);
-    m_CBOffsets.resize(num_cbs);
     m_ArgMetadataToCompiler.resize(m_pDxil->kernel->num_args);
     size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
-    KernelInputsCbSize = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT,
-                                                              D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
     m_KernelArgsCbData.resize(KernelInputsCbSize);
-    m_CBOffsets[m_pDxil->metadata.global_work_offset_cbv_id] = (UINT)(KernelInputsCbSize - D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT) / 16;
 
     m_ConstSamplers.resize(m_pDxil->metadata.num_const_samplers);
     for (cl_uint i = 0; i < m_pDxil->metadata.num_const_samplers; ++i)

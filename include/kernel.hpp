@@ -15,9 +15,7 @@ private:
 
     std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
     std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
-    std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
-    std::vector<cl_uint> m_CBOffsets;
     std::vector<byte> m_KernelArgsCbData;
     std::vector<struct clc_runtime_arg_info> m_ArgMetadataToCompiler;
 
