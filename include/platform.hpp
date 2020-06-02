@@ -149,6 +149,11 @@ public:
     ~ref_ptr_int() noexcept { Release(); }
 
     TClass* operator->() const { return m_pPtr; }
+
+    bool operator<(ref_ptr_int const& o) const { return m_pPtr < o.m_pPtr; }
+    bool operator>(ref_ptr_int const& o) const { return m_pPtr > o.m_pPtr; }
+    bool operator==(ref_ptr_int const& o) const { return m_pPtr == o.m_pPtr; }
+    bool operator!=(ref_ptr_int const& o) const { return m_pPtr != o.m_pPtr; }
 };
 template <typename TClass>
 class ref

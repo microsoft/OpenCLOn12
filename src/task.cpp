@@ -448,7 +448,7 @@ Task::~Task()
     {
         task->m_TasksWaitingOnThis.erase(
             std::find_if(task->m_TasksWaitingOnThis.begin(), task->m_TasksWaitingOnThis.end(),
-                [this](ref_ptr_int& p) { return p.Get() == this; }));
+                [this](ref_ptr_int const& p) { return p.Get() == this; }));
     }
 }
 
@@ -475,8 +475,11 @@ void Task::AddDependencies(const cl_event* event_wait_list, cl_uint num_events_i
             for (UINT i = 0; i < num_events_in_wait_list; ++i)
             {
                 Task* task = static_cast<Task*>(event_wait_list[i]);
-                task->m_TasksWaitingOnThis.push_back(this);
-                m_TasksToWaitOn.emplace_back(task);
+                auto insertRet = task->m_TasksWaitingOnThis.insert(this);
+                if (insertRet.second)
+                {
+                    m_TasksToWaitOn.emplace_back(task);
+                }
             }
         }
         catch (...)
@@ -486,7 +489,7 @@ void Task::AddDependencies(const cl_event* event_wait_list, cl_uint num_events_i
             {
                 task->m_TasksWaitingOnThis.erase(
                     std::find_if(task->m_TasksWaitingOnThis.begin(), task->m_TasksWaitingOnThis.end(),
-                        [this](ref_ptr_int& p) { return p.Get() == this; }));
+                        [this](ref_ptr_int const& p) { return p.Get() == this; }));
             }
             throw;
         }

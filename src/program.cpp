@@ -54,6 +54,24 @@ void SignBlob(void* pBlob, size_t size)
         } Blob = { pBlob, (UINT)size };
         ComPtr<IDxcOperationResult> spResult;
         (void)spValidator->Validate(&Blob, DxcValidatorFlags_InPlaceEdit, &spResult);
+        HRESULT hr = S_OK;
+        if (spResult)
+        {
+            (void)spResult->GetStatus(&hr);
+        }
+        if (FAILED(hr))
+        {
+            ComPtr<IDxcBlobEncoding> spError;
+            spResult->GetErrorBuffer(&spError);
+            BOOL known = FALSE;
+            UINT32 cp = 0;
+            spError->GetEncoding(&known, &cp);
+            if (cp == CP_UTF8 || cp == CP_ACP)
+                printf("%s", (char*)spError->GetBufferPointer());
+            else
+                printf("%S", (wchar_t*)spError->GetBufferPointer());
+            DebugBreak();
+        }
     }
 }
 

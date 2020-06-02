@@ -588,7 +588,7 @@ clGetSupportedImageFormats(cl_context           context_,
         cl_image_format format = GetCLImageFormatForDXGIFormat(Support.Format);
         if (format.image_channel_data_type != 0)
         {
-            if (NumFormats < num_entries)
+            if (NumFormats < num_entries && image_formats)
             {
                 image_formats[NumFormats] = format;
             }

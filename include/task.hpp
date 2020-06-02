@@ -137,7 +137,7 @@ protected:
     cl_ulong m_ProfilingTimestamps[4] = {};
 
     std::vector<ref_ptr> m_TasksToWaitOn;
-    std::vector<ref_ptr_int> m_TasksWaitingOnThis;
+    std::set<ref_ptr_int> m_TasksWaitingOnThis;
     std::vector<NotificationRequest> m_CompletionCallbacks;
     std::vector<NotificationRequest> m_RunningCallbacks;
     std::vector<NotificationRequest> m_SubmittedCallbacks;

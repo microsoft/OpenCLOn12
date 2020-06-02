@@ -434,9 +434,9 @@ void Device::ExecuteTasks(Submission& tasks)
                 {
                     tasks[i]->Complete(CL_OUT_OF_RESOURCES, Lock);
                 }
-                for (++i; i < tasks.size(); ++i)
+                for (int j = i + 1; j < tasks.size(); ++j)
                 {
-                    auto& task = tasks[i];
+                    auto& task = tasks[j];
                     task->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, Lock);
                 }
                 tasks.erase(tasks.begin() + i, tasks.end());

@@ -389,7 +389,7 @@ clGetKernelInfo(cl_kernel       kernel_,
     void* param_value,
     size_t* param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
 {
-    if (kernel_)
+    if (!kernel_)
     {
         return CL_INVALID_KERNEL;
     }
@@ -420,7 +420,7 @@ clGetKernelArgInfo(cl_kernel       kernel_,
     void* param_value,
     size_t* param_value_size_ret) CL_API_SUFFIX__VERSION_1_2
 {
-    if (kernel_)
+    if (!kernel_)
     {
         return CL_INVALID_KERNEL;
     }
@@ -470,18 +470,42 @@ clGetKernelArgInfo(cl_kernel       kernel_,
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
-clGetKernelWorkGroupInfo(cl_kernel                  kernel,
+clGetKernelWorkGroupInfo(cl_kernel                  kernel_,
     cl_device_id               device,
     cl_kernel_work_group_info  param_name,
     size_t                     param_value_size,
     void *                     param_value,
     size_t *                   param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
 {
-    UNREFERENCED_PARAMETER(kernel);
+    if (!kernel_)
+    {
+        return CL_INVALID_KERNEL;
+    }
     UNREFERENCED_PARAMETER(device);
-    UNREFERENCED_PARAMETER(param_name);
-    UNREFERENCED_PARAMETER(param_value_size);
-    UNREFERENCED_PARAMETER(param_value);
-    UNREFERENCED_PARAMETER(param_value_size_ret);
-    return CL_INVALID_PLATFORM;
+
+    auto RetValue = [&](auto&& param)
+    {
+        return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
+    };
+    auto& kernel = *static_cast<Kernel*>(kernel_);
+
+    switch (param_name)
+    {
+    case CL_KERNEL_WORK_GROUP_SIZE: return RetValue((size_t)D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP);
+    case CL_KERNEL_COMPILE_WORK_GROUP_SIZE:
+    {
+        size_t size[3] = {};
+        auto ReqDims = kernel.GetRequiredLocalDims();
+        if (ReqDims)
+            std::copy(ReqDims, ReqDims + 3, size);
+        return RetValue(size);
+    }
+    case CL_KERNEL_LOCAL_MEM_SIZE:
+        return kernel.m_Parent->GetContext().GetErrorReporter()("TODO: CL_KERNEL_LOCAL_MEM_SIZE.", CL_INVALID_VALUE);
+    case CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE: return RetValue((size_t)64);
+    case CL_KERNEL_PRIVATE_MEM_SIZE:
+        return kernel.m_Parent->GetContext().GetErrorReporter()("TODO: CL_KERNEL_PRIVATE_MEM_SIZE.", CL_INVALID_VALUE);
+    }
+
+    return CL_INVALID_VALUE;
 }

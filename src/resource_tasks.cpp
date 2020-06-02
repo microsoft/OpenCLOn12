@@ -2014,6 +2014,7 @@ private:
         if (m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
             FillBufferDesc(Src, m_Source->m_Offset, m_Dest.Get());
+            Src.pResource = m_Source->GetUnderlyingResource()->GetUnderlyingResource();
             SrcSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
             SrcBox = { 0, 0, 0, m_Args.Width, m_Args.Height, m_Args.Depth };
 
@@ -2040,6 +2041,7 @@ private:
             };
 
             FillBufferDesc(Dest, m_Dest->m_Offset, m_Source.Get());
+            Dest.pResource = m_Dest->GetUnderlyingResource()->GetUnderlyingResource();
             DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
         }
 
@@ -2121,6 +2123,8 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
     {
         return ReportError("Cannot copy between buffers and images with less than 256-byte alignment.", CL_INVALID_IMAGE_SIZE);
     }
+    CmdArgs.BufferPitch = (cl_uint)rowPitch;
+
     size_t slicePitch = elementSize * CmdArgs.Height;
     if (CmdArgs.NumArraySlices > 1 &&
         slicePitch % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0)
@@ -2135,6 +2139,7 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
     {
         return ReportError("dst_offset cannot exceed the buffer bounds.", CL_INVALID_VALUE);
     }
+    CmdArgs.BufferOffset = dst_offset;
 
     try
     {
@@ -2213,6 +2218,8 @@ clEnqueueCopyBufferToImage(cl_command_queue command_queue,
     {
         return ReportError("Cannot copy between buffers and images with less than 256-byte alignment.", CL_INVALID_IMAGE_SIZE);
     }
+    CmdArgs.BufferPitch = (cl_uint)rowPitch;
+
     size_t slicePitch = elementSize * CmdArgs.Height;
     if (CmdArgs.NumArraySlices > 1 &&
         slicePitch % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0)
@@ -2227,6 +2234,7 @@ clEnqueueCopyBufferToImage(cl_command_queue command_queue,
     {
         return ReportError("dst_offset cannot exceed the buffer bounds.", CL_INVALID_VALUE);
     }
+    CmdArgs.BufferOffset = src_offset;
 
     try
     {
@@ -2803,6 +2811,9 @@ void MemReadTask::RecordViaCopy()
     {
         MapArgs = {};
         MapArgs.Width = (cl_uint)m_Source->m_Desc.image_width;
+        MapArgs.Height = 1;
+        MapArgs.Depth = 1;
+        MapArgs.NumArraySlices = 1;
     }
     MapCopyTask MapCopy(m_Parent.get(), m_CommandQueue.Get(), CL_MAP_READ, *m_Source.Get(), MapArgs, CL_COMMAND_MAP_IMAGE);
     MapCopy.Record();
