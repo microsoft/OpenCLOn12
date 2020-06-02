@@ -20,8 +20,6 @@ For more details about OpenCLOn12, see:
 ## Current Status
 
 At this point, the OpenCL API is more or less fully implemented, but largely untested. Further, the compiler is still undergoing significant development and churn. Known gaps:
-* `__constant` pointers are not handled correctly yet.
-* Library functions are likely not handled.
 * OpenCL contexts do not support more than one device.
 * Printf is not supported.
 
@@ -29,7 +27,7 @@ At this point, the OpenCL API is more or less fully implemented, but largely unt
 
 This project is expected to be included in a CMake build environment where the D3D12TranslationLayer project is also included.
 
-At the time of publishing, OpenCLOn12 and the D3D12TranslationLayer require **insider** versions of the SDK. Those can be found [here](https://www.microsoft.com/en-us/software-download/windowsinsiderpreviewWDK).
+At the time of publishing, OpenCLOn12 and the D3D12TranslationLayer require the latest released version of the SDK (19041).
 
 An example CMakeLists.txt for building OpenCLOn12 would be:
 
