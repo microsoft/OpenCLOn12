@@ -22,4 +22,8 @@ target_include_directories(openclon12
 target_link_libraries(openclon12 d3d12translationlayer)
 source_group("Header Files\\External" FILES ${EXTERNAL_INC})
 
-add_subdirectory(test)
+option(BUILD_TESTS "Build tests" ON)
+
+if (BUILD_TESTS)
+    add_subdirectory(test)
+endif()
