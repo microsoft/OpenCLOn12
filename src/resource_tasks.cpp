@@ -944,7 +944,7 @@ void MemReadTask::RecordImpl()
     auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
-        D3D12TranslationLayer::MappedSubresource MapRet;
+        D3D12TranslationLayer::MappedSubresource MapRet = {};
         D3D12_BOX SrcBox =
         {
             m_Args.SrcX, m_Args.SrcY, m_Args.SrcZ,
@@ -977,7 +977,18 @@ void MemReadTask::RecordImpl()
             SrcSlicePitch = MapRet.DepthPitch;
         }
 
-        CopyBits(MapRet.pData, i, SrcRowPitch, SrcSlicePitch);
+        if (MapRet.pData)
+        {
+            CopyBits(MapRet.pData, i, SrcRowPitch, SrcSlicePitch);
+        }
+        else
+        {
+            assert(m_Source->GetUnderlyingResource()->Parent()->m_desc12.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN);
+            assert(m_Args.DstX == 0 && m_Args.DstY == 0 && m_Args.DstZ == 0);
+            auto pResource12 = m_Source->GetUnderlyingResource()->GetUnderlyingResource();
+            D3D12TranslationLayer::ThrowFailure(pResource12->ReadFromSubresource(
+                m_Args.pData, m_Args.DstRowPitch, m_Args.DstSlicePitch, i, &SrcBox));
+        }
 
         ImmCtx.Unmap(m_Source->GetUnderlyingResource(), i, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
     }
@@ -2347,7 +2358,8 @@ public:
         m_Pointer = (byte*)basePointer +
             m_SlicePitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
             m_RowPitch * m_Args.SrcY +
-            GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX;
+            GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX +
+            resource.GetUnderlyingResource()->GetSubresourcePlacement(0).Offset;
     }
 
 private:
@@ -2411,7 +2423,12 @@ public:
             m_MappableResource.Attach(Resource::CreateImage(Parent, Args, nullptr, resource.m_Format, NewDesc, stagingFlags));
         }
 
-        m_UnderlyingMapTask.reset(new MapSynchronizeTask(Parent, command_queue, flags, *m_MappableResource.Get(), args, command));
+        auto UnderlyingMapArgs = args;
+        UnderlyingMapArgs.SrcX = 0;
+        UnderlyingMapArgs.SrcY = 0;
+        UnderlyingMapArgs.SrcZ = 0;
+        UnderlyingMapArgs.FirstArraySlice = 0;
+        m_UnderlyingMapTask.reset(new MapSynchronizeTask(Parent, command_queue, flags, *m_MappableResource.Get(), UnderlyingMapArgs, command));
         m_RowPitch = m_UnderlyingMapTask->GetRowPitch();
         m_SlicePitch = m_UnderlyingMapTask->GetSlicePitch();
         m_Pointer = m_UnderlyingMapTask->GetPointer();
