@@ -759,7 +759,7 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
         UAVDesc.Buffer.CounterOffsetInBytes = 0;
         UAVDesc.Buffer.StructureByteStride = 0;
         UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-        UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+        UAVDesc.Buffer.FirstElement = m_Offset / 4;
         UAVDesc.Buffer.NumElements = (UINT)(size / 4);
         UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
         m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);

@@ -136,6 +136,7 @@ public:
                 auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 
                 clc_runtime_kernel_conf config = {};
+                config.lower_int64 = true;
                 config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
                 config.support_work_group_id_offsets = numIterations != 1;
                 std::copy(std::begin(localSize), std::end(localSize), config.local_size);

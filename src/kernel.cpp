@@ -162,7 +162,9 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
 {
     auto& metadata = pDxil->metadata;
     D3D12TranslationLayer::SShaderDecls decls = {};
-    decls.m_NumCBs = (UINT)metadata.num_consts + 2;
+    cl_uint KernelArgCBIndex = metadata.kernel_inputs_cbv_id;
+    cl_uint WorkPropertiesCBIndex = metadata.work_properties_cbv_id;
+    decls.m_NumCBs = max(KernelArgCBIndex + 1, WorkPropertiesCBIndex + 1);
     decls.m_NumSamplers = (UINT)metadata.num_samplers;
     decls.m_ResourceDecls.resize(metadata.num_srvs);
     decls.m_UAVDecls.resize(metadata.num_uavs);

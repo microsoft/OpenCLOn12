@@ -601,33 +601,6 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
         return ReportError("Context mismatch between command queue and buffer.", CL_INVALID_CONTEXT);
     }
 
-    if (origin[0] > resource.m_Desc.image_width ||
-        region[0] > resource.m_Desc.image_width ||
-        origin[0] + region[0] > resource.m_Desc.image_width)
-    {
-        return ReportError("origin/region is too large.", CL_INVALID_VALUE);
-    }
-
-    size_t ReqRowPitch = CD3D11FormatHelper::GetByteAlignment(GetDXGIFormatForCLImageFormat(resource.m_Format)) * resource.m_Desc.image_width;
-    if (input_row_pitch == 0)
-    {
-        input_row_pitch = ReqRowPitch;
-    }
-    else if (input_row_pitch < ReqRowPitch)
-    {
-        return ReportError("input_row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
-    }
-
-    size_t ReqSlicePitch = input_row_pitch * max<size_t>(resource.m_Desc.image_height, 1);
-    if (input_slice_pitch == 0)
-    {
-        input_slice_pitch = ReqSlicePitch;
-    }
-    else if (input_slice_pitch < ReqSlicePitch)
-    {
-        return ReportError("input_slice_pitch must be 0 or at least input_row_pitch * image_height.", CL_INVALID_VALUE);
-    }
-
     if (resource.m_Flags & (CL_MEM_HOST_READ_ONLY | CL_MEM_HOST_NO_ACCESS))
     {
         return ReportError("Image is not writable from the host.", CL_INVALID_OPERATION);
@@ -644,16 +617,36 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
     CmdArgs.Height = 1;
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
-    CmdArgs.Data = MemWriteFillTask::WriteData
-    {
-        ptr, (cl_uint)input_row_pitch, (cl_uint)input_slice_pitch
-    };
 
     auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
     }
+
+    size_t ReqRowPitch = CD3D11FormatHelper::GetByteAlignment(GetDXGIFormatForCLImageFormat(resource.m_Format)) * region[0];
+    if (input_row_pitch == 0)
+    {
+        input_row_pitch = ReqRowPitch;
+    }
+    else if (input_row_pitch < ReqRowPitch)
+    {
+        return ReportError("input_row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
+    }
+
+    size_t ReqSlicePitch = input_row_pitch * region[1];
+    if (input_slice_pitch == 0)
+    {
+        input_slice_pitch = ReqSlicePitch;
+    }
+    else if (input_slice_pitch < ReqSlicePitch)
+    {
+        return ReportError("input_slice_pitch must be 0 or at least input_row_pitch * image_height.", CL_INVALID_VALUE);
+    }
+    CmdArgs.Data = MemWriteFillTask::WriteData
+    {
+        ptr, (cl_uint)input_row_pitch, (cl_uint)input_slice_pitch
+    };
 
     try
     {
@@ -1247,33 +1240,6 @@ clEnqueueReadImage(cl_command_queue     command_queue,
         return ReportError("Context mismatch between command queue and buffer.", CL_INVALID_CONTEXT);
     }
 
-    if (origin[0] > resource.m_Desc.image_width ||
-        region[0] > resource.m_Desc.image_width ||
-        origin[0] + region[0] > resource.m_Desc.image_width)
-    {
-        return ReportError("origin/region is too large.", CL_INVALID_VALUE);
-    }
-
-    size_t ReqRowPitch = CD3D11FormatHelper::GetByteAlignment(GetDXGIFormatForCLImageFormat(resource.m_Format)) * resource.m_Desc.image_width;
-    if (row_pitch == 0)
-    {
-        row_pitch = ReqRowPitch;
-    }
-    else if (row_pitch < ReqRowPitch)
-    {
-        return ReportError("row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
-    }
-
-    size_t ReqSlicePitch = row_pitch * max<size_t>(resource.m_Desc.image_height, 1);
-    if (slice_pitch == 0)
-    {
-        slice_pitch = ReqSlicePitch;
-    }
-    else if (slice_pitch < ReqSlicePitch)
-    {
-        return ReportError("slice_pitch must be 0 or at least input_row_pitch * image_height.", CL_INVALID_VALUE);
-    }
-
     if (resource.m_Flags & (CL_MEM_HOST_WRITE_ONLY | CL_MEM_HOST_NO_ACCESS))
     {
         return ReportError("Image is not readable from the host.", CL_INVALID_OPERATION);
@@ -1291,14 +1257,34 @@ clEnqueueReadImage(cl_command_queue     command_queue,
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
     CmdArgs.pData = ptr;
-    CmdArgs.DstRowPitch = (cl_uint)row_pitch;
-    CmdArgs.DstSlicePitch = (cl_uint)slice_pitch;
 
     auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
     }
+
+    size_t ReqRowPitch = CD3D11FormatHelper::GetByteAlignment(GetDXGIFormatForCLImageFormat(resource.m_Format)) * region[0];
+    if (row_pitch == 0)
+    {
+        row_pitch = ReqRowPitch;
+    }
+    else if (row_pitch < ReqRowPitch)
+    {
+        return ReportError("row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
+    }
+
+    size_t ReqSlicePitch = row_pitch * region[1];
+    if (slice_pitch == 0)
+    {
+        slice_pitch = ReqSlicePitch;
+    }
+    else if (slice_pitch < ReqSlicePitch)
+    {
+        return ReportError("slice_pitch must be 0 or at least row_pitch * image_height.", CL_INVALID_VALUE);
+    }
+    CmdArgs.DstRowPitch = (cl_uint)row_pitch;
+    CmdArgs.DstSlicePitch = (cl_uint)slice_pitch;
 
     cl_int ret = CL_SUCCESS;
     try
