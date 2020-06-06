@@ -2261,6 +2261,17 @@ MapTask::MapTask(Context& Parent, cl_command_queue command_queue, Resource& reso
     m_Resource.AddInternalRef();
 }
 
+MapTask::~MapTask()
+{
+    if (GetState() == State::Queued ||
+        GetState() == State::Submitted ||
+        GetState() == State::Ready ||
+        GetState() == State::Running)
+    {
+        m_Resource.ReleaseInternalRef();
+    }
+}
+
 void MapTask::OnComplete()
 {
     m_Resource.ReleaseInternalRef();
@@ -2456,9 +2467,12 @@ private:
             CopyArgs.NumArraySlices = m_Args.NumArraySlices;
             CopyResourceTask(m_Parent.get(), *m_MappableResource.Get(), m_Resource, m_CommandQueue.Get(), CopyArgs, CL_COMMAND_COPY_IMAGE).Record();
         }
+
+        m_MappableResource.Release();
+        m_UnderlyingMapTask.reset();
     }
 
-    Resource::ref_ptr_int m_MappableResource;
+    Resource::ref_ptr m_MappableResource;
     std::unique_ptr<MapSynchronizeTask> m_UnderlyingMapTask;
 };
 

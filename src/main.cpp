@@ -7,6 +7,19 @@
 #include <type_traits>
 #include <memory>
 
+// {1926C47A-D119-4A54-BA9C-D119D68F50A7}
+TRACELOGGING_DEFINE_PROVIDER(
+    g_hOpenCLOn12Provider,
+    "Microsoft.OpenCLOn12",
+    (0x1926c47a, 0xd119, 0x4a54, 0xba, 0x9c, 0xd1, 0x19, 0xd6, 0x8f, 0x50, 0xa7)
+);
+
+struct TraceLoggingRegistration
+{
+    TraceLoggingRegistration() { TraceLoggingRegister(g_hOpenCLOn12Provider); }
+    ~TraceLoggingRegistration() { TraceLoggingUnregister(g_hOpenCLOn12Provider); }
+} g_TraceLoggingRegistration;
+
 struct ExtensionTableEntry
 {
     const char *name;

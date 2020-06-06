@@ -195,6 +195,7 @@ public:
     };
 
     MapTask(Context& Parent, cl_command_queue command_queue, Resource& resource, cl_map_flags flags, cl_command_type command, Args const& args);
+    ~MapTask();
     virtual void Unmap(bool IsResourceBeingDestroyed) = 0;
     void* GetPointer() const { return m_Pointer; }
     size_t GetRowPitch() const { return m_RowPitch; }

@@ -42,6 +42,24 @@ using Microsoft::WRL::ComPtr;
 #include <wil/result_macros.h>
 #include "XPlatHelpers.h"
 
+#include <TraceLoggingProvider.h>
+TRACELOGGING_DECLARE_PROVIDER(g_hOpenCLOn12Provider);
+template <typename T> struct LifetimeLogger
+{
+    LifetimeLogger()
+    {
+        TraceLoggingWrite(g_hOpenCLOn12Provider,
+                          "ObjectCreate",
+                          TraceLoggingString(typeid(T).name()));
+    }
+    ~LifetimeLogger()
+    {
+        TraceLoggingWrite(g_hOpenCLOn12Provider,
+                          "ObjectDestroy",
+                          TraceLoggingString(typeid(T).name()));
+    }
+};
+
 #define DEFINE_DISPATCHABLE_HANDLE(name) \
     struct _##name { cl_icd_dispatch* dispatch; }
 
@@ -187,6 +205,7 @@ class CLChildBase : public CLBase<TClass, TCLPtr>
 public:
     typename TParent::ref_int m_Parent;
     std::atomic<uint64_t> m_RefCount = 1;
+    LifetimeLogger<TClass> m_Logger;
 
     CLChildBase(TParent& parent) : m_Parent(parent)
     {
