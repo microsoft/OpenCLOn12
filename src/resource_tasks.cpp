@@ -898,7 +898,7 @@ private:
 void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, size_t SrcSlicePitch)
 {
     const cl_uint FormatBytes = GetFormatSizeBytes(m_Source->m_Format);
-    if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX == 0)
+    if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX != 0)
     {
         for (cl_uint z = 0; z < m_Args.Depth; ++z)
         {
@@ -919,7 +919,7 @@ void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, siz
     else
     {
         char* pDest = reinterpret_cast<char*>(m_Args.pData) +
-            (Subresource * m_Args.DstZ) * m_Args.DstSlicePitch;
+            (Subresource + m_Args.DstZ) * m_Args.DstSlicePitch;
         D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
         D3D12_SUBRESOURCE_DATA Src = { pData, (LONG_PTR)SrcRowPitch, (LONG_PTR)SrcSlicePitch };
         MemcpySubresource(&Dest, &Src, FormatBytes * m_Args.Width, m_Args.Height, m_Args.Depth);
