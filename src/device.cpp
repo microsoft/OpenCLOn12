@@ -221,6 +221,8 @@ Device::~Device() = default;
 
 void Device::InitD3D()
 {
+    std::lock_guard Lock(m_InitLock);
+    ++m_ContextCount;
     if (m_ImmCtx)
     {
         return;
@@ -249,6 +251,21 @@ void Device::InitD3D()
     (void)m_ImmCtx->GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS)->GetTimestampFrequency(&m_TimestampFrequency);
 
     m_RecordingSubmission.reset(new Submission);
+}
+
+void Device::ReleaseD3D()
+{
+    std::lock_guard Lock(m_InitLock);
+    if (--m_ContextCount != 0)
+        return;
+
+    m_ImmCtx.reset();
+    BackgroundTaskScheduler::SchedulingMode mode{ 0u, BackgroundTaskScheduler::Priority::Normal };
+    m_CallbackScheduler.SetSchedulingMode(mode);
+    m_CompletionScheduler.SetSchedulingMode(mode);
+    m_CompileAndLinkScheduler.SetSchedulingMode(mode);
+    m_RecordingSubmission.reset();
+    m_spDevice.Reset();
 }
 
 cl_bool Device::IsAvailable() const noexcept
@@ -282,6 +299,8 @@ bool Device::IsMCDM() const noexcept
 
 bool Device::IsUMA() const noexcept
 {
+    if (!m_ImmCtx)
+        return false;
     D3D12_FEATURE_DATA_ARCHITECTURE ArchCaps = {};
     GetDevice()->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &ArchCaps, sizeof(ArchCaps));
     return ArchCaps.UMA;

@@ -26,6 +26,7 @@ private:
 
 public:
     Context(Platform& Platform, Device& Device, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext);
+    ~Context();
 
     void ReportError(const char* Error);
     auto GetErrorReporter(cl_int* errcode_ret)

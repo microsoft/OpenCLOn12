@@ -34,6 +34,7 @@ public:
     std::string GetDeviceName() const;
 
     void InitD3D();
+    void ReleaseD3D();
     ID3D12Device* GetDevice() const { return m_spDevice.Get(); }
     ImmCtx& ImmCtx() { return m_ImmCtx.value(); }
     UINT64 GetTimestampFrequency() const { return m_TimestampFrequency; }
@@ -80,9 +81,11 @@ protected:
     DXCoreHardwareID m_HWIDs;
 
     // Lazy-initialized
+    std::mutex m_InitLock;
     D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options;
     D3D12TranslationLayer::TranslationLayerCallbacks m_Callbacks;
     std::optional<::ImmCtx> m_ImmCtx;
+    unsigned m_ContextCount = 0;
 
     std::recursive_mutex m_TaskLock;
     std::vector<::ref_ptr_int<Task>> m_TaskGraphScratch;

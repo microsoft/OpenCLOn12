@@ -230,6 +230,11 @@ Context::Context(Platform& Platform, Device& Device, const cl_context_properties
     m_AssociatedDevice->InitD3D();
 }
 
+Context::~Context()
+{
+    m_AssociatedDevice->ReleaseD3D();
+}
+
 void Context::ReportError(const char* Error)
 {
     m_ErrorCallback(Error, nullptr, 0, m_CallbackContext);
