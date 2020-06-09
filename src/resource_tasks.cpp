@@ -1097,15 +1097,15 @@ cl_int clEnqueueReadBufferRectImpl(cl_command_queue    command_queue,
     }
 
     MemReadTask::Args CmdArgs = {};
-    CmdArgs.DstX = (cl_uint)buffer_offset[0];
-    CmdArgs.DstY = (cl_uint)buffer_offset[1];
-    CmdArgs.DstZ = (cl_uint)buffer_offset[2];
+    CmdArgs.DstX = (cl_uint)host_offset[0];
+    CmdArgs.DstY = (cl_uint)host_offset[1];
+    CmdArgs.DstZ = (cl_uint)host_offset[2];
     CmdArgs.Width = (cl_uint)region[0];
     CmdArgs.Height = (cl_uint)region[1];
     CmdArgs.Depth = (cl_uint)region[2];
-    CmdArgs.SrcX = (cl_uint)host_offset[0];
-    CmdArgs.SrcY = (cl_uint)host_offset[1];
-    CmdArgs.SrcZ = (cl_uint)host_offset[2];
+    CmdArgs.SrcX = (cl_uint)buffer_offset[0];
+    CmdArgs.SrcY = (cl_uint)buffer_offset[1];
+    CmdArgs.SrcZ = (cl_uint)buffer_offset[2];
     CmdArgs.NumArraySlices = 1;
     CmdArgs.SrcBufferRowPitch = (cl_uint)buffer_row_pitch;
     CmdArgs.SrcBufferSlicePitch = (cl_uint)buffer_slice_pitch;
