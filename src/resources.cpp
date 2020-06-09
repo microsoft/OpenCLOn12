@@ -170,7 +170,7 @@ clCreateBuffer(cl_context   context_,
     Args.m_appDesc.m_resourceDimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
     Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE | D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
-    Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(size, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(D3D12TranslationLayer::Align<size_t>(size, 4), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
     ModifyResourceArgsForMemFlags(Args, flags);
 
@@ -760,7 +760,7 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
         UAVDesc.Buffer.StructureByteStride = 0;
         UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
         UAVDesc.Buffer.FirstElement = m_Offset / 4;
-        UAVDesc.Buffer.NumElements = (UINT)(size / 4);
+        UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
         UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
         m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
     }
@@ -794,7 +794,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
                 UAVDesc.Buffer.StructureByteStride = 0;
                 UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
                 UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-                UAVDesc.Buffer.NumElements = (UINT)(size / FormatByteSize);
+                UAVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
 
                 UAVDescWrapper.m_D3D11UAVFlags = 0;
 
@@ -809,7 +809,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
                 SRVDesc.Buffer.StructureByteStride = 0;
                 SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
                 SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-                SRVDesc.Buffer.NumElements = (UINT)(size / FormatByteSize);
+                SRVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
 
                 m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
             }
@@ -824,7 +824,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             UAVDesc.Buffer.StructureByteStride = 0;
             UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
             UAVDesc.Buffer.FirstElement = m_Offset / 4;
-            UAVDesc.Buffer.NumElements = (UINT)(size / 4);
+            UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
             UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
             m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
         }
