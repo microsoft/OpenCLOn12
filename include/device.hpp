@@ -29,6 +29,7 @@ public:
     cl_ulong GetGlobalMemSize() const noexcept;
     DXCoreHardwareID const& GetHardwareIds() const noexcept;
     bool IsMCDM() const noexcept;
+    bool IsUMA() const noexcept;
 
     std::string GetDeviceName() const;
 

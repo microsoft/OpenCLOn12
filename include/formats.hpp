@@ -111,13 +111,7 @@ constexpr DXGI_FORMAT GetDXGIFormatForCLImageFormat(cl_image_format const& image
     case CL_UNORM_INT_101010:
         switch (image_format.image_channel_order)
         {
-        case CL_RGB: return DXGI_FORMAT_R10G10B10A2_UNORM;
-        }
-        break;
-    case CL_UNORM_SHORT_565:
-        switch (image_format.image_channel_order)
-        {
-        case CL_RGB: return DXGI_FORMAT_B5G6R5_UNORM;
+        case CL_RGBx: return DXGI_FORMAT_R10G10B10A2_UNORM;
         }
         break;
     }
@@ -142,7 +136,7 @@ constexpr cl_image_format GetCLImageFormatForDXGIFormat(DXGI_FORMAT fmt)
     case DXGI_FORMAT_R32G32_FLOAT: return { CL_RG, CL_FLOAT };
     case DXGI_FORMAT_R32G32_UINT: return { CL_RG, CL_UNSIGNED_INT32 };
     case DXGI_FORMAT_R32G32_SINT: return { CL_RG, CL_SIGNED_INT32 };
-    case DXGI_FORMAT_R10G10B10A2_UNORM: return { CL_RGBA, CL_UNORM_INT_101010 };
+    case DXGI_FORMAT_R10G10B10A2_UNORM: return { CL_RGBx, CL_UNORM_INT_101010 };
     case DXGI_FORMAT_R8G8B8A8_UNORM: return { CL_RGBA, CL_UNORM_INT8 };
     case DXGI_FORMAT_R8G8B8A8_UINT: return { CL_RGBA, CL_UNSIGNED_INT8 };
     case DXGI_FORMAT_R8G8B8A8_SNORM: return { CL_RGBA, CL_SNORM_INT8 };
@@ -169,8 +163,6 @@ constexpr cl_image_format GetCLImageFormatForDXGIFormat(DXGI_FORMAT fmt)
     case DXGI_FORMAT_R8_SNORM: return { CL_R, CL_SNORM_INT8 };
     case DXGI_FORMAT_R8_SINT: return { CL_R, CL_SIGNED_INT8 };
     case DXGI_FORMAT_A8_UNORM: return { CL_A, CL_UNORM_INT8 };
-    case DXGI_FORMAT_B5G6R5_UNORM: return { CL_RGB, CL_UNORM_SHORT_565 };
-    case DXGI_FORMAT_B5G5R5A1_UNORM: return { CL_RGB, CL_UNORM_SHORT_555 };
     case DXGI_FORMAT_B8G8R8A8_UNORM: return { CL_BGRA, CL_UNORM_INT8 };
     }
     return {};
@@ -222,8 +214,8 @@ inline cl_uint GetFormatSizeBytes(cl_image_format format)
     {
     case 0:
         return 1;
-    case CL_UNORM_SHORT_565:
-        return 2;
+    case CL_UNORM_INT_101010:
+        return 4;
     default:
         return GetChannelSizeBits(format.image_channel_data_type) *
             GetNumChannelsInOrder(format.image_channel_order) / 8;

@@ -153,7 +153,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_GLOBAL_VARIABLE_PREFERRED_TOTAL_SIZE: return RetValue((size_t)0);
 
         case CL_DEVICE_LOCAL_MEM_TYPE: return RetValue((cl_device_local_mem_type)CL_LOCAL);
-        case CL_DEVICE_LOCAL_MEM_SIZE: return RetValue((cl_ulong)(D3D12_CS_THREAD_LOCAL_TEMP_REGISTER_POOL * 4));
+        case CL_DEVICE_LOCAL_MEM_SIZE: return RetValue((cl_ulong)(D3D12_CS_TGSM_REGISTER_COUNT * sizeof(UINT)));
 
         case CL_DEVICE_ERROR_CORRECTION_SUPPORT: return RetValue((cl_bool)CL_FALSE);
         case CL_DEVICE_PROFILING_TIMER_RESOLUTION: return RetValue((cl_bool)80);
@@ -201,6 +201,8 @@ clGetDeviceInfo(cl_device_id    device,
 
         case CL_DEVICE_MAX_NUM_SUB_GROUPS: return RetValue((cl_uint)1);
         case CL_DEVICE_SUB_GROUP_INDEPENDENT_FORWARD_PROGRESS: return RetValue((cl_bool)CL_FALSE);
+
+        case CL_DEVICE_HOST_UNIFIED_MEMORY: return RetValue((cl_bool)pDevice->IsUMA());
         }
 
         return CL_INVALID_VALUE;
@@ -276,6 +278,13 @@ DXCoreHardwareID const& Device::GetHardwareIds() const noexcept
 bool Device::IsMCDM() const noexcept
 {
     return !m_spAdapter->IsAttributeSupported(DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS);
+}
+
+bool Device::IsUMA() const noexcept
+{
+    D3D12_FEATURE_DATA_ARCHITECTURE ArchCaps = {};
+    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &ArchCaps, sizeof(ArchCaps));
+    return ArchCaps.UMA;
 }
 
 std::string Device::GetDeviceName() const
