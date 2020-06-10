@@ -459,13 +459,19 @@ clGetKernelArgInfo(cl_kernel       kernel_,
         }
         break;
     case CL_KERNEL_ARG_ACCESS_QUALIFIER:
-        // Only valid for images, and there's no metadata for that yet
-        return RetValue(CL_KERNEL_ARG_ACCESS_NONE);
+        switch (arg.access_qualifier)
+        {
+        default: return RetValue(CL_KERNEL_ARG_ACCESS_NONE);
+        case CLC_KERNEL_ARG_ACCESS_READ: return RetValue(CL_KERNEL_ARG_ACCESS_READ_ONLY);
+        case CLC_KERNEL_ARG_ACCESS_WRITE: return RetValue(CL_KERNEL_ARG_ACCESS_WRITE_ONLY);
+        case CLC_KERNEL_ARG_ACCESS_READ | CLC_KERNEL_ARG_ACCESS_WRITE: return RetValue(CL_KERNEL_ARG_ACCESS_READ_WRITE);
+        }
     case CL_KERNEL_ARG_TYPE_NAME: return RetValue(arg.type_name);
     case CL_KERNEL_ARG_TYPE_QUALIFIER:
     {
         cl_kernel_arg_type_qualifier qualifier = CL_KERNEL_ARG_TYPE_NONE;
-        if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_CONST) qualifier |= CL_KERNEL_ARG_TYPE_CONST;
+        if ((arg.type_qualifier & CLC_KERNEL_ARG_TYPE_CONST) ||
+            arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_CONSTANT) qualifier |= CL_KERNEL_ARG_TYPE_CONST;
         if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_RESTRICT) qualifier |= CL_KERNEL_ARG_TYPE_RESTRICT;
         if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_VOLATILE) qualifier |= CL_KERNEL_ARG_TYPE_VOLATILE;
         return RetValue(qualifier);
