@@ -4,6 +4,7 @@
 #include "task.hpp"
 #include "queue.hpp"
 #include "resources.hpp"
+#include "sampler.hpp"
 #include "clc_compiler.h"
 
 extern void SignBlob(void* pBlob, size_t size);
@@ -21,6 +22,9 @@ public:
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
+
+    std::vector<Resource::ref_ptr_int> m_KernelArgResources;
+    std::vector<Sampler::ref_ptr_int> m_KernelArgSamplers;
 
     std::mutex m_SpecializeLock;
     std::condition_variable m_SpecializeEvent;
@@ -44,6 +48,8 @@ public:
         , m_SRVs(kernel.m_SRVs)
         , m_Samplers(kernel.m_Samplers)
         , m_ArgInfo(kernel.m_ArgMetadataToCompiler)
+        , m_KernelArgResources(kernel.m_KernelArgResources.begin(), kernel.m_KernelArgResources.end())
+        , m_KernelArgSamplers(kernel.m_KernelArgSamplers.begin(), kernel.m_KernelArgSamplers.end())
     {
         cl_uint KernelArgCBIndex = kernel.m_pDxil->metadata.kernel_inputs_cbv_id;
         cl_uint WorkPropertiesCBIndex = kernel.m_pDxil->metadata.work_properties_cbv_id;

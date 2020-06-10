@@ -203,7 +203,9 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
 {
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
     m_SRVs.resize(m_pDxil->metadata.num_srvs);
+    m_KernelArgResources.resize(m_pDxil->metadata.num_uavs + m_pDxil->metadata.num_srvs);
     m_Samplers.resize(m_pDxil->metadata.num_samplers);
+    m_KernelArgSamplers.resize(m_pDxil->metadata.num_samplers);
     m_ArgMetadataToCompiler.resize(m_pDxil->kernel->num_args);
     size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
     m_KernelArgsCbData.resize(KernelInputsCbSize);
@@ -282,6 +284,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 {
                     m_UAVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = uav;
                 }
+                m_KernelArgResources[m_pDxil->metadata.args[arg_index].image.buf_ids[0]] = resource;
             }
             else
             {
@@ -294,6 +297,8 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 {
                     m_SRVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = srv;
                 }
+                m_KernelArgResources[m_pDxil->metadata.num_uavs +
+                    m_pDxil->metadata.args[arg_index].image.buf_ids[0]] = resource;
             }
 
             // Store image format in the kernel args
@@ -316,9 +321,9 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
             }
             uint64_t *buffer_val = reinterpret_cast<uint64_t*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset);
+            auto buf_id = m_pDxil->metadata.args[arg_index].globconstptr.buf_id;
             if (resource)
             {
-                auto buf_id = m_pDxil->metadata.args[arg_index].globconstptr.buf_id;
                 m_UAVs[buf_id] = &resource->GetUAV();
                 *buffer_val = (uint64_t)buf_id << 32ull;
             }
@@ -326,6 +331,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             {
                 *buffer_val = 0ull;
             }
+            m_KernelArgResources[buf_id] = resource;
         }
 
         break;
@@ -342,6 +348,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             Sampler* sampler = static_cast<Sampler*>(samp);
             D3D12TranslationLayer::Sampler* underlying = sampler ? &sampler->GetUnderlying() : nullptr;
             m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = underlying;
+            m_KernelArgSamplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = sampler;
             m_ArgMetadataToCompiler[arg_index].sampler.normalized_coords = sampler ? sampler->m_Desc.NormalizedCoords : 1u;
         }
         else

@@ -19,6 +19,14 @@ private:
     std::vector<byte> m_KernelArgsCbData;
     std::vector<struct clc_runtime_arg_info> m_ArgMetadataToCompiler;
 
+    // These are weak references for the API kernel object, however
+    // these will be converted into strong references by an *execution*
+    // of that kernel. Releasing an object *while a kernel is enqueued*
+    // must be safe (according to the CTS), while the API kernel must not
+    // hold any references.
+    std::vector<Resource*> m_KernelArgResources;
+    std::vector<Sampler*> m_KernelArgSamplers;
+
     std::vector<::ref_ptr<Sampler>> m_ConstSamplers;
     std::vector<::ref_ptr<Resource>> m_InlineConsts;
 
