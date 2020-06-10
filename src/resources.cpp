@@ -23,6 +23,10 @@ constexpr cl_mem_flags HostReadWriteFlagsMask =
     CL_MEM_HOST_WRITE_ONLY |
     CL_MEM_HOST_READ_ONLY |
     CL_MEM_HOST_NO_ACCESS;
+constexpr cl_mem_flags HostPtrFlagsMask =
+    CL_MEM_USE_HOST_PTR |
+    CL_MEM_ALLOC_HOST_PTR |
+    CL_MEM_COPY_HOST_PTR;
 
 void ModifyResourceArgsForMemFlags(D3D12TranslationLayer::ResourceCreationArgs& Args, cl_mem_flags flags)
 {
@@ -95,16 +99,16 @@ bool ValidateMemFlags(cl_mem_flags flags, bool bHaveHostPtr, TErrFunc&& ReportEr
 }
 
 template <typename TErrFunc>
-bool ValidateMemFlagsForBufferReference(cl_mem_flags flags, Resource& buffer, TErrFunc&& ReportError)
+bool ValidateMemFlagsForBufferReference(cl_mem_flags& flags, Resource& buffer, TErrFunc&& ReportError)
 {
-    if (flags & (CL_MEM_USE_HOST_PTR | CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR))
+    if (flags & HostPtrFlagsMask)
     {
         ReportError("Cannot set CL_MEM_USE_HOST_PTR, CL_MEM_ALLOC_HOST_PTR, or CL_MEM_COPY_HOST_PTR for sub-buffers or 1D image buffers.", CL_INVALID_VALUE);
         return false;
     }
-    flags |= buffer.m_Flags & (CL_MEM_USE_HOST_PTR | CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR);
+    flags |= buffer.m_Flags & HostPtrFlagsMask;
 
-    if ((buffer.m_Flags & DeviceReadWriteFlagsMask) == 0)
+    if ((flags & DeviceReadWriteFlagsMask) == 0)
     {
         flags |= buffer.m_Flags & DeviceReadWriteFlagsMask;
     }
@@ -115,7 +119,7 @@ bool ValidateMemFlagsForBufferReference(cl_mem_flags flags, Resource& buffer, TE
         return false;
     }
 
-    if ((buffer.m_Flags & HostReadWriteFlagsMask) == 0)
+    if ((flags & HostReadWriteFlagsMask) == 0)
     {
         flags |= buffer.m_Flags & HostReadWriteFlagsMask;
     }
@@ -624,7 +628,9 @@ clGetMemObjectInfo(cl_mem           memobj,
     {
     case CL_MEM_TYPE: return RetValue(resource.m_Desc.image_type);
     case CL_MEM_FLAGS: return RetValue(resource.m_Flags);
-    case CL_MEM_SIZE: return RetValue((size_t)resource.GetUnderlyingResource()->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
+    case CL_MEM_SIZE: return RetValue(
+        resource.m_ParentBuffer.Get() ? resource.m_Desc.image_width :
+        (size_t)resource.GetUnderlyingResource()->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
     case CL_MEM_HOST_PTR: return RetValue(resource.m_pHostPointer);
     case CL_MEM_MAP_COUNT: return RetValue(resource.GetMapCount());
     case CL_MEM_REFERENCE_COUNT: return RetValue(resource.GetRefCount());
