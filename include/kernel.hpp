@@ -11,7 +11,6 @@ class Kernel : public CLChildBase<Kernel, Program, cl_kernel>
 private:
     clc_dxil_object const* m_pDxil;
     D3D12TranslationLayer::SShaderDecls m_ShaderDecls;
-    D3D12TranslationLayer::RootSignature m_RootSig;
 
     std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
     std::vector<D3D12TranslationLayer::SRV*> m_SRVs;

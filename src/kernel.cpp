@@ -198,8 +198,6 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     : CLChildBase(Parent)
     , m_pDxil(pDxil)
     , m_ShaderDecls(DeclsFromMetadata(pDxil))
-    , m_RootSig(&Parent.GetDevice().ImmCtx(), 
-        D3D12TranslationLayer::RootSignatureDesc(&m_ShaderDecls, false))
 {
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
     m_SRVs.resize(m_pDxil->metadata.num_srvs);
