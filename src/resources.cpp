@@ -957,8 +957,9 @@ Resource::~Resource()
         }
     }
 
-    for (auto& callback : m_DestructorCallbacks)
+    for (auto iter = m_DestructorCallbacks.rbegin(); iter != m_DestructorCallbacks.rend(); ++iter)
     {
+        auto& callback = *iter;
         callback.m_pfn(this, callback.m_userData);
     }
 }
