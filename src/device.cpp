@@ -339,35 +339,35 @@ void Device::SubmitTask(Task* task, TaskPoolLock const& lock)
     {
         // User commands are treated as 'submitted' when they're created
         task->Submit();
-    }
 
-    if (task->m_TasksToWaitOn.empty())
-    {
-        if (c_RecordCommandListsOnAppThreads)
+        if (task->m_TasksToWaitOn.empty())
         {
-            m_TaskGraphScratch.emplace_back(task);
-            for (cl_uint i = 0; i < m_TaskGraphScratch.size(); ++i)
+            if (c_RecordCommandListsOnAppThreads)
             {
-                task = m_TaskGraphScratch[i].Get();
-                try
+                m_TaskGraphScratch.emplace_back(task);
+                for (cl_uint i = 0; i < m_TaskGraphScratch.size(); ++i)
                 {
-                    ReadyTask(task, lock);
-                    task->Record();
-                }
-                catch (...)
-                {
-                    // Everything else is an error now.
-                    for (; i < m_TaskGraphScratch.size(); ++i)
+                    task = m_TaskGraphScratch[i].Get();
+                    try
                     {
-                        m_TaskGraphScratch[i]->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, lock);
+                        ReadyTask(task, lock);
+                        task->Record();
                     }
-                    break;
+                    catch (...)
+                    {
+                        // Everything else is an error now.
+                        for (; i < m_TaskGraphScratch.size(); ++i)
+                        {
+                            m_TaskGraphScratch[i]->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, lock);
+                        }
+                        break;
+                    }
                 }
             }
-        }
-        else
-        {
-            ReadyTask(task, lock);
+            else
+            {
+                ReadyTask(task, lock);
+            }
         }
     }
 

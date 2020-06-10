@@ -266,9 +266,16 @@ void CommandQueue::QueueTask(Task* p, TaskPoolLock const& lock)
 
 void CommandQueue::NotifyTaskCompletion(Task* p, TaskPoolLock const&)
 {
-    auto newEnd = std::remove_if(m_OutstandingTasks.begin(), m_OutstandingTasks.end(),
-        [p](Task::ref_ptr_int const& e) { return e.Get() == p; });
-    m_OutstandingTasks.erase(newEnd, m_OutstandingTasks.end());
+    {
+        auto newEnd = std::remove_if(m_OutstandingTasks.begin(), m_OutstandingTasks.end(),
+            [p](Task::ref_ptr_int const& e) { return e.Get() == p; });
+        m_OutstandingTasks.erase(newEnd, m_OutstandingTasks.end());
+    }
+    {
+        auto newEnd = std::remove_if(m_QueuedTasks.begin(), m_QueuedTasks.end(),
+            [p](Task::ref_ptr const& e) { return e.Get() == p; });
+        m_QueuedTasks.erase(newEnd, m_QueuedTasks.end());
+    }
     if (m_LastQueuedTask == p)
     {
         m_LastQueuedTask = nullptr;

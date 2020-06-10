@@ -137,7 +137,13 @@ clReleaseEvent(cl_event event) CL_API_SUFFIX__VERSION_1_0
     {
         return CL_INVALID_EVENT;
     }
-    static_cast<Task*>(event)->Release();
+    auto task = static_cast<Task*>(event);
+    if (task->m_CommandType == CL_COMMAND_USER &&
+        (task->m_RefCount & UINT_MAX) == 1)
+    {
+        clSetUserEventStatus(event, -1);
+    }
+    task->Release();
     return CL_SUCCESS;
 }
 
@@ -175,6 +181,7 @@ clSetUserEventStatus(cl_event   event,
             context.GetDevice().SubmitTask(&task, Lock);
         }
         e.Complete(execution_status, Lock);
+        context.GetDevice().Flush(Lock);
     }
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -555,7 +562,7 @@ void Task::Ready(std::vector<ref_ptr_int> &OtherReadyTasks, TaskPoolLock const&)
         for (auto& task : m_TasksWaitingOnThis)
         {
             auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
-                [this](ref_ptr const& p) { return p.Get() == this; });
+                [this](ref_ptr_int const& p) { return p.Get() == this; });
             assert(newEnd != task->m_TasksToWaitOn.end());
             task->m_TasksToWaitOn.erase(newEnd, task->m_TasksToWaitOn.end());
 
@@ -576,6 +583,7 @@ void Task::Started(TaskPoolLock const &)
 void Task::Complete(cl_int error, TaskPoolLock const& lock)
 {
     assert(error <= 0);
+    assert(m_State != State::Complete);
     m_State = (State)error;
 
     if (m_CommandQueue.Get())
@@ -608,7 +616,10 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
     {
         for (auto& task : m_TasksWaitingOnThis)
         {
-            task->Complete(error, lock);
+            if (task->m_State >= State::Running)
+            {
+                task->Complete(error, lock);
+            }
         }
     }
     else if (!c_RecordCommandListsOnAppThreads)
@@ -616,11 +627,12 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
         for (auto& task : m_TasksWaitingOnThis)
         {
             auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
-                [this](ref_ptr const& p) { return p.Get() == this; });
+                [this](ref_ptr_int const& p) { return p.Get() == this; });
             assert(newEnd != task->m_TasksToWaitOn.end());
             task->m_TasksToWaitOn.erase(newEnd, task->m_TasksToWaitOn.end());
 
-            if (task->m_TasksToWaitOn.empty())
+            if (task->m_TasksToWaitOn.empty() &&
+                task->m_State == State::Submitted)
             {
                 m_Parent->GetDevice().ReadyTask(task.Get(), lock);
             }

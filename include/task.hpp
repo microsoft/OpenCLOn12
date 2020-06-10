@@ -136,7 +136,7 @@ protected:
     State m_State = State::Queued;
     cl_ulong m_ProfilingTimestamps[4] = {};
 
-    std::vector<ref_ptr> m_TasksToWaitOn;
+    std::vector<ref_ptr_int> m_TasksToWaitOn;
     std::set<ref_ptr_int> m_TasksWaitingOnThis;
     std::vector<NotificationRequest> m_CompletionCallbacks;
     std::vector<NotificationRequest> m_RunningCallbacks;
