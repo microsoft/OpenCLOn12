@@ -130,7 +130,8 @@ clCreateContextFromType(const cl_context_properties * properties,
     {
         return nullptr;
     }
-    if (device_type != CL_DEVICE_TYPE_GPU)
+    if (device_type != CL_DEVICE_TYPE_GPU &&
+        device_type != CL_DEVICE_TYPE_DEFAULT)
     {
         return ReportError("This platform only supports GPUs.", CL_INVALID_DEVICE_TYPE);
     }

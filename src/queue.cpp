@@ -127,10 +127,14 @@ clGetCommandQueueInfo(cl_command_queue      command_queue,
     case CL_QUEUE_CONTEXT: return RetValue(static_cast<cl_context>(&queue.GetContext()));
     case CL_QUEUE_DEVICE: return RetValue(static_cast<cl_device_id>(&queue.GetDevice()));
     case CL_QUEUE_REFERENCE_COUNT: return RetValue((cl_uint)queue.GetRefCount());
-    case CL_QUEUE_PROPERTIES:
+    case CL_QUEUE_PROPERTIES: 
+        return RetValue(*FindProperty<cl_queue_properties>(queue.m_Properties.data(), CL_QUEUE_PROPERTIES));
+        /* TODO: OpenCL 3.0
+    case CL_QUEUE_PROPERTIES_ARRAY:
         return CopyOutParameterImpl(queue.m_Properties.data(),
             queue.m_Properties.size() * sizeof(queue.m_Properties[0]),
             param_value_size, param_value, param_value_size_ret);
+        */
     }
 
     return queue.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);

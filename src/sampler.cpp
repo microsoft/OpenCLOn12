@@ -118,6 +118,7 @@ clCreateSampler(cl_context          context_,
         desc.NormalizedCoords = 1;
     switch (desc.AddressingMode)
     {
+    case CL_ADDRESS_NONE:
     case CL_ADDRESS_CLAMP_TO_EDGE:
     case CL_ADDRESS_CLAMP:
     case CL_ADDRESS_REPEAT:

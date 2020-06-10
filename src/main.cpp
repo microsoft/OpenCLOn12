@@ -243,14 +243,13 @@ clIcdGetPlatformIDsKHR(cl_uint           num_entries,
         catch (std::exception&) { return CL_OUT_OF_RESOURCES; }
     }
 
-    if ((platforms && num_entries > 1) ||
-        (platforms && num_entries <= 0) ||
+    if ((platforms && num_entries <= 0) ||
         (!platforms && num_entries >= 1))
     {
         return CL_INVALID_VALUE;
     }
 
-    if (platforms && num_entries == 1)
+    if (platforms && num_entries >= 1)
     {
         platforms[0] = g_Platform.get();
     }

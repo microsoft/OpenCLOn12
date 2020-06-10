@@ -232,7 +232,7 @@ std::vector<TProperties> PropertiesToVector(const TProperties* Props)
         return Ret;
     auto EndProp = Props;
     for (; *EndProp != 0; EndProp += 2);
-    Ret.assign(Props, EndProp);
+    Ret.assign(Props, EndProp + 1);
     return Ret;
 }
 
