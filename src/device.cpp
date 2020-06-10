@@ -90,22 +90,24 @@ clGetDeviceInfo(cl_device_id    device,
             return RetValue(WorkItemSizes);
         }
         case CL_DEVICE_MAX_WORK_GROUP_SIZE: return RetValue((size_t)D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP);
+
         case CL_DEVICE_PREFERRED_VECTOR_WIDTH_CHAR: // Fallthrough
         case CL_DEVICE_NATIVE_VECTOR_WIDTH_CHAR: return RetValue((cl_uint)16);
+
+        case CL_DEVICE_PREFERRED_VECTOR_WIDTH_HALF: // Fallthrough
+        case CL_DEVICE_NATIVE_VECTOR_WIDTH_HALF: // Fallthrough
         case CL_DEVICE_PREFERRED_VECTOR_WIDTH_SHORT: // Fallthrough
         case CL_DEVICE_NATIVE_VECTOR_WIDTH_SHORT: return RetValue((cl_uint)8);
 
         case CL_DEVICE_PREFERRED_VECTOR_WIDTH_INT: // Fallthrough
         case CL_DEVICE_NATIVE_VECTOR_WIDTH_INT: // Fallthrough
-        case CL_DEVICE_PREFERRED_VECTOR_WIDTH_LONG: // Fallthrough
-        case CL_DEVICE_NATIVE_VECTOR_WIDTH_LONG: // Fallthrough
         case CL_DEVICE_PREFERRED_VECTOR_WIDTH_FLOAT: // Fallthrough
         case CL_DEVICE_NATIVE_VECTOR_WIDTH_FLOAT: return RetValue((cl_uint)4);
 
+        case CL_DEVICE_PREFERRED_VECTOR_WIDTH_LONG: // Fallthrough
+        case CL_DEVICE_NATIVE_VECTOR_WIDTH_LONG: // Fallthrough
         case CL_DEVICE_PREFERRED_VECTOR_WIDTH_DOUBLE: // Fallthrough
         case CL_DEVICE_NATIVE_VECTOR_WIDTH_DOUBLE: return RetValue((cl_uint)2);
-        case CL_DEVICE_PREFERRED_VECTOR_WIDTH_HALF: // Fallthrough
-        case CL_DEVICE_NATIVE_VECTOR_WIDTH_HALF: return RetValue((cl_uint)8);
 
         case CL_DEVICE_MAX_CLOCK_FREQUENCY: return RetValue((cl_uint)12);
         case CL_DEVICE_ADDRESS_BITS: return RetValue(64u);
@@ -130,15 +132,16 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_IMAGE_BASE_ADDRESS_ALIGNMENT: return RetValue((cl_uint)D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
 
         case CL_DEVICE_MAX_PARAMETER_SIZE: return RetValue((size_t)1024);
-        case CL_DEVICE_MEM_BASE_ADDR_ALIGN: return RetValue((cl_uint)D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        case CL_DEVICE_MEM_BASE_ADDR_ALIGN: return RetValue((cl_uint)D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT * 8);
+        case CL_DEVICE_MIN_DATA_TYPE_ALIGN_SIZE: return RetValue((cl_int)(64 * 16)); // sizeof(long16)
 
         case CL_DEVICE_SINGLE_FP_CONFIG: // Fallthrough
-        case CL_DEVICE_DOUBLE_FP_CONFIG:
         {
             constexpr cl_device_fp_config fp_config =
                 CL_FP_FMA | CL_FP_ROUND_TO_NEAREST | CL_FP_INF_NAN | CL_FP_DENORM;
             return RetValue(fp_config);
         }
+        case CL_DEVICE_DOUBLE_FP_CONFIG: return RetValue((cl_device_fp_config)0);
 
         case CL_DEVICE_GLOBAL_MEM_CACHE_TYPE: return RetValue((cl_device_mem_cache_type)CL_NONE);
         case CL_DEVICE_GLOBAL_MEM_CACHE_SIZE: return RetValue((cl_ulong)0);
@@ -147,7 +150,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_GLOBAL_MEM_SIZE: return RetValue(pDevice->GetGlobalMemSize());
 
         case CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE: return RetValue((cl_ulong)(D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16));
-        case CL_DEVICE_MAX_CONSTANT_ARGS: return RetValue((cl_uint)(D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 4));
+        case CL_DEVICE_MAX_CONSTANT_ARGS: return RetValue((cl_uint)15);
 
         case CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE: return RetValue((size_t)65536);
         case CL_DEVICE_GLOBAL_VARIABLE_PREFERRED_TOTAL_SIZE: return RetValue((size_t)0);
@@ -156,7 +159,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_LOCAL_MEM_SIZE: return RetValue((cl_ulong)(D3D12_CS_TGSM_REGISTER_COUNT * sizeof(UINT)));
 
         case CL_DEVICE_ERROR_CORRECTION_SUPPORT: return RetValue((cl_bool)CL_FALSE);
-        case CL_DEVICE_PROFILING_TIMER_RESOLUTION: return RetValue((cl_bool)80);
+        case CL_DEVICE_PROFILING_TIMER_RESOLUTION: return RetValue((size_t)80);
         case CL_DEVICE_ENDIAN_LITTLE: return RetValue((cl_bool)CL_TRUE);
 
         case CL_DEVICE_AVAILABLE: return RetValue(pDevice->IsAvailable());
@@ -179,9 +182,14 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DRIVER_VERSION: return RetValue("0.0.1");
         case CL_DEVICE_PROFILE: return RetValue(pDevice->m_Parent->Profile);
         case CL_DEVICE_VERSION: return RetValue(pDevice->m_Parent->Version);
-        case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.2");
+        case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.2 ");
 
-        case CL_DEVICE_EXTENSIONS: return RetValue("");
+        case CL_DEVICE_EXTENSIONS: return RetValue("cl_khr_global_int32_base_atomics "
+                                                   "cl_khr_global_int32_extended_atomics "
+                                                   "cl_khr_local_int32_base_atomics "
+                                                   "cl_khr_local_int32_extended_atomics "
+                                                   "cl_khr_byte_addressable_store "
+        );
 
         case CL_DEVICE_PRINTF_BUFFER_SIZE: return RetValue((size_t)1024 * 1024);
         case CL_DEVICE_PREFERRED_INTEROP_USER_SYNC: return RetValue((cl_bool)CL_TRUE);
