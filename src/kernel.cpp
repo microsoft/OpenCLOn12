@@ -329,7 +329,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             }
             else
             {
-                *buffer_val = 0ull;
+                *buffer_val = ~0ull;
             }
             m_KernelArgResources[buf_id] = resource;
         }
