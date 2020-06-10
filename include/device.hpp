@@ -73,6 +73,8 @@ public:
         context.release();
     }
 
+    std::unique_ptr<D3D12TranslationLayer::PipelineState> CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc);
+
 protected:
     void ExecuteTasks(Submission& tasks);
 
@@ -95,6 +97,10 @@ protected:
     BackgroundTaskScheduler::Scheduler m_CallbackScheduler;
     BackgroundTaskScheduler::Scheduler m_CompletionScheduler;
     BackgroundTaskScheduler::Scheduler m_CompileAndLinkScheduler;
+
+    // All PSO creations need to be kicked off behind this lock,
+    // which guards the root signature cache in the immediate context
+    std::mutex m_PSOCreateLock;
 
     UINT64 m_TimestampFrequency = 0;
 };

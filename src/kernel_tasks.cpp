@@ -132,7 +132,9 @@ public:
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
-        m_Parent->GetDevice().QueueProgramOp([this, localSize, offset, numIterations]()
+        m_Parent->GetDevice().QueueProgramOp([this, localSize, offset, numIterations,
+                                             kernel = this->m_Kernel,
+                                             refThis = Task::ref_int(*this)]()
         {
             try
             {
@@ -148,15 +150,15 @@ public:
                 std::copy(std::begin(localSize), std::end(localSize), config.local_size);
                 config.args = m_ArgInfo.data();
 
-                auto spirv = m_Kernel->m_Parent->GetSpirV();
-                auto name = m_Kernel->m_pDxil->kernel->name;
+                auto spirv = kernel->m_Parent->GetSpirV();
+                auto name = kernel->m_pDxil->kernel->name;
                 unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
 
                 SignBlob(specialized->binary.data, specialized->binary.size);
 
-                auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&m_Parent->GetDevice().ImmCtx(), specialized->binary.data, specialized->binary.size, m_Kernel->m_ShaderDecls);
+                auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&m_Parent->GetDevice().ImmCtx(), specialized->binary.data, specialized->binary.size, kernel->m_ShaderDecls);
                 D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
-                auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(&m_Parent->GetDevice().ImmCtx(), Desc);
+                auto PSO = m_Parent->GetDevice().CreatePSO(Desc);
 
                 {
                     std::lock_guard lock(m_SpecializeLock);

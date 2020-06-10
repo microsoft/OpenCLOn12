@@ -452,6 +452,12 @@ void Device::Flush(TaskPoolLock const& lock)
     m_RecordingSubmission.reset(new Submission);
 }
 
+std::unique_ptr<D3D12TranslationLayer::PipelineState> Device::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
+{
+    std::lock_guard PSOCreateLock(m_PSOCreateLock);
+    return std::make_unique<D3D12TranslationLayer::PipelineState>(&ImmCtx(), Desc);
+}
+
 void Device::ExecuteTasks(Submission& tasks)
 {
     {
