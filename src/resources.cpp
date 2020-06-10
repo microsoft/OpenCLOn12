@@ -283,12 +283,15 @@ clCreateImage(cl_context              context_,
             return ReportError("Array size exceeds maximum Texture1D array dimensionality.", CL_INVALID_IMAGE_DESCRIPTOR);
         // fallthrough
     case CL_MEM_OBJECT_IMAGE1D:
-    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
         Args.m_appDesc.m_resourceDimension = D3D12_RESOURCE_DIMENSION_TEXTURE1D;
         if (image_desc->image_width > D3D12_REQ_TEXTURE1D_U_DIMENSION)
             return ReportError("Width exceeds maximum Texture1D width.", CL_INVALID_IMAGE_DESCRIPTOR);
         image_desc_copy.image_height = 0;
         image_desc_copy.image_depth = 0;
+        break;
+    case CL_MEM_OBJECT_IMAGE1D_BUFFER:
+        if (image_desc->image_width > (2 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP))
+            return ReportError("Width exceeds maximum 1D image buffer width.", CL_INVALID_IMAGE_DESCRIPTOR);
         break;
     case CL_MEM_OBJECT_IMAGE2D_ARRAY:
         if (image_desc->image_array_size > D3D12_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION)

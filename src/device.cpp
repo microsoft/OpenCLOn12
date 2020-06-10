@@ -123,7 +123,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_IMAGE3D_MAX_WIDTH: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION);
         case CL_DEVICE_IMAGE3D_MAX_HEIGHT: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION);
         case CL_DEVICE_IMAGE3D_MAX_DEPTH: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE3D_U_V_OR_W_DIMENSION);
-        case CL_DEVICE_IMAGE_MAX_BUFFER_SIZE: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE1D_U_DIMENSION);
+        case CL_DEVICE_IMAGE_MAX_BUFFER_SIZE: return ImageRetValueOrZero((size_t)(2 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP));
         case CL_DEVICE_IMAGE_MAX_ARRAY_SIZE: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION);
         case CL_DEVICE_MAX_SAMPLERS: return ImageRetValueOrZero((cl_uint)D3D12_COMMONSHADER_SAMPLER_SLOT_COUNT);
         case CL_DEVICE_IMAGE_PITCH_ALIGNMENT: return ImageRetValueOrZero((size_t)D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
