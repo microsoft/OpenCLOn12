@@ -167,7 +167,8 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_LINKER_AVAILABLE: return RetValue((cl_bool)CL_TRUE);
         case CL_DEVICE_EXECUTION_CAPABILITIES: return RetValue((cl_device_exec_capabilities)CL_EXEC_KERNEL);
 
-        case CL_DEVICE_QUEUE_ON_HOST_PROPERTIES: return RetValue((cl_command_queue_properties)CL_QUEUE_PROFILING_ENABLE);
+        case CL_DEVICE_QUEUE_ON_HOST_PROPERTIES: return RetValue(
+            (cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE));
         case CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES: return RetValue(
             (cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE));
         case CL_DEVICE_QUEUE_ON_DEVICE_PREFERRED_SIZE: return RetValue((cl_uint)(16 * 1024));
