@@ -330,7 +330,7 @@ clCreateImage(cl_context              context_,
     if (image_desc->image_type != CL_MEM_OBJECT_IMAGE1D_ARRAY &&
         image_desc->image_type != CL_MEM_OBJECT_IMAGE2D_ARRAY)
     {
-        if (image_desc->image_array_size > 0)
+        if (image_desc->image_array_size > 1)
             ReportError("image_array_size shouldn't be specified for non-array image types.", CL_SUCCESS);
         Args.m_appDesc.m_ArraySize = 1;
         image_desc_copy.image_array_size = 0;
@@ -448,7 +448,10 @@ clCreateImage(cl_context              context_,
             Args.m_desc12.MipLevels = Args.m_appDesc.m_MipLevels;
             Args.m_desc12.SampleDesc = { Args.m_appDesc.m_Samples, Args.m_appDesc.m_Quality };
             Args.m_desc12.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-            Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+            Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_NONE;
+            if (flags == 0 ||
+                (flags & (CL_MEM_READ_WRITE | CL_MEM_WRITE_ONLY)))
+                Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
             return Resource::CreateImage(context, Args, host_ptr, *image_format, *image_desc, flags);
         }
@@ -587,7 +590,7 @@ clGetSupportedImageFormats(cl_context           context_,
         // OpenCL 1.2 doesn't require a single kernel to be able to read and write images, so we can bind
         // readable images as SRVs and only require sample support, rather than typed UAV load.
         if ((flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE)) &&
-            (Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE) == D3D12_FORMAT_SUPPORT1_NONE)
+            (Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) == D3D12_FORMAT_SUPPORT1_NONE)
         {
             continue;
         }

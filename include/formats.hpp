@@ -136,7 +136,8 @@ constexpr cl_image_format GetCLImageFormatForDXGIFormat(DXGI_FORMAT fmt)
     case DXGI_FORMAT_R32G32_FLOAT: return { CL_RG, CL_FLOAT };
     case DXGI_FORMAT_R32G32_UINT: return { CL_RG, CL_UNSIGNED_INT32 };
     case DXGI_FORMAT_R32G32_SINT: return { CL_RG, CL_SIGNED_INT32 };
-    case DXGI_FORMAT_R10G10B10A2_UNORM: return { CL_RGBx, CL_UNORM_INT_101010 };
+    // This is failing a bunch of tests - see about re-enabling as a proper 1010102
+    //case DXGI_FORMAT_R10G10B10A2_UNORM: return { CL_RGBx, CL_UNORM_INT_101010 };
     case DXGI_FORMAT_R8G8B8A8_UNORM: return { CL_RGBA, CL_UNORM_INT8 };
     case DXGI_FORMAT_R8G8B8A8_UINT: return { CL_RGBA, CL_UNSIGNED_INT8 };
     case DXGI_FORMAT_R8G8B8A8_SNORM: return { CL_RGBA, CL_SNORM_INT8 };
