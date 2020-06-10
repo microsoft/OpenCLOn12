@@ -343,112 +343,44 @@ void Device::SubmitTask(Task* task, TaskPoolLock const& lock)
 
         if (task->m_TasksToWaitOn.empty())
         {
-            if (c_RecordCommandListsOnAppThreads)
-            {
-                m_TaskGraphScratch.emplace_back(task);
-                for (cl_uint i = 0; i < m_TaskGraphScratch.size(); ++i)
-                {
-                    task = m_TaskGraphScratch[i].Get();
-                    try
-                    {
-                        ReadyTask(task, lock);
-                        task->Record();
-                    }
-                    catch (...)
-                    {
-                        // Everything else is an error now.
-                        for (; i < m_TaskGraphScratch.size(); ++i)
-                        {
-                            m_TaskGraphScratch[i]->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, lock);
-                        }
-                        break;
-                    }
-                }
-            }
-            else
-            {
-                ReadyTask(task, lock);
-            }
+            ReadyTask(task, lock);
         }
     }
-
-    m_TaskGraphScratch.clear();
 }
 
 void Device::ReadyTask(Task* task, TaskPoolLock const& lock)
 {
     m_RecordingSubmission->push_back(task);
-    task->Ready(m_TaskGraphScratch, lock);
+    task->Ready(lock);
 }
 
-void Device::Flush(TaskPoolLock const& lock)
+void Device::Flush(TaskPoolLock const&)
 {
     if (m_RecordingSubmission->empty())
     {
         return;
     }
 
-    if (c_RecordCommandListsOnAppThreads)
+    struct ExecutionHandler
     {
-        m_ImmCtx->Flush(D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK);
-        for (auto &task : *m_RecordingSubmission)
+        Device& m_Device;
+        std::unique_ptr<Submission> m_Tasks;
+    };
+    std::unique_ptr<ExecutionHandler> spHandler(new ExecutionHandler{ *this, std::move(m_RecordingSubmission) });
+
+    m_CompletionScheduler.QueueTask({
+        [](void* pContext)
         {
-            task->Started(lock);
-        }
-
-        struct CompletionHandler
+            std::unique_ptr<ExecutionHandler> spHandler(static_cast<ExecutionHandler*>(pContext));
+            spHandler->m_Device.ExecuteTasks(*spHandler->m_Tasks);
+        },
+        [](void* pContext)
         {
-            Device &m_Device;
-            UINT64 m_FenceValue;
-            std::unique_ptr<Submission> m_Tasks;
-        };
-        UINT64 FenceValue = m_ImmCtx->GetCommandListID(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS) - 1;
-        std::unique_ptr<CompletionHandler> spHandler(new CompletionHandler{ *this, FenceValue, std::move(m_RecordingSubmission) });
-
-        m_CompletionScheduler.QueueTask({
-            [](void *pContext)
-            {
-                std::unique_ptr<CompletionHandler> spHandler(static_cast<CompletionHandler *>(pContext));
-                auto &CmdListManager = *spHandler->m_Device.m_ImmCtx->GetCommandListManager(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
-                CmdListManager.WaitForFenceValue(spHandler->m_FenceValue);
-
-                auto Lock = spHandler->m_Device.GetTaskPoolLock();
-                for (auto &task : *spHandler->m_Tasks)
-                {
-                    task->Complete(CL_SUCCESS, Lock);
-                }
-            },
-            [](void *pContext)
-            {
-                std::unique_ptr<CompletionHandler> spHandler(static_cast<CompletionHandler *>(pContext));
-            },
-            spHandler.get()
-        });
-        spHandler.release();
-    }
-    else
-    {
-        struct ExecutionHandler
-        {
-            Device& m_Device;
-            std::unique_ptr<Submission> m_Tasks;
-        };
-        std::unique_ptr<ExecutionHandler> spHandler(new ExecutionHandler{ *this, std::move(m_RecordingSubmission) });
-
-        m_CompletionScheduler.QueueTask({
-            [](void* pContext)
-            {
-                std::unique_ptr<ExecutionHandler> spHandler(static_cast<ExecutionHandler*>(pContext));
-                spHandler->m_Device.ExecuteTasks(*spHandler->m_Tasks);
-            },
-            [](void* pContext)
-            {
-                std::unique_ptr<ExecutionHandler> spHandler(static_cast<ExecutionHandler*>(pContext));
-            },
-            spHandler.get()
-        });
-        spHandler.release();
-    }
+            std::unique_ptr<ExecutionHandler> spHandler(static_cast<ExecutionHandler*>(pContext));
+        },
+        spHandler.get()
+    });
+    spHandler.release();
 
     m_RecordingSubmission.reset(new Submission);
 }

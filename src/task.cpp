@@ -553,25 +553,9 @@ void Task::Submit()
     FireNotifications();
 }
 
-void Task::Ready(std::vector<ref_ptr_int> &OtherReadyTasks, TaskPoolLock const&)
+void Task::Ready(TaskPoolLock const&)
 {
     m_State = State::Ready;
-
-    if (c_RecordCommandListsOnAppThreads)
-    {
-        for (auto& task : m_TasksWaitingOnThis)
-        {
-            auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
-                [this](ref_ptr_int const& p) { return p.Get() == this; });
-            assert(newEnd != task->m_TasksToWaitOn.end());
-            task->m_TasksToWaitOn.erase(newEnd, task->m_TasksToWaitOn.end());
-
-            if (task->m_TasksToWaitOn.empty())
-            {
-                OtherReadyTasks.emplace_back(task.Get());
-            }
-        }
-    }
 }
 
 void Task::Started(TaskPoolLock const &)
@@ -622,7 +606,7 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
             }
         }
     }
-    else if (!c_RecordCommandListsOnAppThreads)
+    else
     {
         for (auto& task : m_TasksWaitingOnThis)
         {

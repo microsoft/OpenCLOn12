@@ -6,8 +6,6 @@
 #include <mutex>
 #include <future>
 
-constexpr bool c_RecordCommandListsOnAppThreads = false;
-
 // A task is an encapsulation of something that can be submitted to a command queue
 // and/or something that can be waited on (i.e. cl_event).
 //
@@ -55,23 +53,7 @@ constexpr bool c_RecordCommandListsOnAppThreads = false;
 // --- Note that the command queue needs to keep track of what tasks it has submitted but are not yet
 //     complete, for the purposes of implementing 'finish', markers, and barriers, as well as specifically
 //     the last task that was submitted for in-order queues.
-// - Tasks that are submitted with no dependencies are considered 'ready'.
-//
-// - If c_RecordCommandListsOnAppThreads, ready tasks are recorded into a command list during Flush.
-// --- When a task is recorded, all tasks dependent on it are notified, and a set of additional tasks may also become 'ready.'
-// --- If profiling is enabled, these tasks are bracketed with timestamps.
-// --- The act of 'recording' a task is done via virtual function, delegating to the specific type of task.
-// --- Dependencies are inspected to determine if barriers are needed.
-// --- This process repeats until all tasks that can be are recorded, and then the command list is submitted.
-//     All tasks associated with that given command list enter the 'running' state.
-// --- Note: as far as I can tell this is technically in violation of the OpenCL spec: tasks should not be considered
-//     'ready' until all dependent tasks are 'complete.' In this implementation, you can have a task that is ready
-//     when its dependencies are also only ready. This seems like a worthy improvement in throughput.
-// --- When the command list completes, a worker thread is woken up. This worker is responsible for marking all
-//     tasks from the command list as 'complete.' It's also responsible for copying timestamp information out of
-//     query buffers into the corresponding tasks.
-//
-// - If not c_RecordCommandListsOnAppThreads, ready tasks are added to a list.
+// - Tasks that are submitted with no dependencies are considered 'ready'. Ready tasks are added to a list.
 // --- At the end of the flush operation, a work item is created for a worker thread to execute all ready tasks.
 // --- After recording all ready tasks into a command list, the command list is submitted, and the thread waits for it to complete.
 // --- Then, all tasks that were part of that command list are marked complete. This enables new tasks to be marked ready.
@@ -122,7 +104,7 @@ public:
 
 protected:
     void Submit();
-    void Ready(std::vector<ref_ptr_int>& OtherReadyTasks, TaskPoolLock const&);
+    void Ready(TaskPoolLock const&);
     void Started(TaskPoolLock const&);
     void Complete(cl_int error, TaskPoolLock const&);
 

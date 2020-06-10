@@ -90,7 +90,6 @@ protected:
     unsigned m_ContextCount = 0;
 
     std::recursive_mutex m_TaskLock;
-    std::vector<::ref_ptr_int<Task>> m_TaskGraphScratch;
 
     std::unique_ptr<Submission> m_RecordingSubmission;
 
