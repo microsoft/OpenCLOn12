@@ -104,7 +104,7 @@ class MemWriteFillTask : public Task
 public:
     struct FillData
     {
-        char Pattern[16];
+        char Pattern[128];
         cl_uint PatternSize;
     };
     struct WriteData
@@ -521,9 +521,12 @@ clEnqueueFillBuffer(cl_command_queue   command_queue,
     case 4:
     case 8:
     case 16:
+    case 32:
+    case 64:
+    case 128:
         break;
     default:
-        return ReportError("Invalid pattern_size. Valid values are {1, 2, 4, 8, 16} for this device.", CL_INVALID_VALUE);
+        return ReportError("Invalid pattern_size. Valid values are {1, 2, 4, 8, 16, 32, 64, 128} for this device.", CL_INVALID_VALUE);
     }
 
     if (!pattern)
@@ -542,7 +545,7 @@ clEnqueueFillBuffer(cl_command_queue   command_queue,
     }
 
     MemWriteFillTask::Args CmdArgs = {};
-    CmdArgs.DstX = (cl_uint)offset;
+    CmdArgs.DstX = (cl_uint)(offset + resource.m_Offset);
     CmdArgs.Width = (cl_uint)size;
     CmdArgs.Height = 1;
     CmdArgs.Depth = 1;
@@ -550,6 +553,7 @@ clEnqueueFillBuffer(cl_command_queue   command_queue,
 
     MemWriteFillTask::FillData FillData;
     memcpy(FillData.Pattern, pattern, pattern_size);
+    FillData.PatternSize = (cl_uint)pattern_size;
     CmdArgs.Data = FillData;
 
     try
@@ -2540,7 +2544,7 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
     }
 
     MapTask::Args CmdArgs = {};
-    CmdArgs.SrcX = (cl_uint)offset;
+    CmdArgs.SrcX = (cl_uint)(offset + resource.m_Offset);
     CmdArgs.Width = (cl_uint)size;
     CmdArgs.Height = 1;
     CmdArgs.Depth = 1;
@@ -2817,7 +2821,7 @@ clEnqueueUnmapMemObject(cl_command_queue command_queue,
 void MemReadTask::RecordViaCopy()
 {
     MapTask::Args MapArgs = {};
-    MapArgs.SrcX = m_Args.SrcX;
+    MapArgs.SrcX = m_Args.SrcX + (cl_uint)m_Source->m_Offset;
     MapArgs.SrcY = m_Args.SrcY;
     MapArgs.SrcZ = m_Args.SrcZ;
     MapArgs.Width = m_Args.Width;
@@ -2828,6 +2832,7 @@ void MemReadTask::RecordViaCopy()
     if (m_CommandType == CL_COMMAND_READ_BUFFER_RECT)
     {
         MapArgs = {};
+        MapArgs.SrcX = (cl_uint)m_Source->m_Offset;
         MapArgs.Width = (cl_uint)m_Source->m_Desc.image_width;
         MapArgs.Height = 1;
         MapArgs.Depth = 1;
