@@ -812,13 +812,13 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
 
 void Program::BuildImpl(BuildArgs const& Args)
 {
+    auto& Compiler = g_Platform->GetCompiler();
+    auto Context = g_Platform->GetCompilerContext();
+    auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
+    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
     {
-        auto& Compiler = g_Platform->GetCompiler();
-        auto Context = g_Platform->GetCompilerContext();
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
-        auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
-        auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
         clc_compile_args args = {};
 
         std::vector<const char*> raw_args;
@@ -833,6 +833,18 @@ void Program::BuildImpl(BuildArgs const& Args)
 
         unique_spirv compiledObject(compile(Context, &args, nullptr), free);
         const clc_object* rawCompiledObject = compiledObject.get();
+
+        clc_linker_args link_args = {};
+        link_args.create_library = false;
+        link_args.in_objs = &rawCompiledObject;
+        link_args.num_in_objs = 1;
+        unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
+        m_OwnedBinary = std::move(object);
+    }
+    else
+    {
+        unique_spirv loadedObject = std::move(m_OwnedBinary);
+        const clc_object* rawCompiledObject = loadedObject.get();
 
         clc_linker_args link_args = {};
         link_args.create_library = false;
