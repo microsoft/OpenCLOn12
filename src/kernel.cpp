@@ -251,6 +251,21 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
     return decls;
 }
 
+static cl_addressing_mode CLAddressingModeFromSpirv(unsigned addressing_mode)
+{
+    return addressing_mode + CL_ADDRESS_NONE;
+}
+
+static unsigned SpirvAddressingModeFromCL(cl_addressing_mode mode)
+{
+    return mode - CL_ADDRESS_NONE;
+}
+
+static cl_filter_mode CLFilterModeFromSpirv(unsigned filter_mode)
+{
+    return filter_mode + CL_FILTER_NEAREST;
+}
+
 Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     : CLChildBase(Parent)
     , m_pDxil(pDxil)
@@ -267,7 +282,12 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
     for (cl_uint i = 0; i < m_pDxil->metadata.num_const_samplers; ++i)
     {
         auto& samplerMeta = m_pDxil->metadata.const_samplers[i];
-        Sampler::Desc desc = { samplerMeta.normalized_coords, samplerMeta.addressing_mode, samplerMeta.filter_mode };
+        Sampler::Desc desc =
+        {
+            samplerMeta.normalized_coords,
+            CLAddressingModeFromSpirv(samplerMeta.addressing_mode),
+            CLFilterModeFromSpirv(samplerMeta.filter_mode)
+        };
         m_ConstSamplers[i] = new Sampler(m_Parent->GetContext(), desc);
         m_Samplers[samplerMeta.sampler_id] = m_ConstSamplers[i].Get();
     }
@@ -400,6 +420,8 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             Sampler* sampler = static_cast<Sampler*>(samp);
             m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = sampler;
             m_ArgMetadataToCompiler[arg_index].sampler.normalized_coords = sampler ? sampler->m_Desc.NormalizedCoords : 1u;
+            m_ArgMetadataToCompiler[arg_index].sampler.addressing_mode = sampler ? SpirvAddressingModeFromCL(sampler->m_Desc.AddressingMode) : 0u;
+            m_ArgMetadataToCompiler[arg_index].sampler.linear_filtering = sampler ? (sampler->m_Desc.FilterMode == CL_FILTER_LINEAR) : 0u;
         }
         else
         {

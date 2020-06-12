@@ -201,6 +201,8 @@ struct clc_runtime_arg_info {
       } localptr;
       struct {
          unsigned normalized_coords;
+         unsigned addressing_mode; /* See SPIR-V spec for value meanings */
+         unsigned linear_filtering;
       } sampler;
    };
 };
