@@ -178,7 +178,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
         subresources.m_BeginArray = (UINT16)(m_Args.FirstArraySlice + i);
-        subresources.m_EndArray = (UINT16)(m_Args.FirstArraySlice + 1);
+        subresources.m_EndArray = subresources.m_BeginArray + 1;
 
         for (UINT z = 0; z < NumSliceCopies; ++z)
         {
@@ -638,7 +638,7 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
         return ReportError("input_row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
     }
 
-    size_t ReqSlicePitch = input_row_pitch * region[1];
+    size_t ReqSlicePitch = input_row_pitch * CmdArgs.Height;
     if (input_slice_pitch == 0)
     {
         input_slice_pitch = ReqSlicePitch;
@@ -901,6 +901,7 @@ private:
 
 void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, size_t SrcSlicePitch)
 {
+    const char *pSrc = reinterpret_cast<char*>(pData) + Subresource * SrcSlicePitch;
     const cl_uint FormatBytes = GetFormatSizeBytes(m_Source->m_Format);
     if (m_Args.DstZ != 0 || m_Args.DstY != 0 || m_Args.DstX != 0)
     {
@@ -912,8 +913,7 @@ void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, siz
                     (z + Subresource + m_Args.DstZ) * m_Args.DstSlicePitch +
                     (y + m_Args.DstY) * m_Args.DstRowPitch +
                     m_Args.DstX * FormatBytes;
-                const char* pSrc = reinterpret_cast<const char*>(pData) +
-                    (z + m_Args.SrcZ) * SrcSlicePitch +
+                pSrc += (z + m_Args.SrcZ) * SrcSlicePitch +
                     (y + m_Args.SrcY) * SrcRowPitch +
                     m_Args.SrcX * FormatBytes;
                 memcpy(pDest, pSrc, m_Args.Width * FormatBytes);
@@ -925,7 +925,7 @@ void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, siz
         char* pDest = reinterpret_cast<char*>(m_Args.pData) +
             (Subresource + m_Args.DstZ) * m_Args.DstSlicePitch;
         D3D12_MEMCPY_DEST Dest = { pDest, m_Args.DstRowPitch, m_Args.DstSlicePitch };
-        D3D12_SUBRESOURCE_DATA Src = { pData, (LONG_PTR)SrcRowPitch, (LONG_PTR)SrcSlicePitch };
+        D3D12_SUBRESOURCE_DATA Src = { pSrc, (LONG_PTR)SrcRowPitch, (LONG_PTR)SrcSlicePitch };
         MemcpySubresource(&Dest, &Src, FormatBytes * m_Args.Width, m_Args.Height, m_Args.Depth);
     }
 }
@@ -1278,7 +1278,7 @@ clEnqueueReadImage(cl_command_queue     command_queue,
         return ReportError("row_pitch must be 0 or at least large enough for a single row.", CL_INVALID_VALUE);
     }
 
-    size_t ReqSlicePitch = row_pitch * region[1];
+    size_t ReqSlicePitch = row_pitch * CmdArgs.Height;
     if (slice_pitch == 0)
     {
         slice_pitch = ReqSlicePitch;
@@ -2852,7 +2852,10 @@ void MemReadTask::RecordViaCopy()
         MemReadArgs.SrcBufferSlicePitch = (cl_uint)MapCopy.GetSlicePitch();
     }
     MemReadTask Read(m_Parent.get(), *m_Source.Get(), m_CommandType, m_CommandQueue.Get(), MemReadArgs);
-    Read.CopyBits(MapCopy.GetPointer(), 0, MemReadArgs.SrcBufferRowPitch, MemReadArgs.SrcBufferSlicePitch);
+    for (cl_uint i = 0; i < MemReadArgs.NumArraySlices; ++i)
+    {
+        Read.CopyBits(MapCopy.GetPointer(), i + MemReadArgs.FirstArraySlice, MemReadArgs.SrcBufferRowPitch, MemReadArgs.SrcBufferSlicePitch);
+    }
 
     static_cast<MapTask&>(MapCopy).Unmap(false);
 }
