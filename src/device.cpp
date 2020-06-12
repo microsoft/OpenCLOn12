@@ -198,7 +198,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_PARENT_DEVICE: return RetValue((cl_device_id)nullptr);
         case CL_DEVICE_PARTITION_MAX_SUB_DEVICES: return RetValue((cl_uint)0);
         case CL_DEVICE_PARTITION_PROPERTIES: return RetValue((cl_uint)0);
-        case CL_DEVICE_PARTITION_AFFINITY_DOMAIN: return RetValue((cl_uint)0);
+        case CL_DEVICE_PARTITION_AFFINITY_DOMAIN: return RetValue((cl_device_affinity_domain)0);
         case CL_DEVICE_PARTITION_TYPE: return CL_INVALID_VALUE;
 
         case CL_DEVICE_REFERENCE_COUNT: return RetValue((cl_uint)1);
