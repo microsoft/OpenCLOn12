@@ -525,7 +525,7 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
     {
         Args.Common.pfn_notify = pfn_notify;
         Args.Common.CallbackUserData = user_data;
-        GetDevice().QueueProgramOp([this, Args]()
+        GetDevice().QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
             {
                 this->BuildImpl(Args);
             });
@@ -592,7 +592,7 @@ cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl
     {
         Args.Common.pfn_notify = pfn_notify;
         Args.Common.CallbackUserData = user_data;
-        GetDevice().QueueProgramOp([this, Args]()
+        GetDevice().QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
             {
                 this->CompileImpl(Args);
             });
@@ -656,7 +656,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     {
         Args.Common.pfn_notify = pfn_notify;
         Args.Common.CallbackUserData = user_data;
-        GetDevice().QueueProgramOp([this, Args]()
+        GetDevice().QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
             {
                 this->LinkImpl(Args);
             });
