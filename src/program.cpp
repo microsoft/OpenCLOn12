@@ -712,6 +712,7 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
                     optionsStruct.Args.back() == "-I"sv))
             {
                 optionsStruct.Args.push_back(curOption);
+                return CL_SUCCESS;
             }
             else
             {
@@ -753,7 +754,8 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
             curOption == "-cl-no-signed-zeros"sv ||
             curOption == "-cl-unsafe-math-optimizations"sv ||
             curOption == "-cl-finite-math-only"sv ||
-            curOption == "-cl-fast-relaxed-math"sv)
+            curOption == "-cl-fast-relaxed-math"sv ||
+            curOption == "-cl-mad-enable"sv)
         {
             optionsStruct.Args.push_back(curOption);
             return CL_SUCCESS;
@@ -773,6 +775,7 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
             if (!inQuotes)
             {
                 cl_int retVal = ValidateAndPushArg();
+                curOption.clear();
                 if (retVal != CL_SUCCESS)
                 {
                     return retVal;
