@@ -297,7 +297,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     }
     else
     {
-        cl_uint dimension = work_dim;
+        cl_uint dimension = work_dim - 1;
         while ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
         {
             // Find a dimension to shorten
@@ -306,7 +306,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
             {
                 LocalSizes[dimension] /= 2;
             }
-            dimension = (dimension == 0) ? work_dim : dimension - 1;
+            dimension = (dimension == 0) ? work_dim - 1 : dimension - 1;
         }
     }
 
