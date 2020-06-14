@@ -227,9 +227,14 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
         m_InlineConsts.emplace_back(resource, adopt_ref{});
         m_UAVs[constMeta.uav_id] = &resource->GetUAV();
     }
+
+    m_Parent->KernelCreated();
 }
 
-Kernel::~Kernel() = default;
+Kernel::~Kernel()
+{
+    m_Parent->KernelFreed();
+}
 
 cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
 {

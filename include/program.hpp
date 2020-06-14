@@ -39,10 +39,14 @@ public:
     friend cl_kernel CL_API_CALL clCreateKernel(cl_program, const char*, cl_int*);
     friend cl_int CL_API_CALL clCreateKernelsInProgram(cl_program, cl_uint, cl_kernel*, cl_uint*);
 
+    void KernelCreated();
+    void KernelFreed();
+
 private:
     mutable std::recursive_mutex m_Lock;
     unique_spirv m_OwnedBinary{ nullptr, nullptr };
     cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
+    uint32_t m_NumLiveKernels = 0;
 
     cl_build_status m_BuildStatus = CL_BUILD_NONE;
     std::string m_BuildLog;

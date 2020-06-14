@@ -507,14 +507,13 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
     {
         // Ensure that we can build
         std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus != CL_BUILD_NONE)
+        if (m_BuildStatus == CL_BUILD_IN_PROGRESS)
         {
-            return ReportError("Cannot build program: program already has been built.", CL_INVALID_OPERATION);
+            return ReportError("Cannot compile program: program currently being compiled.", CL_INVALID_OPERATION);
         }
-        if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE &&
-            m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        if (m_NumLiveKernels > 0)
         {
-            return ReportError("Cannot build program: program contains non-executable binary.", CL_INVALID_OPERATION);
+            return ReportError("Cannot compile program: program has live kernels.", CL_INVALID_OPERATION);
         }
 
         // Update build status to indicate build is starting so nobody else can start a build
@@ -548,6 +547,10 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
 cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
+    if (m_Source.empty())
+    {
+        return ReportError("Program does not contain source.", CL_INVALID_OPERATION);
+    }
 
     // Parse options
     CompileArgs Args = {};
@@ -574,14 +577,13 @@ cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl
     {
         // Ensure that we can compile
         std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus != CL_BUILD_NONE)
+        if (m_BuildStatus == CL_BUILD_IN_PROGRESS)
         {
-            // TODO: Probably need to allow recompiling with different args as long as there's no kernels or outstanding links
-            return ReportError("Cannot compile program: program already has been built.", CL_INVALID_OPERATION);
+            return ReportError("Cannot compile program: program currently being compiled.", CL_INVALID_OPERATION);
         }
-        if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
+        if (m_NumLiveKernels > 0)
         {
-            return ReportError("Program already contains a binary.", CL_INVALID_OPERATION);
+            return ReportError("Cannot compile program: program has live kernels.", CL_INVALID_OPERATION);
         }
 
         // Update build status to indicate compile is starting so nobody else can start a build
@@ -683,6 +685,18 @@ const clc_dxil_object* Program::GetKernel(const char* name) const
     if (iter == m_Kernels.end())
         return nullptr;
     return iter->second.get();
+}
+
+void Program::KernelCreated()
+{
+    std::lock_guard lock(m_Lock);
+    ++m_NumLiveKernels;
+}
+
+void Program::KernelFreed()
+{
+    std::lock_guard lock(m_Lock);
+    --m_NumLiveKernels;
 }
 
 cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions)
@@ -820,7 +834,7 @@ void Program::BuildImpl(BuildArgs const& Args)
     auto Context = g_Platform->GetCompilerContext();
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+    if (!m_Source.empty())
     {
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
         clc_compile_args args = {};
