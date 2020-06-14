@@ -138,7 +138,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_SINGLE_FP_CONFIG: // Fallthrough
         {
             constexpr cl_device_fp_config fp_config =
-                CL_FP_FMA | CL_FP_ROUND_TO_NEAREST | CL_FP_INF_NAN | CL_FP_DENORM;
+                CL_FP_FMA | CL_FP_ROUND_TO_NEAREST | CL_FP_INF_NAN;
             return RetValue(fp_config);
         }
         case CL_DEVICE_DOUBLE_FP_CONFIG: return RetValue((cl_device_fp_config)0);
