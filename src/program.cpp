@@ -888,7 +888,14 @@ void Program::CompileImpl(CompileArgs const& Args)
     {
         raw_args.push_back(def.c_str());
     }
+    std::vector<clc_named_value> headers;
+    for (auto& h : Args.Headers)
+    {
+        headers.push_back(clc_named_value{ h.first.c_str(), h.second->m_Source.c_str() });
+    }
 
+    args.headers = headers.data();
+    args.num_headers = (unsigned)headers.size();
     args.args = raw_args.data();
     args.num_args = (unsigned)raw_args.size();
     args.source = { "source.cl", m_Source.c_str() };
