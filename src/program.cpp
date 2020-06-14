@@ -839,7 +839,7 @@ void Program::BuildImpl(BuildArgs const& Args)
         const clc_object* rawCompiledObject = compiledObject.get();
 
         clc_linker_args link_args = {};
-        link_args.create_library = false;
+        link_args.create_library = Args.Common.CreateLibrary;
         link_args.in_objs = &rawCompiledObject;
         link_args.num_in_objs = 1;
         unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
@@ -851,7 +851,7 @@ void Program::BuildImpl(BuildArgs const& Args)
         const clc_object* rawCompiledObject = loadedObject.get();
 
         clc_linker_args link_args = {};
-        link_args.create_library = false;
+        link_args.create_library = Args.Common.CreateLibrary;
         link_args.in_objs = &rawCompiledObject;
         link_args.num_in_objs = 1;
         unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
