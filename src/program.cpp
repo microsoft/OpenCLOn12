@@ -324,9 +324,10 @@ clLinkProgram(cl_context           context_,
     {
         ref_ptr NewProgram(new Program(context), adopt_ref{});
         cl_int LinkStatus = NewProgram->Link(options, num_input_programs, input_programs, pfn_notify, user_data);
-        if (!LinkStatus)
+        if (LinkStatus != CL_SUCCESS)
         {
             NewProgram.Release();
+            return ReportError("Linking failed.", CL_LINK_PROGRAM_FAILURE);
         }
         return NewProgram.Detach();
     }
