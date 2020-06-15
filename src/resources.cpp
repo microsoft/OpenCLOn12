@@ -449,7 +449,7 @@ clCreateImage(cl_context              context_,
             Args.m_desc12.SampleDesc = { Args.m_appDesc.m_Samples, Args.m_appDesc.m_Quality };
             Args.m_desc12.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
             Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_NONE;
-            if (flags == 0 ||
+            if ((flags & DeviceReadWriteFlagsMask) == 0 ||
                 (flags & (CL_MEM_READ_WRITE | CL_MEM_WRITE_ONLY)))
                 Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
