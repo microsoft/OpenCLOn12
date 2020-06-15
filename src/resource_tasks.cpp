@@ -1630,12 +1630,14 @@ class CopyBufferRectTask : public Task
 public:
     struct Args
     {
+        cl_uint DstOffset;
         cl_uint DstX;
         cl_uint DstY;
         cl_uint DstZ;
         cl_uint Width;
         cl_uint Height;
         cl_uint Depth;
+        cl_uint SrcOffset;
         cl_uint SrcX;
         cl_uint SrcY;
         cl_uint SrcZ;
@@ -1715,7 +1717,7 @@ void CopyBufferRectTask::RecordImpl()
             {
                 D3D12_BOX SrcBox =
                 {
-                    (UINT)(m_Source->m_Offset +
+                    (UINT)(m_Source->m_Offset + m_Args.SrcOffset +
                         (z + m_Args.SrcZ) * m_Args.SrcBufferSlicePitch +
                         (y + m_Args.SrcY) * m_Args.SrcBufferRowPitch +
                         m_Args.SrcX),
@@ -1723,7 +1725,7 @@ void CopyBufferRectTask::RecordImpl()
                 };
                 SrcBox.right = SrcBox.left + m_Args.Width;
                 UINT DstOffset =
-                    (UINT)(m_Dest->m_Offset +
+                    (UINT)(m_Dest->m_Offset + m_Args.DstOffset +
                     (z + m_Args.DstZ) * m_Args.DstBufferSlicePitch +
                     (y + m_Args.DstY) * m_Args.DstBufferRowPitch +
                     m_Args.DstX);
@@ -1966,22 +1968,39 @@ public:
         , m_Dest(&Dest)
         , m_Args(args)
     {
+        D3D12_RESOURCE_DESC ImageDesc = {};
+        auto& image = m_Source->m_Desc.image_type == CL_IMAGE_BUFFER ? *m_Dest.Get() : *m_Source.Get();
+        ImageDesc.Dimension = image.GetUnderlyingResource()->AppDesc()->ResourceDimension();
+        ImageDesc.SampleDesc.Count = 1;
+        ImageDesc.Width = m_Args.Width;
+        ImageDesc.Height = m_Args.Height;
+        ImageDesc.DepthOrArraySize = max((cl_ushort)m_Args.Depth, m_Args.NumArraySlices);
+        ImageDesc.MipLevels = 1;
+        ImageDesc.Format = image.GetUnderlyingResource()->AppDesc()->Format();
+        UINT64 RowPitch, TotalSize;
+        m_Parent->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, m_Args.FirstImageArraySlice, m_Args.NumArraySlices, 0, nullptr, nullptr, &RowPitch, &TotalSize);
+        m_Parent->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, 0, 1, 0, &m_BufferFootprint, nullptr, nullptr, nullptr);
+        assert(m_Args.BufferPitch == RowPitch);
+        if (m_Args.BufferPitch != m_BufferFootprint.Footprint.RowPitch ||
+            (m_Args.NumArraySlices > 1 &&
+             (m_Args.BufferPitch * m_Args.Height) % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0))
+        {
+            m_Temp.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), 0, TotalSize, nullptr, nullptr)));
+        }
     }
 
 private:
     Resource::ref_ptr_int m_Source;
     Resource::ref_ptr_int m_Dest;
+    Resource::ref_ptr m_Temp;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_BufferFootprint;
     const Args m_Args;
 
-    void FillBufferDesc(D3D12_TEXTURE_COPY_LOCATION& Buffer, size_t BufferOffset, Resource* pImage)
+    void FillBufferDesc(D3D12_TEXTURE_COPY_LOCATION& Buffer, size_t BufferOffset)
     {
         Buffer.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        Buffer.PlacedFootprint = m_BufferFootprint;
         Buffer.PlacedFootprint.Offset = BufferOffset;
-        Buffer.PlacedFootprint.Footprint.Width = m_Args.Width;
-        Buffer.PlacedFootprint.Footprint.Height = m_Args.Height;
-        Buffer.PlacedFootprint.Footprint.Depth = m_Args.Depth;
-        Buffer.PlacedFootprint.Footprint.RowPitch = m_Args.BufferPitch;
-        Buffer.PlacedFootprint.Footprint.Format = pImage->GetUnderlyingResource()->AppDesc()->Format();
     }
     void MoveToNextArraySlice(D3D12_TEXTURE_COPY_LOCATION& Desc)
     {
@@ -1998,18 +2017,40 @@ private:
     }
     void RecordImpl() final
     {
+        D3D12TranslationLayer::Resource *UnderlyingSrc = m_Source->GetUnderlyingResource(),
+            *UnderlyingDest = m_Dest->GetUnderlyingResource();
+        if (m_Temp.Get() && m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+        {
+            CopyBufferRectTask::Args CopyRectArgs = {};
+            CopyRectArgs.SrcOffset = (cl_uint)m_Args.BufferOffset;
+            CopyRectArgs.SrcBufferRowPitch = m_Args.BufferPitch;
+            CopyRectArgs.SrcBufferSlicePitch = m_Args.BufferPitch * m_Args.Height;
+            CopyRectArgs.Width = m_Args.Width;
+            CopyRectArgs.Height = m_Args.Height;
+            CopyRectArgs.Depth = m_Args.Depth;
+            CopyRectArgs.DstBufferRowPitch = m_BufferFootprint.Footprint.RowPitch;
+            CopyRectArgs.DstBufferSlicePitch = m_BufferFootprint.Footprint.RowPitch * m_Args.Height;
+            CopyBufferRectTask(m_Parent.get(), *m_Source.Get(), *m_Temp.Get(), m_CommandQueue.Get(), CopyRectArgs).Record();
+
+            UnderlyingSrc = m_Temp->GetUnderlyingResource();
+        }
+        else if (m_Temp.Get())
+        {
+            UnderlyingDest = m_Temp->GetUnderlyingResource();
+        }
+
         D3D12_TEXTURE_COPY_LOCATION Src, Dest;
         D3D12TranslationLayer::CViewSubresourceSubset SrcSubresources, DestSubresources;
         UINT DstX = 0, DstY = 0, DstZ = 0;
         D3D12_BOX SrcBox;
         if (m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
-            FillBufferDesc(Src, m_Source->m_Offset, m_Dest.Get());
-            Src.pResource = m_Source->GetUnderlyingResource()->GetUnderlyingResource();
+            FillBufferDesc(Src, m_Temp.Get() ? 0 : m_Source->m_Offset);
+            Src.pResource = UnderlyingSrc->GetUnderlyingResource();
             SrcSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
             SrcBox = { 0, 0, 0, m_Args.Width, m_Args.Height, m_Args.Depth };
 
-            Dest = CD3DX12_TEXTURE_COPY_LOCATION(m_Dest->GetUnderlyingResource()->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
+            Dest = CD3DX12_TEXTURE_COPY_LOCATION(UnderlyingDest->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
             DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(
                 D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, 0, m_Args.FirstImageArraySlice, 0), 1, (UINT16)m_Dest->m_Desc.image_array_size, 1);
             DstX = m_Args.ImageX;
@@ -2018,7 +2059,7 @@ private:
         }
         else
         {
-            Src = CD3DX12_TEXTURE_COPY_LOCATION(m_Source->GetUnderlyingResource()->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
+            Src = CD3DX12_TEXTURE_COPY_LOCATION(UnderlyingSrc->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
             SrcSubresources = D3D12TranslationLayer::CViewSubresourceSubset(
                 D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, 0, m_Args.FirstImageArraySlice, 0), 1, (UINT16)m_Source->m_Desc.image_array_size, 1);
             SrcBox =
@@ -2031,23 +2072,38 @@ private:
                 m_Args.ImageZ + m_Args.Depth
             };
 
-            FillBufferDesc(Dest, m_Dest->m_Offset, m_Source.Get());
-            Dest.pResource = m_Dest->GetUnderlyingResource()->GetUnderlyingResource();
+            FillBufferDesc(Dest, m_Temp.Get() ? 0 : m_Dest->m_Offset);
+            Dest.pResource = UnderlyingDest->GetUnderlyingResource();
             DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
         }
 
         auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
-        ImmCtx.GetResourceStateManager().TransitionSubresources(m_Source->GetUnderlyingResource(), SrcSubresources, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        ImmCtx.GetResourceStateManager().TransitionSubresources(m_Dest->GetUnderlyingResource(), DestSubresources, D3D12_RESOURCE_STATE_COPY_DEST);
+        ImmCtx.GetResourceStateManager().TransitionSubresources(UnderlyingSrc, SrcSubresources, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        ImmCtx.GetResourceStateManager().TransitionSubresources(UnderlyingDest, DestSubresources, D3D12_RESOURCE_STATE_COPY_DEST);
+        ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
         for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
         {
             ImmCtx.GetGraphicsCommandList()->CopyTextureRegion(&Dest, DstX, DstY, DstZ, &Src, &SrcBox);
             MoveToNextArraySlice(Src);
             MoveToNextArraySlice(Dest);
         }
-        ImmCtx.PostCopy(m_Source->GetUnderlyingResource(), SrcSubresources.begin().StartSubresource(),
-                        m_Dest->GetUnderlyingResource(), DestSubresources.begin().StartSubresource(),
+        ImmCtx.PostCopy(UnderlyingSrc, SrcSubresources.begin().StartSubresource(),
+                        UnderlyingDest, DestSubresources.begin().StartSubresource(),
                         m_Args.NumArraySlices);
+
+        if (m_Temp.Get() && m_Source->m_Desc.image_type != CL_MEM_OBJECT_BUFFER)
+        {
+            CopyBufferRectTask::Args CopyRectArgs = {};
+            CopyRectArgs.DstOffset = (cl_uint)m_Args.BufferOffset;
+            CopyRectArgs.DstBufferRowPitch = m_Args.BufferPitch;
+            CopyRectArgs.DstBufferSlicePitch = m_Args.BufferPitch * m_Args.Height;
+            CopyRectArgs.Width = m_Args.Width;
+            CopyRectArgs.Height = m_Args.Height;
+            CopyRectArgs.Depth = m_Args.Depth;
+            CopyRectArgs.SrcBufferRowPitch = m_BufferFootprint.Footprint.RowPitch;
+            CopyRectArgs.SrcBufferSlicePitch = m_BufferFootprint.Footprint.RowPitch * m_Args.Height;
+            CopyBufferRectTask(m_Parent.get(), *m_Temp.Get(), *m_Dest.Get(), m_CommandQueue.Get(), CopyRectArgs).Record();
+        }
     }
     void OnComplete() final
     {
@@ -2110,18 +2166,9 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
 
     cl_uint elementSize = GetFormatSizeBytes(image.m_Format);
     size_t rowPitch = elementSize * CmdArgs.Width;
-    if (rowPitch % D3D12_TEXTURE_DATA_PITCH_ALIGNMENT != 0)
-    {
-        return ReportError("Cannot copy between buffers and images with less than 256-byte alignment.", CL_INVALID_IMAGE_SIZE);
-    }
     CmdArgs.BufferPitch = (cl_uint)rowPitch;
 
     size_t slicePitch = elementSize * CmdArgs.Height;
-    if (CmdArgs.NumArraySlices > 1 &&
-        slicePitch % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0)
-    {
-        return ReportError("Cannot copy between buffers and image arrays with less than 512-byte alignment per array element.", CL_INVALID_IMAGE_SIZE);
-    }
 
     size_t bufferSize = slicePitch * CmdArgs.Depth * CmdArgs.NumArraySlices;
     if (dst_offset > buffer.m_Desc.image_width ||
@@ -2205,18 +2252,9 @@ clEnqueueCopyBufferToImage(cl_command_queue command_queue,
 
     cl_uint elementSize = GetFormatSizeBytes(image.m_Format);
     size_t rowPitch = elementSize * CmdArgs.Width;
-    if (rowPitch % D3D12_TEXTURE_DATA_PITCH_ALIGNMENT != 0)
-    {
-        return ReportError("Cannot copy between buffers and images with less than 256-byte alignment.", CL_INVALID_IMAGE_SIZE);
-    }
     CmdArgs.BufferPitch = (cl_uint)rowPitch;
 
     size_t slicePitch = elementSize * CmdArgs.Height;
-    if (CmdArgs.NumArraySlices > 1 &&
-        slicePitch % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0)
-    {
-        return ReportError("Cannot copy between buffers and image arrays with less than 512-byte alignment per array element.", CL_INVALID_IMAGE_SIZE);
-    }
 
     size_t bufferSize = slicePitch * CmdArgs.Depth * CmdArgs.NumArraySlices;
     if (src_offset > buffer.m_Desc.image_width ||
