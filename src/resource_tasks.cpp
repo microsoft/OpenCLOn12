@@ -539,11 +539,6 @@ clEnqueueFillBuffer(cl_command_queue   command_queue,
         return ReportError("offset and size must be a multiple of pattern_size.", CL_INVALID_VALUE);
     }
 
-    if (resource.m_Flags & (CL_MEM_HOST_READ_ONLY | CL_MEM_HOST_NO_ACCESS))
-    {
-        return ReportError("Buffer is not writable from the host.", CL_INVALID_OPERATION);
-    }
-
     MemWriteFillTask::Args CmdArgs = {};
     CmdArgs.DstX = (cl_uint)(offset + resource.m_Offset);
     CmdArgs.Width = (cl_uint)size;
@@ -808,11 +803,6 @@ clEnqueueFillImage(cl_command_queue   command_queue,
         origin[0] + region[0] > resource.m_Desc.image_width)
     {
         return ReportError("origin/region is too large.", CL_INVALID_VALUE);
-    }
-
-    if (resource.m_Flags & (CL_MEM_HOST_READ_ONLY | CL_MEM_HOST_NO_ACCESS))
-    {
-        return ReportError("Image is not writable from the host.", CL_INVALID_OPERATION);
     }
 
     if (!fill_color)
@@ -2287,7 +2277,9 @@ public:
     MapUseHostPtrResourceTask(Context& Parent, cl_command_queue command_queue, cl_map_flags flags, Resource& resource, Args const& args, cl_command_type command)
         : MapTask(Parent, command_queue, resource, flags, command, args)
     {
-        m_Pointer = (byte*)resource.m_pHostPointer +
+        // If subbuffer, the args here have the offset applied in the SrcX so don't double-apply it with the sub-buffer's offset too
+        void* basePtr = resource.m_ParentBuffer.Get() ? resource.m_ParentBuffer->m_pHostPointer : resource.m_pHostPointer;
+        m_Pointer = (byte*)basePtr +
             resource.m_Desc.image_slice_pitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
             resource.m_Desc.image_row_pitch * m_Args.SrcY +
             GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX;
@@ -2298,7 +2290,7 @@ public:
 private:
     void RecordImpl() final
     {
-        if (m_MapFlags & CL_MAP_READ)
+        // Always read back data so we don't write garbage into regions the app didn't write
         {
             MemReadTask::Args ReadArgs = {};
             ReadArgs.SrcX = ReadArgs.DstX = m_Args.SrcX;
@@ -2371,8 +2363,8 @@ private:
             switch (flags)
             {
             default:
-            case CL_MAP_READ | CL_MAP_WRITE: return D3D12TranslationLayer::MAP_TYPE_READWRITE;
-            case CL_MAP_READ: return D3D12TranslationLayer::MAP_TYPE_READ;
+            case CL_MAP_READ | CL_MAP_WRITE: return D3D12TranslationLayer::MAP_TYPE_READ;
+            case CL_MAP_READ: return D3D12TranslationLayer::MAP_TYPE_READWRITE;
             case CL_MAP_WRITE: return D3D12TranslationLayer::MAP_TYPE_WRITE;
             }
         }(m_MapFlags);
@@ -2438,7 +2430,7 @@ public:
 private:
     void RecordImpl() final
     {
-        if (m_MapFlags & CL_MAP_READ)
+        // Always read back data so we don't write garbage into regions the app didn't write
         {
             CopyResourceTask::Args CopyArgs = {};
             // Leave Dst coords as 0
