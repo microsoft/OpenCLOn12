@@ -505,7 +505,7 @@ void Task::AddDependencies(const cl_event* event_wait_list, cl_uint num_events_i
 
 cl_int Task::WaitForCompletion()
 {
-    m_CompletionPromise.get_future().wait();
+    m_CompletionFuture.wait();
     return (cl_int)m_State;
 }
 

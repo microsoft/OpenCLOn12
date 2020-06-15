@@ -124,6 +124,7 @@ protected:
     std::vector<NotificationRequest> m_RunningCallbacks;
     std::vector<NotificationRequest> m_SubmittedCallbacks;
     std::promise<void> m_CompletionPromise;
+    std::future<void> m_CompletionFuture{ m_CompletionPromise.get_future() };
 
     std::shared_ptr<D3D12TranslationLayer::Query> m_StartTimestamp;
     std::shared_ptr<D3D12TranslationLayer::Query> m_StopTimestamp;
