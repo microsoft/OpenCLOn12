@@ -158,6 +158,8 @@ struct clc_dxil_metadata {
       unsigned filter_mode;
    } const_samplers[CLC_MAX_SAMPLERS];
    size_t num_const_samplers;
+   size_t local_mem_size;
+   size_t priv_mem_size;
 
    uint16_t local_size[3];
    uint16_t local_size_hint[3];
