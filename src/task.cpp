@@ -33,7 +33,7 @@ clWaitForEvents(cl_uint             num_events,
     {
         // Flush pass
         {
-            auto Lock = context.GetDevice().GetTaskPoolLock();
+            auto Lock = g_Platform->GetTaskPoolLock();
             for (cl_uint i = 0; i < num_events; ++i)
             {
                 Task* t = static_cast<Task*>(event_list[i]);
@@ -87,7 +87,7 @@ clGetEventInfo(cl_event         event,
     case CL_EVENT_COMMAND_TYPE: return RetValue(task.m_CommandType);
     case CL_EVENT_COMMAND_EXECUTION_STATUS:
     {
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         auto state = task.GetState();
         if (state == Task::State::Ready)
             state = Task::State::Submitted;
@@ -167,7 +167,6 @@ clSetUserEventStatus(cl_event   event,
         return ReportError("Can only set event status to CL_SUCCESS or a negative error code.", CL_INVALID_VALUE);
     }
 
-    auto Lock = context.GetDevice().GetTaskPoolLock();
     if (task.GetState() != Task::State::Submitted)
     {
         return ReportError("Task event has already been modified.", CL_INVALID_OPERATION);
@@ -176,12 +175,12 @@ clSetUserEventStatus(cl_event   event,
     try
     {
         UserEvent& e = static_cast<UserEvent&>(task);
-        if (execution_status == 0)
-        {
-            context.GetDevice().SubmitTask(&task, Lock);
-        }
+        auto Lock = g_Platform->GetTaskPoolLock();
         e.Complete(execution_status, Lock);
-        context.GetDevice().Flush(Lock);
+        for (cl_uint i = 0; i < context.GetDeviceCount(); ++i)
+        {
+            context.GetDevice(i).Flush(Lock);
+        }
     }
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -293,7 +292,7 @@ clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
     {
         std::unique_ptr<Task> task(new Marker(context, command_queue));
 
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         if (num_events_in_wait_list)
         {
             task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
@@ -348,7 +347,7 @@ clEnqueueBarrierWithWaitList(cl_command_queue  command_queue,
     {
         std::unique_ptr<Task> task(new Barrier(context, command_queue));
 
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         if (num_events_in_wait_list)
         {
             task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
@@ -389,18 +388,22 @@ clEnqueueBarrier(cl_command_queue command_queue) CL_EXT_SUFFIX__VERSION_1_1_DEPR
 
 void Task::Record()
 {
-    auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+    ImmCtx *pImmCtx = nullptr;
+    if (m_CommandQueue.Get())
+    {
+        pImmCtx = &m_CommandQueue->GetDevice().ImmCtx();
+    }
     if (GetTimestamp(CL_PROFILING_COMMAND_QUEUED))
     {
         try
         {
             // TODO: Maybe share a start timestamp with the end of the previous command?
             m_StartTimestamp.reset(new D3D12TranslationLayer::Query(
-                &ImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
+                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
             ));
             m_StartTimestamp->Initialize();
             m_StopTimestamp.reset(new D3D12TranslationLayer::Query(
-                &ImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
+                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
             ));
             m_StopTimestamp->Initialize();
         }
@@ -409,12 +412,12 @@ void Task::Record()
 
     if (m_StartTimestamp)
     {
-        ImmCtx.QueryEnd(&*m_StartTimestamp);
+        pImmCtx->QueryEnd(&*m_StartTimestamp);
     }
     RecordImpl();
     if (m_StopTimestamp)
     {
-        ImmCtx.QueryEnd(&*m_StopTimestamp);
+        pImmCtx->QueryEnd(&*m_StopTimestamp);
     }
 }
 
@@ -438,6 +441,7 @@ cl_ulong& Task::GetTimestamp(cl_profiling_info timestampType)
 Task::Task(Context& Parent, cl_command_type command_type, cl_command_queue command_queue)
     : CLChildBase(Parent)
     , m_CommandQueue(static_cast<CommandQueue*>(command_queue))
+    , m_Device(command_queue ? &m_CommandQueue->GetDevice() : nullptr)
     , m_CommandType(command_type)
 {
     if (m_CommandQueue.Get() && m_CommandQueue->m_bProfile)
@@ -446,6 +450,13 @@ Task::Task(Context& Parent, cl_command_type command_type, cl_command_queue comma
         QueryPerformanceCounter(&li);
         GetTimestamp(CL_PROFILING_COMMAND_QUEUED) = TimestampFromQPC();
     }
+}
+
+Task::Task(Context& Parent, Device& device)
+    : CLChildBase(Parent)
+    , m_Device(&device)
+    , m_CommandType(0)
+{
 }
 
 Task::~Task()
@@ -515,7 +526,7 @@ void Task::RegisterCallback(cl_int command_exec_callback_type, NotificationReque
     bool bCallNotification = false;
     cl_int StateToSend = 0;
     {
-        auto Lock = m_Parent->GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         if ((cl_int)GetState() <= command_exec_callback_type)
         {
             bCallNotification = true;
@@ -577,7 +588,8 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
 
     if (m_StartTimestamp || m_StopTimestamp)
     {
-        UINT64 Frequency = m_Parent->GetDevice().GetTimestampFrequency();
+        assert(m_CommandQueue.Get());
+        UINT64 Frequency = m_CommandQueue->GetDevice().GetTimestampFrequency();
         UINT64 GPUTimestamp;
         if (m_StartTimestamp &&
             m_StartTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
@@ -610,6 +622,8 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
     {
         for (auto& task : m_TasksWaitingOnThis)
         {
+            assert(task->m_CommandQueue.Get() || task->m_Device.Get());
+
             auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
                 [this](ref_ptr_int const& p) { return p.Get() == this; });
             assert(newEnd != task->m_TasksToWaitOn.end());
@@ -618,7 +632,7 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
             if (task->m_TasksToWaitOn.empty() &&
                 task->m_State == State::Submitted)
             {
-                m_Parent->GetDevice().ReadyTask(task.Get(), lock);
+                task->m_Device->ReadyTask(task.Get(), lock);
             }
         }
     }
@@ -628,9 +642,9 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
     m_CompletionPromise.set_value();
 }
 
-void Task::FireNotification(NotificationRequest const & callback, cl_int state)
+void Task::FireNotification(NotificationRequest const& callback, cl_int state)
 {
-    m_Parent->GetDevice().QueueCallback([=]()
+    g_Platform->QueueCallback([=]()
     {
         callback.m_pfn(this, state, callback.m_userData);
     });

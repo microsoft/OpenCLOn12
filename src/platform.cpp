@@ -121,6 +121,52 @@ cl_device_id Platform::GetDevice(cl_uint i) const noexcept
     return m_Devices[i].get();
 }
 
+TaskPoolLock Platform::GetTaskPoolLock()
+{
+    TaskPoolLock lock;
+    lock.m_Lock = std::unique_lock<std::recursive_mutex>{ m_TaskLock };
+    return lock;
+}
+
+void Platform::FlushAllDevices(TaskPoolLock const& Lock)
+{
+    for (auto& device : m_Devices)
+    {
+        if (device->GetDevice())
+        {
+            device->Flush(Lock);
+        }
+    }
+}
+
+void Platform::DeviceInit()
+{
+    std::lock_guard Lock(m_ModuleLock);
+    if (m_ActiveDeviceCount++ > 0)
+    {
+        return;
+    }
+
+    BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
+    m_CallbackScheduler.SetSchedulingMode(mode);
+
+    mode.NumThreads = std::thread::hardware_concurrency();
+    m_CompileAndLinkScheduler.SetSchedulingMode(mode);
+}
+
+void Platform::DeviceUninit()
+{
+    std::lock_guard Lock(m_ModuleLock);
+    if (--m_ActiveDeviceCount > 0)
+    {
+        return;
+    }
+
+    BackgroundTaskScheduler::SchedulingMode mode{ 0u, BackgroundTaskScheduler::Priority::Normal };
+    m_CallbackScheduler.SetSchedulingMode(mode);
+    m_CompileAndLinkScheduler.SetSchedulingMode(mode);
+}
+
 #ifdef _WIN32
 extern "C" extern IMAGE_DOS_HEADER __ImageBase;
 #endif

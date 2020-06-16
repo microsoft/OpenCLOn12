@@ -12,9 +12,6 @@ private:
     clc_dxil_object const* m_pDxil;
     D3D12TranslationLayer::SShaderDecls m_ShaderDecls;
 
-    std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
-    std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
-    std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
     std::vector<byte> m_KernelArgsCbData;
     std::vector<struct clc_runtime_arg_info> m_ArgMetadataToCompiler;
 
@@ -23,8 +20,9 @@ private:
     // of that kernel. Releasing an object *while a kernel is enqueued*
     // must be safe (according to the CTS), while the API kernel must not
     // hold any references.
-    std::vector<Resource*> m_KernelArgResources;
-    std::vector<Sampler*> m_KernelArgSamplers;
+    std::vector<Resource*> m_UAVs;
+    std::vector<Resource*> m_SRVs;
+    std::vector<Sampler*> m_Samplers;
 
     std::vector<::ref_ptr<Sampler>> m_ConstSamplers;
     std::vector<::ref_ptr<Resource>> m_InlineConsts;

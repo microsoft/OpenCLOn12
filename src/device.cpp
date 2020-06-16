@@ -237,6 +237,8 @@ void Device::InitD3D()
         return;
     }
 
+    g_Platform->DeviceInit();
+
     THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_spDevice)));
     //THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&m_spDevice)));
     THROW_IF_FAILED(m_spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options)));
@@ -251,11 +253,7 @@ void Device::InitD3D()
     m_ImmCtx.emplace(0, m_D3D12Options, m_spDevice.Get(), nullptr, m_Callbacks, 0, Args);
 
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
-    m_CallbackScheduler.SetSchedulingMode(mode);
     m_CompletionScheduler.SetSchedulingMode(mode);
-
-    mode.NumThreads = std::thread::hardware_concurrency();
-    m_CompileAndLinkScheduler.SetSchedulingMode(mode);
 
     (void)m_ImmCtx->GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS)->GetTimestampFrequency(&m_TimestampFrequency);
 
@@ -268,11 +266,11 @@ void Device::ReleaseD3D()
     if (--m_ContextCount != 0)
         return;
 
+    g_Platform->DeviceUninit();
+
     m_ImmCtx.reset();
     BackgroundTaskScheduler::SchedulingMode mode{ 0u, BackgroundTaskScheduler::Priority::Normal };
-    m_CallbackScheduler.SetSchedulingMode(mode);
     m_CompletionScheduler.SetSchedulingMode(mode);
-    m_CompileAndLinkScheduler.SetSchedulingMode(mode);
     m_RecordingSubmission.reset();
     m_spDevice.Reset();
 }
@@ -327,29 +325,30 @@ std::string Device::GetDeviceName() const
     return name;
 }
 
-TaskPoolLock Device::GetTaskPoolLock()
-{
-    TaskPoolLock lock;
-    lock.m_Lock = std::unique_lock<std::recursive_mutex>{m_TaskLock};
-    return lock;
-}
-
 void Device::SubmitTask(Task* task, TaskPoolLock const& lock)
 {
-    if (task->m_CommandType != CL_COMMAND_USER)
-    {
-        // User commands are treated as 'submitted' when they're created
-        task->Submit();
+    assert(task->m_CommandType != CL_COMMAND_USER);
+    // User commands are treated as 'submitted' when they're created
+    task->Submit();
 
-        if (task->m_TasksToWaitOn.empty())
-        {
-            ReadyTask(task, lock);
-        }
+    if (task->m_TasksToWaitOn.empty())
+    {
+        ReadyTask(task, lock);
     }
 }
 
 void Device::ReadyTask(Task* task, TaskPoolLock const& lock)
 {
+    assert(task->m_TasksToWaitOn.empty());
+
+    task->MigrateResources();
+    if (!task->m_TasksToWaitOn.empty())
+    {
+        // Need to wait for resources to migrate.
+        // Once the migration is done, this task will be readied for real
+        return;
+    }
+
     m_RecordingSubmission->push_back(task);
     task->Ready(lock);
 }
@@ -394,17 +393,18 @@ std::unique_ptr<D3D12TranslationLayer::PipelineState> Device::CreatePSO(D3D12Tra
 void Device::ExecuteTasks(Submission& tasks)
 {
     {
-        auto Lock = GetTaskPoolLock();
         for (cl_uint i = 0; i < tasks.size(); ++i)
         {
             try
             {
                 auto& task = tasks[i];
                 task->Record();
+                auto Lock = g_Platform->GetTaskPoolLock();
                 task->Started(Lock);
             }
             catch (...)
             {
+                auto Lock = g_Platform->GetTaskPoolLock();
                 if ((cl_int)tasks[i]->GetState() > 0)
                 {
                     tasks[i]->Complete(CL_OUT_OF_RESOURCES, Lock);
@@ -424,14 +424,14 @@ void Device::ExecuteTasks(Submission& tasks)
     ImmCtx().WaitForCompletion(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
 
     {
-        auto Lock = GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         for (auto& task : tasks)
         {
             task->Complete(CL_SUCCESS, Lock);
         }
 
         // Enqueue another execution task if there's new items ready to go
-        Flush(Lock);
+        g_Platform->FlushAllDevices(Lock);
     }
 }
 

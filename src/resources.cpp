@@ -253,11 +253,6 @@ clCreateImage(cl_context              context_,
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter(errcode_ret);
 
-    if (context.GetDevice().IsMCDM())
-    {
-        return ReportError("Images not supported.", CL_INVALID_OPERATION);
-    }
-
     if (!ValidateMemFlags(flags, host_ptr != nullptr, ReportError))
     {
         return nullptr;
@@ -574,28 +569,37 @@ clGetSupportedImageFormats(cl_context           context_,
     cl_uint NumFormats = 0;
     for (UINT i = 0; i < DXGI_FORMAT_B8G8R8X8_UNORM; ++i)
     {
-        D3D12_FEATURE_DATA_FORMAT_SUPPORT Support = { (DXGI_FORMAT)i };
-        if (FAILED(context.GetDevice().GetDevice()->CheckFeatureSupport(
-            D3D12_FEATURE_FORMAT_SUPPORT, &Support, sizeof(Support))))
+        bool IsSupported = [&]()
         {
-            continue;
-        }
+            for (cl_uint device = 0; device < context.GetDeviceCount(); ++device)
+            {
+                D3D12_FEATURE_DATA_FORMAT_SUPPORT Support = { (DXGI_FORMAT)i };
+                if (FAILED(context.GetDevice(device).GetDevice()->CheckFeatureSupport(
+                    D3D12_FEATURE_FORMAT_SUPPORT, &Support, sizeof(Support))))
+                {
+                    return false;
+                }
 
-        if ((flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE)) &&
-            (Support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) == D3D12_FORMAT_SUPPORT2_NONE)
-        {
-            continue;
-        }
+                if ((flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE)) &&
+                    (Support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE) == D3D12_FORMAT_SUPPORT2_NONE)
+                {
+                    return false;
+                }
 
-        // OpenCL 1.2 doesn't require a single kernel to be able to read and write images, so we can bind
-        // readable images as SRVs and only require sample support, rather than typed UAV load.
-        if ((flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE)) &&
-            (Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) == D3D12_FORMAT_SUPPORT1_NONE)
-        {
+                // OpenCL 1.2 doesn't require a single kernel to be able to read and write images, so we can bind
+                // readable images as SRVs and only require sample support, rather than typed UAV load.
+                if ((flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE)) &&
+                    (Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) == D3D12_FORMAT_SUPPORT1_NONE)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }();
+        if (!IsSupported)
             continue;
-        }
 
-        cl_image_format format = GetCLImageFormatForDXGIFormat(Support.Format);
+        cl_image_format format = GetCLImageFormatForDXGIFormat((DXGI_FORMAT)i);
         if (format.image_channel_data_type != 0)
         {
             if (NumFormats < num_entries && image_formats)
@@ -634,9 +638,15 @@ clGetMemObjectInfo(cl_mem           memobj,
     {
     case CL_MEM_TYPE: return RetValue(resource.m_Desc.image_type);
     case CL_MEM_FLAGS: return RetValue(resource.m_Flags);
-    case CL_MEM_SIZE: return RetValue(
-        resource.m_ParentBuffer.Get() ? resource.m_Desc.image_width :
-        (size_t)resource.GetUnderlyingResource()->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
+    case CL_MEM_SIZE:
+    {
+        if (resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+            return RetValue(resource.m_Desc.image_width);
+        auto Underlying = resource.GetActiveUnderlyingResource();
+        if (!Underlying)
+            Underlying = resource.GetUnderlyingResource(&resource.m_Parent->GetDevice(0));
+        return RetValue((size_t)Underlying->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
+    }
     case CL_MEM_HOST_PTR: return RetValue(resource.m_pHostPointer);
     case CL_MEM_MAP_COUNT: return RetValue(resource.GetMapCount());
     case CL_MEM_REFERENCE_COUNT: return RetValue(resource.GetRefCount());
@@ -686,25 +696,87 @@ clGetImageInfo(cl_mem           image,
     return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
+auto Resource::GetUnderlyingResource(Device* device) -> UnderlyingResource*
+{
+    if (m_ParentBuffer.Get())
+        return m_ParentBuffer->GetUnderlyingResource(device);
+
+    std::lock_guard Lock(m_MultiDeviceLock);
+    auto& Entry = m_UnderlyingMap[device];
+    if (Entry.get())
+        return Entry.get();
+
+    Entry = UnderlyingResource::CreateResource(&device->ImmCtx(), m_CreationArgs,
+        D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
+
+    if (m_CreationArgs.m_desc12.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
+    {
+        m_UAVs.try_emplace(device, &device->ImmCtx(), m_UAVDesc, *Entry.get());
+    }
+    if (m_Desc.image_type != CL_MEM_OBJECT_BUFFER &&
+        Entry->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
+    {
+        m_SRVs.try_emplace(device, &device->ImmCtx(), m_SRVDesc, *Entry.get());
+    }
+
+    return Entry.get();
+}
+
+void Resource::SetActiveDevice(Device* device)
+{
+    std::lock_guard Lock(m_MultiDeviceLock);
+    m_ActiveUnderlying = GetUnderlyingResource(device);
+    m_CurrentActiveDevice = device;
+}
+
+void Resource::UploadInitialData()
+{
+    if (!m_InitialData)
+        return;
+
+    assert(m_ActiveUnderlying && m_CurrentActiveDevice);
+    std::vector<D3D11_SUBRESOURCE_DATA> InitialData;
+    D3D11_SUBRESOURCE_DATA SingleSubresourceInitialData;
+    auto pData = &SingleSubresourceInitialData;
+    assert(m_CreationArgs.m_appDesc.m_MipLevels == 1);
+    if (m_CreationArgs.m_appDesc.m_SubresourcesPerPlane > 1)
+    {
+        InitialData.resize(m_CreationArgs.m_appDesc.m_SubresourcesPerPlane);
+        pData = InitialData.data();
+    }
+    char* pSubresourceData = reinterpret_cast<char*>(m_InitialData.get());
+    for (UINT i = 0; i < m_CreationArgs.m_appDesc.m_SubresourcesPerPlane; ++i)
+    {
+        pData[i].pSysMem = pSubresourceData;
+        pData[i].SysMemPitch = (UINT)m_Desc.image_row_pitch;
+        pData[i].SysMemSlicePitch = (UINT)m_Desc.image_slice_pitch;
+        pSubresourceData += m_Desc.image_slice_pitch;
+    }
+    m_CurrentActiveDevice->ImmCtx().UpdateSubresources(
+        m_ActiveUnderlying,
+        m_ActiveUnderlying->GetFullSubresourceSubset(),
+        pData,
+        nullptr,
+        D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
+}
+
+D3D12TranslationLayer::SRV& Resource::GetSRV(Device* device)
+{
+    auto iter = m_SRVs.find(device);
+    assert(iter != m_SRVs.end());
+    return iter->second;
+}
+
+D3D12TranslationLayer::UAV& Resource::GetUAV(Device* device)
+{
+    auto iter = m_UAVs.find(device);
+    assert(iter != m_UAVs.end());
+    return iter->second;
+}
+
 Resource* Resource::CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags)
 {
-    UnderlyingResourcePtr Underlying(
-        UnderlyingResource::CreateResource(
-            &Parent.GetDevice().ImmCtx(),
-            Args,
-            D3D12TranslationLayer::ResourceAllocationContext::FreeThread));
-    if (pHostPointer)
-    {
-        D3D11_SUBRESOURCE_DATA Data = { pHostPointer };
-        auto Lock = Parent.GetDevice().GetTaskPoolLock();
-        Parent.GetDevice().ImmCtx().UpdateSubresources(
-            Underlying.get(),
-            Underlying->GetFullSubresourceSubset(),
-            &Data,
-            nullptr,
-            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
-    }
-    return new Resource(Parent, std::move(Underlying), pHostPointer, Args.m_appDesc.m_Width, flags);
+    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags);
 }
 
 Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags)
@@ -715,39 +787,7 @@ Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_regi
 
 Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
 {
-    UnderlyingResourcePtr Underlying(
-        UnderlyingResource::CreateResource(
-            &Parent.GetDevice().ImmCtx(),
-            Args,
-            D3D12TranslationLayer::ResourceAllocationContext::FreeThread));
-    if (pHostPointer)
-    {
-        std::vector<D3D11_SUBRESOURCE_DATA> InitialData;
-        D3D11_SUBRESOURCE_DATA SingleSubresourceInitialData;
-        auto pData = &SingleSubresourceInitialData;
-        assert(Args.m_appDesc.m_MipLevels == 1);
-        if (Args.m_appDesc.m_SubresourcesPerPlane > 1)
-        {
-            InitialData.resize(Args.m_appDesc.m_SubresourcesPerPlane);
-            pData = InitialData.data();
-        }
-        char* pSubresourceData = reinterpret_cast<char*>(pHostPointer);
-        for (UINT i = 0; i < Args.m_appDesc.m_SubresourcesPerPlane; ++i)
-        {
-            pData[i].pSysMem = pSubresourceData;
-            pData[i].SysMemPitch = (UINT)image_desc.image_row_pitch;
-            pData[i].SysMemSlicePitch = (UINT)image_desc.image_slice_pitch;
-            pSubresourceData += image_desc.image_slice_pitch;
-        }
-        auto Lock = Parent.GetDevice().GetTaskPoolLock();
-        Parent.GetDevice().ImmCtx().UpdateSubresources(
-            Underlying.get(),
-            Underlying->GetFullSubresourceSubset(),
-            pData,
-            nullptr,
-            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
-    }
-    return new Resource(Parent, std::move(Underlying), pHostPointer, image_format, image_desc, flags);
+    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags);
 }
 
 Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
@@ -755,16 +795,79 @@ Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_f
     return new Resource(ParentBuffer, 0, image_desc.image_width, image_format, image_desc.image_type, flags);
 }
 
-Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHostPointer, size_t size, cl_mem_flags flags)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags)
     : CLChildBase(Parent)
     , m_Flags(flags)
     , m_pHostPointer(pHostPointer)
-    , m_Underlying(std::move(Underlying))
     , m_Desc(GetBufferDesc(size, CL_MEM_OBJECT_BUFFER))
+    , m_CreationArgs(CreationArgs)
 {
-    if (m_Underlying->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
+    if (pHostPointer)
     {
-        D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
+        m_InitialData.reset(new byte[size]);
+        memcpy(m_InitialData.get(), pHostPointer, size);
+    }
+    auto& UAVDescWrapper = m_UAVDesc;
+    auto& UAVDesc = UAVDescWrapper.m_Desc12;
+    UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+    UAVDesc.Buffer.CounterOffsetInBytes = 0;
+    UAVDesc.Buffer.StructureByteStride = 0;
+    UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+    UAVDesc.Buffer.FirstElement = m_Offset / 4;
+    UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
+    UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
+
+    if (m_Parent->GetDeviceCount() == 1)
+    {
+        SetActiveDevice(&m_Parent->GetDevice(0));
+        UploadInitialData();
+    }
+}
+
+Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags)
+    : CLChildBase(ParentBuffer.m_Parent.get())
+    , m_pHostPointer(ParentBuffer.m_pHostPointer && type == CL_MEM_OBJECT_BUFFER ? reinterpret_cast<char*>(ParentBuffer.m_pHostPointer) + offset : nullptr)
+    , m_Flags(flags)
+    , m_ParentBuffer(&ParentBuffer)
+    , m_Format(image_format)
+    , m_Offset(offset)
+    , m_Desc(GetBufferDesc(size, type))
+    , m_CreationArgs(ParentBuffer.m_CreationArgs)
+{
+    if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
+    {
+        DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
+        UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
+        assert(m_Offset == 0);
+
+        {
+            auto& UAVDescWrapper = m_UAVDesc;
+            auto &UAVDesc = UAVDescWrapper.m_Desc12;
+            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+            UAVDesc.Format = DXGIFormat;
+            UAVDesc.Buffer.CounterOffsetInBytes = 0;
+            UAVDesc.Buffer.StructureByteStride = 0;
+            UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+            UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+            UAVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
+
+            UAVDescWrapper.m_D3D11UAVFlags = 0;
+        }
+        {
+            auto& SRVDesc = m_SRVDesc;
+            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            SRVDesc.Format = DXGIFormat;
+            SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            SRVDesc.Buffer.StructureByteStride = 0;
+            SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
+            SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+            SRVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
+        }
+    }
+    else
+    {
+        auto& UAVDescWrapper = m_UAVDesc;
         auto& UAVDesc = UAVDescWrapper.m_Desc12;
         UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
         UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
@@ -774,179 +877,123 @@ Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHos
         UAVDesc.Buffer.FirstElement = m_Offset / 4;
         UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
         UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
-        m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
     }
-}
 
-Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags)
-    : CLChildBase(ParentBuffer.m_Parent.get())
-    , m_Underlying(ParentBuffer.m_Underlying.get())
-    , m_pHostPointer(ParentBuffer.m_pHostPointer && type == CL_MEM_OBJECT_BUFFER ? reinterpret_cast<char*>(ParentBuffer.m_pHostPointer) + offset : nullptr)
-    , m_Flags(flags)
-    , m_ParentBuffer(&ParentBuffer)
-    , m_Format(image_format)
-    , m_Offset(offset)
-    , m_Desc(GetBufferDesc(size, type))
-{
-    if (m_Underlying->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
+    if (m_Parent->GetDeviceCount() == 1)
     {
-        if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
-        {
-            DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-            UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
-            assert(m_Offset == 0);
-
-            if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
-            {
-                D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-                auto &UAVDesc = UAVDescWrapper.m_Desc12;
-                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-                UAVDesc.Format = DXGIFormat;
-                UAVDesc.Buffer.CounterOffsetInBytes = 0;
-                UAVDesc.Buffer.StructureByteStride = 0;
-                UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-                UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-                UAVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
-
-                UAVDescWrapper.m_D3D11UAVFlags = 0;
-
-                m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
-            }
-            if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
-            {
-                D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
-                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-                SRVDesc.Format = DXGIFormat;
-                SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-                SRVDesc.Buffer.StructureByteStride = 0;
-                SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-                SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-                SRVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
-
-                m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
-            }
-        }
-        else
-        {
-            D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-            auto& UAVDesc = UAVDescWrapper.m_Desc12;
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-            UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-            UAVDesc.Buffer.CounterOffsetInBytes = 0;
-            UAVDesc.Buffer.StructureByteStride = 0;
-            UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-            UAVDesc.Buffer.FirstElement = m_Offset / 4;
-            UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
-            UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
-            m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
-        }
+        SetActiveDevice(&m_Parent->GetDevice(0));
+        UploadInitialData();
     }
 }
 
-Resource::Resource(Context& Parent, UnderlyingResourcePtr Underlying, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
     : CLChildBase(Parent)
-    , m_Underlying(std::move(Underlying))
     , m_pHostPointer(pHostPointer)
     , m_Format(image_format)
     , m_Desc(image_desc)
     , m_Flags(flags)
+    , m_CreationArgs(Args)
 {
-    if ((flags & DeviceReadWriteFlagsMask) == 0)
-        flags |= CL_MEM_READ_WRITE;
-
-    if (m_Underlying->GetEffectiveUsage() == D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT)
+    if (pHostPointer)
     {
-        DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-        if (flags & (CL_MEM_WRITE_ONLY | CL_MEM_READ_WRITE))
+        size_t size =
+            GetFormatSizeBytes(image_format) * image_desc.image_width +
+            image_desc.image_row_pitch * (image_desc.image_height - 1) +
+            image_desc.image_slice_pitch * (image_desc.image_depth * image_desc.image_array_size - 1);
+        m_InitialData.reset(new byte[size]);
+        memcpy(m_InitialData.get(), pHostPointer, size);
+    }
+
+    DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
+    {
+        auto& UAVDescWrapper = m_UAVDesc;
+        auto &UAVDesc = UAVDescWrapper.m_Desc12;
+        UAVDesc.Format = DXGIFormat;
+        switch (image_desc.image_type)
         {
-            D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-            auto &UAVDesc = UAVDescWrapper.m_Desc12;
-            UAVDesc.Format = DXGIFormat;
-            switch (image_desc.image_type)
-            {
-            case CL_MEM_OBJECT_IMAGE1D:
-                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
-                UAVDesc.Texture1D.MipSlice = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
-                UAVDesc.Texture1DArray.FirstArraySlice = 0;
-                UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-                UAVDesc.Texture1DArray.MipSlice = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE2D:
-                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-                UAVDesc.Texture2D.MipSlice = 0;
-                UAVDesc.Texture2D.PlaneSlice = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
-                UAVDesc.Texture2DArray.FirstArraySlice = 0;
-                UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-                UAVDesc.Texture2DArray.MipSlice = 0;
-                UAVDesc.Texture2DArray.PlaneSlice = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE3D:
-                UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-                UAVDesc.Texture3D.FirstWSlice = 0;
-                UAVDesc.Texture3D.WSize = (UINT)image_desc.image_depth;
-                UAVDesc.Texture3D.MipSlice = 0;
-                break;
-            default: assert(false);
-            }
-
-            m_UAV.emplace(&m_Parent->GetDevice().ImmCtx(), UAVDescWrapper, *m_Underlying);
+        case CL_MEM_OBJECT_IMAGE1D:
+            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
+            UAVDesc.Texture1D.MipSlice = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
+            UAVDesc.Texture1DArray.FirstArraySlice = 0;
+            UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+            UAVDesc.Texture1DArray.MipSlice = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE2D:
+            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            UAVDesc.Texture2D.MipSlice = 0;
+            UAVDesc.Texture2D.PlaneSlice = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+            UAVDesc.Texture2DArray.FirstArraySlice = 0;
+            UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+            UAVDesc.Texture2DArray.MipSlice = 0;
+            UAVDesc.Texture2DArray.PlaneSlice = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE3D:
+            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+            UAVDesc.Texture3D.FirstWSlice = 0;
+            UAVDesc.Texture3D.WSize = (UINT)image_desc.image_depth;
+            UAVDesc.Texture3D.MipSlice = 0;
+            break;
+        default: assert(false);
         }
+    }
 
-        if (flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE))
+    {
+        auto& SRVDesc = m_SRVDesc;
+        SRVDesc.Format = DXGIFormat;
+        SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+        switch (image_desc.image_type)
         {
-            D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
-            SRVDesc.Format = DXGIFormat;
-            SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-
-            switch (image_desc.image_type)
-            {
-            case CL_MEM_OBJECT_IMAGE1D:
-                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-                SRVDesc.Texture1D.MipLevels = 1;
-                SRVDesc.Texture1D.MostDetailedMip = 0;
-                SRVDesc.Texture1D.ResourceMinLODClamp = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE1D_ARRAY:
-                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
-                SRVDesc.Texture1DArray.FirstArraySlice = 0;
-                SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-                SRVDesc.Texture1DArray.MipLevels = 1;
-                SRVDesc.Texture1DArray.MostDetailedMip = 0;
-                SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE2D:
-                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                SRVDesc.Texture2D.MipLevels = 1;
-                SRVDesc.Texture2D.MostDetailedMip = 0;
-                SRVDesc.Texture2D.PlaneSlice = 0;
-                SRVDesc.Texture2D.ResourceMinLODClamp = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE2D_ARRAY:
-                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-                SRVDesc.Texture2DArray.FirstArraySlice = 0;
-                SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-                SRVDesc.Texture2DArray.MipLevels = 1;
-                SRVDesc.Texture2DArray.MostDetailedMip = 0;
-                SRVDesc.Texture2DArray.PlaneSlice = 0;
-                SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
-                break;
-            case CL_MEM_OBJECT_IMAGE3D:
-                SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-                SRVDesc.Texture3D.MipLevels = 1;
-                SRVDesc.Texture3D.MostDetailedMip = 0;
-                SRVDesc.Texture3D.ResourceMinLODClamp = 0;
-                break;
-            default: assert(false);
-            }
-
-            m_SRV.emplace(&m_Parent->GetDevice().ImmCtx(), SRVDesc, *m_Underlying);
+        case CL_MEM_OBJECT_IMAGE1D:
+            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
+            SRVDesc.Texture1D.MipLevels = 1;
+            SRVDesc.Texture1D.MostDetailedMip = 0;
+            SRVDesc.Texture1D.ResourceMinLODClamp = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
+            SRVDesc.Texture1DArray.FirstArraySlice = 0;
+            SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+            SRVDesc.Texture1DArray.MipLevels = 1;
+            SRVDesc.Texture1DArray.MostDetailedMip = 0;
+            SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE2D:
+            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            SRVDesc.Texture2D.MipLevels = 1;
+            SRVDesc.Texture2D.MostDetailedMip = 0;
+            SRVDesc.Texture2D.PlaneSlice = 0;
+            SRVDesc.Texture2D.ResourceMinLODClamp = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            SRVDesc.Texture2DArray.FirstArraySlice = 0;
+            SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+            SRVDesc.Texture2DArray.MipLevels = 1;
+            SRVDesc.Texture2DArray.MostDetailedMip = 0;
+            SRVDesc.Texture2DArray.PlaneSlice = 0;
+            SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
+            break;
+        case CL_MEM_OBJECT_IMAGE3D:
+            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+            SRVDesc.Texture3D.MipLevels = 1;
+            SRVDesc.Texture3D.MostDetailedMip = 0;
+            SRVDesc.Texture3D.ResourceMinLODClamp = 0;
+            break;
+        default: assert(false);
         }
+    }
+
+    if (m_Parent->GetDeviceCount() == 1)
+    {
+        SetActiveDevice(&m_Parent->GetDevice(0));
+        UploadInitialData();
     }
 }
 

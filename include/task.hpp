@@ -95,8 +95,10 @@ public:
 
     const cl_command_type m_CommandType;
     const ::ref_ptr_int<class CommandQueue> m_CommandQueue;
+    const ::ref_ptr_int<class Device> m_Device;
 
     Task(Context& Parent, cl_command_type command_type, cl_command_queue command_queue);
+    Task(Context& Parent, Device& device);
     virtual ~Task();
 
     static cl_ulong TimestampToNanoseconds(cl_ulong Ticks, cl_ulong Frequency);
@@ -108,6 +110,7 @@ protected:
     void Started(TaskPoolLock const&);
     void Complete(cl_int error, TaskPoolLock const&);
 
+    virtual void MigrateResources() = 0;
     virtual void RecordImpl() = 0;
     virtual void OnComplete() { }
 
@@ -138,6 +141,7 @@ public:
 
 private:
     void RecordImpl() final { }
+    void MigrateResources() final { }
 };
 
 class Marker : public Task
@@ -147,6 +151,7 @@ public:
 
 private:
     void RecordImpl() final { }
+    void MigrateResources() final { }
 };
 
 class Barrier : public Task
@@ -156,6 +161,7 @@ public:
 
 private:
     void RecordImpl() final { }
+    void MigrateResources() final { }
 };
 
 class Resource;
@@ -193,4 +199,5 @@ protected:
     const Args m_Args;
 
     void OnComplete() override;
+    void MigrateResources() override;
 };

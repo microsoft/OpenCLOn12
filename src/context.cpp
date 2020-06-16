@@ -52,10 +52,6 @@ clCreateContext(const cl_context_properties * properties,
     {
         return ReportError("num_devices must not be zero.", CL_INVALID_VALUE);
     }
-    if (num_devices > 1)
-    {
-        return ReportError("This platform only supports one device per context.", CL_INVALID_VALUE);
-    }
     if (devices == nullptr)
     {
         return ReportError("devices must not be NULL.", CL_INVALID_VALUE);
@@ -80,26 +76,32 @@ clCreateContext(const cl_context_properties * properties,
         }
     }
 
-    Device* device = static_cast<Device*>(devices[0]);
-    if (!device->IsAvailable())
+    std::vector<Device::ref_ptr_int> device_refs;
+
+    for (cl_uint i = 0; i < num_devices; ++i)
     {
-        return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
-    }
-    if (platform && platform != &device->m_Parent.get())
-    {
-        return ReportError("Platform specified in properties doesn't match device platform.", CL_INVALID_PLATFORM);
-    }
-    platform = &device->m_Parent.get();
-    if (platform != g_Platform.get())
-    {
-        return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
+        Device* device = static_cast<Device*>(devices[i]);
+        if (!device->IsAvailable())
+        {
+            return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
+        }
+        if (platform && platform != &device->m_Parent.get())
+        {
+            return ReportError("Platform specified in properties doesn't match device platform.", CL_INVALID_PLATFORM);
+        }
+        platform = &device->m_Parent.get();
+        if (platform != g_Platform.get())
+        {
+            return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
+        }
+        device_refs.emplace_back(device);
     }
 
     try
     {
         if (errcode_ret)
             *errcode_ret = CL_SUCCESS;
-        return new Context(*platform, *device, properties, pfn_notify, user_data);
+        return new Context(*platform, std::move(device_refs), properties, pfn_notify, user_data);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -151,17 +153,23 @@ clCreateContextFromType(const cl_context_properties * properties,
         return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
     }
 
-    Device* device = static_cast<Device*>(platform->GetDevice(0));
-    if (!device->IsAvailable())
+    std::vector<Device::ref_ptr_int> device_refs;
+
+    for (cl_uint i = 0; i < platform->GetNumDevices(); ++i)
     {
-        return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
+        Device* device = static_cast<Device*>(platform->GetDevice(0));
+        if (!device->IsAvailable())
+        {
+            return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
+        }
+        device_refs.emplace_back(device);
     }
 
     try
     {
         if (errcode_ret)
             *errcode_ret = CL_SUCCESS;
-        return new Context(*platform, *device, properties, pfn_notify, user_data);
+        return new Context(*platform, std::move(device_refs), properties, pfn_notify, user_data);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -210,8 +218,11 @@ clGetContextInfo(cl_context         context_,
     switch (param_name)
     {
     case CL_CONTEXT_REFERENCE_COUNT: return RetValue((cl_uint)context->GetRefCount());
-    case CL_CONTEXT_NUM_DEVICES: return RetValue((cl_uint)1);
-    case CL_CONTEXT_DEVICES: return RetValue(static_cast<cl_device_id>(&context->GetDevice()));
+    case CL_CONTEXT_NUM_DEVICES: return RetValue(context->GetDeviceCount());
+    case CL_CONTEXT_DEVICES:
+        return CopyOutParameterImpl(context->m_AssociatedDevices.data(),
+            context->m_AssociatedDevices.size() * sizeof(context->m_AssociatedDevices[0]),
+            param_value_size, param_value, param_value_size_ret);
     case CL_CONTEXT_PROPERTIES:
         return CopyOutParameterImpl(context->m_Properties.data(),
             context->m_Properties.size() * sizeof(context->m_Properties[0]),
@@ -221,19 +232,25 @@ clGetContextInfo(cl_context         context_,
     return context->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
-Context::Context(Platform& Platform, Device& Device, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)
+Context::Context(Platform& Platform, std::vector<Device::ref_ptr_int> Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)
     : CLChildBase(Platform)
-    , m_AssociatedDevice(Device)
+    , m_AssociatedDevices(std::move(Devices))
     , m_ErrorCallback(pfnErrorCb ? pfnErrorCb : DummyCallback)
     , m_CallbackContext(CallbackContext)
     , m_Properties(PropertiesToVector(Properties))
 {
-    m_AssociatedDevice->InitD3D();
+    for (auto& device : m_AssociatedDevices)
+    {
+        device->InitD3D();
+    }
 }
 
 Context::~Context()
 {
-    m_AssociatedDevice->ReleaseD3D();
+    for (auto& device : m_AssociatedDevices)
+    {
+        device->ReleaseD3D();
+    }
 }
 
 void Context::ReportError(const char* Error)
@@ -241,7 +258,19 @@ void Context::ReportError(const char* Error)
     m_ErrorCallback(Error, nullptr, 0, m_CallbackContext);
 }
 
-Device& Context::GetDevice() const noexcept
+cl_uint Context::GetDeviceCount() const noexcept
 {
-    return m_AssociatedDevice.get();
+    return (cl_uint)m_AssociatedDevices.size();
+}
+
+Device& Context::GetDevice(cl_uint i) const noexcept
+{
+    assert(i < m_AssociatedDevices.size() && m_AssociatedDevices[i].Get());
+    return *m_AssociatedDevices[i].Get();
+}
+
+bool Context::ValidDeviceForContext(Device& device) const noexcept
+{
+    return std::find_if(m_AssociatedDevices.begin(), m_AssociatedDevices.end(),
+                        [&device](Device::ref_ptr_int const& d) { return d.Get() == &device; }) != m_AssociatedDevices.end();
 }

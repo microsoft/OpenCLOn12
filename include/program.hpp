@@ -20,19 +20,18 @@ public:
     const std::string m_Source;
 
     Context& GetContext() const { return m_Parent.get(); }
-    Device& GetDevice() const { return GetContext().GetDevice(); }
 
     Program(Context& Parent, std::string Source);
-    Program(Context& Parent, unique_spirv Binary, cl_program_binary_type Type);
-    Program(Context& Parent);
+    Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices);
     using Callback = void(CL_CALLBACK*)(cl_program, void*);
 
-    cl_int Build(const char* options, Callback pfn_notify, void* user_data);
-    cl_int Compile(const char* options, cl_uint num_input_headers, const cl_program *input_headers, const char**header_include_names, Callback pfn_notify, void* user_data);
+    cl_int Build(std::vector<Device::ref_ptr_int> Devices, const char* options, Callback pfn_notify, void* user_data);
+    cl_int Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program *input_headers, const char**header_include_names, Callback pfn_notify, void* user_data);
     cl_int Link(const char* options, cl_uint num_input_programs, const cl_program* input_programs, Callback pfn_notify, void* user_data);
 
-    const clc_dxil_object* GetKernel(const char* name) const;
-    const clc_object* GetSpirV() const { return m_OwnedBinary.get(); }
+    void StoreBinary(Device* Device, unique_spirv OwnedBinary, cl_program_binary_type Type);
+
+    const clc_object* GetSpirV(Device* device) const;
 
     friend cl_int CL_API_CALL clGetProgramInfo(cl_program, cl_program_info, size_t, void*, size_t*);
     friend cl_int CL_API_CALL clGetProgramBuildInfo(cl_program, cl_device_id, cl_program_build_info, size_t, void*, size_t*);
@@ -44,20 +43,29 @@ public:
 
 private:
     mutable std::recursive_mutex m_Lock;
-    unique_spirv m_OwnedBinary{ nullptr, nullptr };
-    cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
     uint32_t m_NumLiveKernels = 0;
 
-    cl_build_status m_BuildStatus = CL_BUILD_NONE;
-    std::string m_BuildLog;
+    struct PerDeviceData
+    {
+        cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
+        std::string m_BuildLog;
+        unique_spirv m_OwnedBinary{ nullptr, nullptr };
+        cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
+        std::string m_LastBuildOptions;
+        std::map<std::string, unique_dxil> m_Kernels;
 
-    // For reflection only
-    std::string m_LastBuildOptions;
+        uint32_t m_NumPendingLinks = 0;
 
-    std::map<std::string, unique_dxil> m_Kernels;
+        void CreateKernels();
+    };
+    std::unordered_map<Device*, std::shared_ptr<PerDeviceData>> m_BuildData;
+
+    std::vector<Device::ref_ptr_int> m_AssociatedDevices;
 
     struct CommonOptions
     {
+        std::shared_ptr<PerDeviceData> BuildData;
+
         std::vector<std::string> Args;
         bool CreateLibrary;
         bool EnableLinkOptions; // Does nothing, validation only
@@ -83,7 +91,4 @@ private:
     void BuildImpl(BuildArgs const& Args);
     void CompileImpl(CompileArgs const& Args);
     void LinkImpl(LinkArgs const& Args);
-
-    void CreateKernels();
-
 };

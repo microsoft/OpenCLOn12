@@ -137,56 +137,80 @@ clCreateProgramWithBinary(cl_context                     context_,
     {
         return ReportError("num_devices must not be zero and device_list must not be NULL.", CL_INVALID_VALUE);
     }
-    if (num_devices != 1)
-    {
-        return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
-    }
-
-    Device* device = static_cast<Device*>(device_list[0]);
-    if (device != &context.GetDevice())
-    {
-        return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
-    }
-
-    if (!lengths || !binaries || !lengths[0] || !binaries[0])
+    if (!lengths || !binaries)
     {
         if (binary_status)
-            *binary_status = CL_INVALID_VALUE;
+            std::fill(binary_status, binary_status + num_devices, CL_INVALID_VALUE);
         return ReportError("lengths, binaries, and the entries within must not be NULL.", CL_INVALID_VALUE);
     }
 
-    auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[0]);
     try
     {
-        if (lengths[0] < sizeof(ProgramBinaryHeader))
-            throw std::exception("Binary size too small");
-        if (header->HeaderGuid != header->c_ValidHeaderGuid)
-            throw std::exception("Invalid binary header");
-        if (lengths[0] < header->ComputeFullBlobSize())
-            throw std::exception("Binary size provided is smaller than expected, binary appears truncated");
-    }
-    catch (std::exception& ex)
-    {
-        if (binary_status)
-            *binary_status = CL_INVALID_BINARY;
-        return ReportError(ex.what(), CL_INVALID_BINARY);
-    }
+        bool ReturnError = false;
 
-    try
-    {
-        unique_spirv BinaryHolder(new clc_object,
-            [](clc_object* obj)
+        std::vector<Device::ref_ptr_int> device_refs;
+        for (cl_uint i = 0; i < num_devices; ++i)
+        {
+            Device* device = static_cast<Device*>(device_list[i]);
+            if (!context.ValidDeviceForContext(*device))
+            {
+                return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            }
+
+            if (!lengths[i] || !binaries[i])
+            {
+                if (binary_status)
+                    binary_status[i] = CL_INVALID_VALUE;
+                ReportError("lengths, binaries, and the entries within must not be NULL.", CL_INVALID_VALUE);
+                ReturnError = true;
+            }
+
+            auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[i]);
+            try
+            {
+                if (lengths[i] < sizeof(ProgramBinaryHeader))
+                    throw std::exception("Binary size too small");
+                if (header->HeaderGuid != header->c_ValidHeaderGuid)
+                    throw std::exception("Invalid binary header");
+                if (lengths[i] < header->ComputeFullBlobSize())
+                    throw std::exception("Binary size provided is smaller than expected, binary appears truncated");
+            }
+            catch (std::exception& ex)
+            {
+                if (binary_status)
+                    binary_status[i] = CL_INVALID_BINARY;
+                ReportError(ex.what(), CL_INVALID_BINARY);
+                ReturnError = true;
+            }
+            device_refs.emplace_back(device);
+        }
+        if (ReturnError)
+        {
+            return nullptr;
+        }
+
+        std::unique_ptr<Program> NewProgram(new Program(context, device_refs));
+
+        for (cl_uint i = 0; i < num_devices; ++i)
+        {
+            auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[i]);
+            unique_spirv BinaryHolder(new clc_object,
+                [](clc_object* obj)
             {
                 if (obj->spvbin.data)
                     delete[] reinterpret_cast<byte*>(obj->spvbin.data);
                 delete obj;
             });
-        BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[header->BinarySize]);
-        BinaryHolder->spvbin.size = header->BinarySize;
-        memcpy(BinaryHolder->spvbin.data, header->GetBinary(), header->BinarySize);
+            BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[header->BinarySize]);
+            BinaryHolder->spvbin.size = header->BinarySize;
+            memcpy(BinaryHolder->spvbin.data, header->GetBinary(), header->BinarySize);
+            NewProgram->StoreBinary(static_cast<Device*>(device_list[i]), std::move(BinaryHolder), header->BinaryType);
+
+            if (binary_status) *binary_status = CL_SUCCESS;
+        }
+
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        if (binary_status) *binary_status = CL_SUCCESS;
-        return new Program(context, std::move(BinaryHolder), header->BinaryType);
+        return NewProgram.release();
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -232,21 +256,25 @@ clBuildProgram(cl_program           program_,
     Context& context = program.GetContext();
     auto ReportError = context.GetErrorReporter();
 
-    if (num_devices > 1)
-    {
-        return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
-    }
-
+    std::vector<Device::ref_ptr_int> device_refs;
     if (device_list)
     {
-        Device* device = static_cast<Device*>(device_list[0]);
-        if (device != &context.GetDevice())
+        for (cl_uint i = 0; i < num_devices; ++i)
         {
-            return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            Device* device = static_cast<Device*>(device_list[i]);
+            if (!context.ValidDeviceForContext(*device))
+            {
+                return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            }
+            device_refs.emplace_back(device);
         }
     }
+    else
+    {
+        device_refs = context.GetDevices();
+    }
 
-    return program.Build(options, pfn_notify, user_data);
+    return program.Build(std::move(device_refs), options, pfn_notify, user_data);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -269,21 +297,25 @@ clCompileProgram(cl_program           program_,
     Context& context = program.GetContext();
     auto ReportError = context.GetErrorReporter();
 
-    if (num_devices > 1)
-    {
-        return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
-    }
-
+    std::vector<Device::ref_ptr_int> device_refs;
     if (device_list)
     {
-        Device* device = static_cast<Device*>(device_list[0]);
-        if (device != &context.GetDevice())
+        for (cl_uint i = 0; i < num_devices; ++i)
         {
-            return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            Device* device = static_cast<Device*>(device_list[i]);
+            if (!context.ValidDeviceForContext(*device))
+            {
+                return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            }
+            device_refs.emplace_back(device);
         }
     }
+    else
+    {
+        device_refs = context.GetDevices();
+    }
 
-    return program.Compile(options, num_input_headers, input_headers, header_include_names, pfn_notify, user_data);
+    return program.Compile(std::move(device_refs), options, num_input_headers, input_headers, header_include_names, pfn_notify, user_data);
 }
 
 extern CL_API_ENTRY cl_program CL_API_CALL
@@ -306,23 +338,27 @@ clLinkProgram(cl_context           context_,
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter(errcode_ret);
 
-    if (num_devices > 1)
-    {
-        return ReportError("This platform only supports 1 device per context.", CL_INVALID_DEVICE);
-    }
-
+    std::vector<Device::ref_ptr_int> device_refs;
     if (device_list)
     {
-        Device* device = static_cast<Device*>(device_list[0]);
-        if (device != &context.GetDevice())
+        for (cl_uint i = 0; i < num_devices; ++i)
         {
-            return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            Device* device = static_cast<Device*>(device_list[i]);
+            if (!context.ValidDeviceForContext(*device))
+            {
+                return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
+            }
+            device_refs.emplace_back(device);
         }
+    }
+    else
+    {
+        device_refs = context.GetDevices();
     }
 
     try
     {
-        ref_ptr NewProgram(new Program(context), adopt_ref{});
+        ref_ptr NewProgram(new Program(context, std::move(device_refs)), adopt_ref{});
         cl_int LinkStatus = NewProgram->Link(options, num_input_programs, input_programs, pfn_notify, user_data);
         if (LinkStatus != CL_SUCCESS)
         {
@@ -358,80 +394,119 @@ clGetProgramInfo(cl_program         program_,
     {
     case CL_PROGRAM_REFERENCE_COUNT: return RetValue(program.GetRefCount());
     case CL_PROGRAM_CONTEXT: return RetValue((cl_context)&program.GetContext());
-    case CL_PROGRAM_NUM_DEVICES: return RetValue(1u);
-    case CL_PROGRAM_DEVICES: return RetValue((cl_device_id)&program.GetDevice());
+    case CL_PROGRAM_NUM_DEVICES: return RetValue((cl_uint)program.m_AssociatedDevices.size());
+    case CL_PROGRAM_DEVICES:
+        return CopyOutParameterImpl(program.m_AssociatedDevices.data(),
+                                    program.m_AssociatedDevices.size() * sizeof(program.m_AssociatedDevices[0]),
+                                    param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
     case CL_PROGRAM_BINARY_SIZES:
     {
-        std::lock_guard lock(program.m_Lock);
-        if (program.m_BinaryType == CL_PROGRAM_BINARY_TYPE_NONE)
-        {
-            return RetValue(0);
-        }
-        ProgramBinaryHeader header(program.m_OwnedBinary.get(), program.m_BinaryType);
-        return RetValue(header.ComputeFullBlobSize());
-    }
-    case CL_PROGRAM_BINARIES:
-    {
-        std::lock_guard lock(program.m_Lock);
-        if (param_value_size && param_value_size < sizeof(void*))
+        size_t OutSize = sizeof(size_t) * program.m_AssociatedDevices.size();
+        if (param_value_size && param_value_size < OutSize)
         {
             return CL_INVALID_VALUE;
         }
+        if (param_value_size_ret)
+        {
+            *param_value_size_ret = OutSize;
+        }
         if (param_value_size)
         {
-            new (reinterpret_cast<void**>(param_value)[0])
-                ProgramBinaryHeader(program.m_OwnedBinary.get(), program.m_BinaryType, ProgramBinaryHeader::CopyBinaryContentsTag{});
+            std::lock_guard lock(program.m_Lock);
+            size_t *Out = reinterpret_cast<size_t*>(param_value);
+            for (cl_uint i = 0; i < program.m_AssociatedDevices.size(); ++i)
+            {
+                Out[i] = 0;
+                auto& BuildData = program.m_BuildData[program.m_AssociatedDevices[i].Get()];
+                if (BuildData && BuildData->m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
+                {
+                    ProgramBinaryHeader header(BuildData->m_OwnedBinary.get(), BuildData->m_BinaryType);
+                    Out[i] = header.ComputeFullBlobSize();
+                }
+            }
+        }
+        return CL_SUCCESS;
+    }
+    case CL_PROGRAM_BINARIES:
+    {
+        size_t OutSize = sizeof(void*) * program.m_AssociatedDevices.size();
+        if (param_value_size && param_value_size < OutSize)
+        {
+            return CL_INVALID_VALUE;
         }
         if (param_value_size_ret)
         {
-            *param_value_size_ret = sizeof(void*);
+            *param_value_size_ret = OutSize;
+        }
+        if (param_value_size)
+        {
+            std::lock_guard lock(program.m_Lock);
+            void **Out = reinterpret_cast<void **>(param_value);
+            for (cl_uint i = 0; i < program.m_AssociatedDevices.size(); ++i)
+            {
+                if (!Out[i])
+                    continue;
+
+                auto& BuildData = program.m_BuildData[program.m_AssociatedDevices[i].Get()];
+                if (BuildData && BuildData->m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
+                {
+                    new (Out[i]) ProgramBinaryHeader(BuildData->m_OwnedBinary.get(), BuildData->m_BinaryType, ProgramBinaryHeader::CopyBinaryContentsTag{});
+                }
+            }
         }
         return CL_SUCCESS;
     }
     case CL_PROGRAM_NUM_KERNELS:
     {
         std::lock_guard lock(program.m_Lock);
-        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
-            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        for (auto& pair : program.m_BuildData)
         {
-            return CL_INVALID_PROGRAM_EXECUTABLE;
+            if (pair.second &&
+                pair.second->m_BuildStatus == CL_BUILD_SUCCESS &&
+                pair.second->m_BinaryType == CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+            {
+                return RetValue(pair.second->m_Kernels.size());
+            }
         }
-        return RetValue(program.m_Kernels.size());
+        return CL_INVALID_PROGRAM_EXECUTABLE;
     }
     case CL_PROGRAM_KERNEL_NAMES:
     {
         std::lock_guard lock(program.m_Lock);
-        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
-            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        for (auto& pair : program.m_BuildData)
         {
-            return CL_INVALID_PROGRAM_EXECUTABLE;
-        }
-        size_t stringSize = 0;
-        for (auto&& [kernelName, kernel] : program.m_Kernels)
-        {
-            stringSize += kernelName.size();
-        }
-        stringSize += program.m_Kernels.size(); // 1 semicolon between each name + 1 null terminator
-        if (param_value_size && param_value_size < stringSize)
-        {
-            return CL_INVALID_VALUE;
-        }
-        if (param_value_size)
-        {
-            char* pOut = reinterpret_cast<char*>(param_value);
-            for (auto&& [kernelName, kernel] : program.m_Kernels)
+            if (pair.second &&
+                pair.second->m_BuildStatus == CL_BUILD_SUCCESS &&
+                pair.second->m_BinaryType == CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
             {
-                pOut = std::copy(kernelName.begin(), kernelName.end(), pOut);
-                *(pOut++) = ';';
+                size_t stringSize = 0;
+                for (auto&& [kernelName, kernel] : pair.second->m_Kernels)
+                {
+                    stringSize += kernelName.size();
+                }
+                stringSize += pair.second->m_Kernels.size(); // 1 semicolon between each name + 1 null terminator
+                if (param_value_size && param_value_size < stringSize)
+                {
+                    return CL_INVALID_VALUE;
+                }
+                if (param_value_size)
+                {
+                    char* pOut = reinterpret_cast<char*>(param_value);
+                    for (auto&& [kernelName, kernel] : pair.second->m_Kernels)
+                    {
+                        pOut = std::copy(kernelName.begin(), kernelName.end(), pOut);
+                        *(pOut++) = ';';
+                    }
+                    *(--pOut) = '\0';
+                }
+                if (param_value_size_ret)
+                {
+                    *param_value_size_ret = stringSize;
+                }
             }
-            *(--pOut) = '\0';
         }
-        if (param_value_size_ret)
-        {
-            *param_value_size_ret = stringSize;
-        }
-        return CL_SUCCESS;
+        return CL_INVALID_PROGRAM_EXECUTABLE;
     }
     }
 
@@ -457,18 +532,20 @@ clGetProgramBuildInfo(cl_program            program_,
         return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
     };
 
-    if (device != &program.GetDevice())
+    if (std::find_if(program.m_AssociatedDevices.begin(), program.m_AssociatedDevices.end(),
+                     [device](Device::ref_ptr_int const& d) {return d.Get() == device; }) == program.m_AssociatedDevices.end())
     {
         return program.GetContext().GetErrorReporter()("Invalid device.", CL_INVALID_DEVICE);
     }
 
     std::lock_guard lock(program.m_Lock);
+    auto& BuildData = program.m_BuildData[static_cast<Device*>(device)];
     switch (param_name)
     {
-    case CL_PROGRAM_BUILD_STATUS: return RetValue(program.m_BuildStatus);
-    case CL_PROGRAM_BUILD_OPTIONS: return RetValue(program.m_LastBuildOptions.c_str());
-    case CL_PROGRAM_BUILD_LOG: return RetValue(program.m_BuildLog.c_str());
-    case CL_PROGRAM_BINARY_TYPE: return RetValue(program.m_BinaryType);
+    case CL_PROGRAM_BUILD_STATUS: return RetValue(BuildData ? BuildData->m_BuildStatus : CL_BUILD_NONE);
+    case CL_PROGRAM_BUILD_OPTIONS: return RetValue(BuildData ? BuildData->m_LastBuildOptions.c_str() : "");
+    case CL_PROGRAM_BUILD_LOG: return RetValue(BuildData ? BuildData->m_BuildLog.c_str() : "");
+    case CL_PROGRAM_BINARY_TYPE: return RetValue(BuildData ? BuildData->m_BinaryType : CL_PROGRAM_BINARY_TYPE_NONE);
     }
 
     return program.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
@@ -477,22 +554,17 @@ clGetProgramBuildInfo(cl_program            program_,
 Program::Program(Context& Parent, std::string Source)
     : CLChildBase(Parent)
     , m_Source(std::move(Source))
+    , m_AssociatedDevices(Parent.GetDevices())
 {
 }
 
-Program::Program(Context& Parent, unique_spirv Binary, cl_program_binary_type Type)
+Program::Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices)
     : CLChildBase(Parent)
-    , m_OwnedBinary(std::move(Binary))
-    , m_BinaryType(Type)
+    , m_AssociatedDevices(std::move(Devices))
 {
 }
 
-Program::Program(Context& Parent)
-    : CLChildBase(Parent)
-{
-}
-
-cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
+cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* options, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
 
@@ -507,25 +579,41 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
     {
         // Ensure that we can build
         std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus == CL_BUILD_IN_PROGRESS)
-        {
-            return ReportError("Cannot compile program: program currently being compiled.", CL_INVALID_OPERATION);
-        }
         if (m_NumLiveKernels > 0)
         {
             return ReportError("Cannot compile program: program has live kernels.", CL_INVALID_OPERATION);
         }
+        for (auto& device : Devices)
+        {
+            auto &BuildData = m_BuildData[device.Get()];
+            if (!BuildData)
+                continue;
+
+            if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
+            {
+                return ReportError("Cannot compile program: program currently being compiled.", CL_INVALID_OPERATION);
+            }
+            if (BuildData->m_NumPendingLinks > 0)
+            {
+                return ReportError("Cannot compile program: program currently being linked against.", CL_INVALID_OPERATION);
+            }
+        }
 
         // Update build status to indicate build is starting so nobody else can start a build
-        m_BuildStatus = CL_BUILD_IN_PROGRESS;
-        m_LastBuildOptions = options ? options : "";
+        auto BuildData = std::make_shared<PerDeviceData>();
+        Args.Common.BuildData = BuildData;
+        BuildData->m_LastBuildOptions = options ? options : "";
+        for (auto& device : Devices)
+        {
+            m_BuildData[device.Get()] = BuildData;
+        }
     }
 
     if (pfn_notify)
     {
         Args.Common.pfn_notify = pfn_notify;
         Args.Common.CallbackUserData = user_data;
-        GetDevice().QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
+        g_Platform->QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
             {
                 this->BuildImpl(Args);
             });
@@ -535,8 +623,7 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
     {
         BuildImpl(Args);
 
-        std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus != CL_BUILD_SUCCESS)
+        if (Args.Common.BuildData->m_BuildStatus != CL_BUILD_SUCCESS)
         {
             return CL_BUILD_PROGRAM_FAILURE;
         }
@@ -544,7 +631,7 @@ cl_int Program::Build(const char* options, Callback pfn_notify, void* user_data)
     }
 }
 
-cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
+cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
     if (m_Source.empty())
@@ -577,25 +664,41 @@ cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl
     {
         // Ensure that we can compile
         std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus == CL_BUILD_IN_PROGRESS)
-        {
-            return ReportError("Cannot compile program: program currently being compiled.", CL_INVALID_OPERATION);
-        }
         if (m_NumLiveKernels > 0)
         {
             return ReportError("Cannot compile program: program has live kernels.", CL_INVALID_OPERATION);
         }
+        for (auto& device : Devices)
+        {
+            auto &BuildData = m_BuildData[device.Get()];
+            if (!BuildData)
+                continue;
 
-        // Update build status to indicate compile is starting so nobody else can start a build
-        m_BuildStatus = CL_BUILD_IN_PROGRESS;
-        m_LastBuildOptions = options ? options : "";
+            if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
+            {
+                return ReportError("Cannot compile program: program currently being compiled.", CL_INVALID_OPERATION);
+            }
+            if (BuildData->m_NumPendingLinks > 0)
+            {
+                return ReportError("Cannot compile program: program currently being linked against.", CL_INVALID_OPERATION);
+            }
+        }
+
+        // Update build status to indicate build is starting so nobody else can start a build
+        auto BuildData = std::make_shared<PerDeviceData>();
+        Args.Common.BuildData = BuildData;
+        BuildData->m_LastBuildOptions = options ? options : "";
+        for (auto& device : Devices)
+        {
+            m_BuildData[device.Get()] = BuildData;
+        }
     }
 
     if (pfn_notify)
     {
         Args.Common.pfn_notify = pfn_notify;
         Args.Common.CallbackUserData = user_data;
-        GetDevice().QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
+        g_Platform->QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
             {
                 this->CompileImpl(Args);
             });
@@ -605,8 +708,7 @@ cl_int Program::Compile(const char* options, cl_uint num_input_headers, const cl
     {
         CompileImpl(Args);
 
-        std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus != CL_BUILD_SUCCESS)
+        if (Args.Common.BuildData->m_BuildStatus != CL_BUILD_SUCCESS)
         {
             return CL_COMPILE_PROGRAM_FAILURE;
         }
@@ -632,34 +734,95 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
         {
             return ReportError("Invalid header or header name.", CL_INVALID_VALUE);
         }
+    }
+
+    // Validation pass
+    for (auto& Device : m_AssociatedDevices)
+    {
+        unsigned ThisDeviceValidPrograms = 0;
+
+        for (cl_uint i = 0; i < num_input_programs; ++i)
+        {
+            Program& lib = *static_cast<Program*>(input_programs[i]);
+
+            std::lock_guard Lock(lib.m_Lock);
+            auto& BuildData = lib.m_BuildData[Device.Get()];
+            if (!BuildData)
+            {
+                if (ThisDeviceValidPrograms)
+                    return ReportError("Invalid input program: no build data for one of requested devices.", CL_INVALID_OPERATION);
+                continue;
+            }
+            if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
+            {
+                return ReportError("Invalid input program: program is currently being built.", CL_INVALID_OPERATION);
+            }
+            if (BuildData->m_BuildStatus == CL_BUILD_ERROR)
+            {
+                if (ThisDeviceValidPrograms)
+                    return ReportError("Invalid input program: program failed to be built.", CL_INVALID_OPERATION);
+            }
+            if (BuildData->m_BinaryType == CL_PROGRAM_BINARY_TYPE_NONE ||
+                BuildData->m_BinaryType == CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+            {
+                if (ThisDeviceValidPrograms)
+                    return ReportError("Invalid input program: program does not contain library or compiled object.", CL_INVALID_OPERATION);
+            }
+            ++ThisDeviceValidPrograms;
+        }
+    }
+
+    bool AllDevicesSameProgram = true;
+    for (cl_uint i = 0; i < num_input_programs; ++i)
+    {
         Program& lib = *static_cast<Program*>(input_programs[i]);
-        std::lock_guard Lock(lib.m_Lock);
-        if (lib.m_BuildStatus == CL_BUILD_IN_PROGRESS)
-        {
-            return ReportError("Invalid input program: program is currently being built.", CL_INVALID_OPERATION);
-        }
-        if (lib.m_BuildStatus == CL_BUILD_ERROR)
-        {
-            return ReportError("Invalid input program: program failed to be built.", CL_INVALID_OPERATION);
-        }
-        if (lib.m_BinaryType == CL_PROGRAM_BINARY_TYPE_NONE ||
-            lib.m_BinaryType == CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
-        {
-            return ReportError("Invalid input program: program does not contain library or compiled object.", CL_INVALID_OPERATION);
-        }
         Args.LinkPrograms.emplace_back(&lib);
+
+        std::shared_ptr<PerDeviceData> BuildData;
+        std::lock_guard Lock(lib.m_Lock);
+        for (auto& Device : m_AssociatedDevices)
+        {
+            auto& ThisDeviceBuildData = lib.m_BuildData[Device.Get()];
+            if (BuildData &&
+                ThisDeviceBuildData != BuildData)
+            {
+                AllDevicesSameProgram = false;
+            }
+            BuildData = ThisDeviceBuildData;
+            ++ThisDeviceBuildData->m_NumPendingLinks;
+        }
+        if (!AllDevicesSameProgram)
+        {
+            break;
+        }
     }
 
     // Note: Don't need to take our own lock, since no other thread can have access to this object
     // Update build status to indicate compile is starting so nobody else can start a build
-    m_BuildStatus = CL_BUILD_IN_PROGRESS;
-    m_LastBuildOptions = options ? options : "";
+    if (AllDevicesSameProgram)
+    {
+        Args.Common.BuildData = std::make_shared<PerDeviceData>();
+        for (auto& Device : m_AssociatedDevices)
+        {
+            m_BuildData[Device.Get()] = Args.Common.BuildData;
+        }
+        Args.Common.BuildData->m_LastBuildOptions = options ? options : "";
+    }
+    else
+    {
+        for (auto& Device : m_AssociatedDevices)
+        {
+            auto& BuildData = m_BuildData[Device.Get()];
+            BuildData = std::make_shared<PerDeviceData>();
+            BuildData->m_LastBuildOptions = options ? options : "";
+        }
+    }
 
     if (pfn_notify)
     {
         Args.Common.pfn_notify = pfn_notify;
         Args.Common.CallbackUserData = user_data;
-        GetDevice().QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
+        g_Platform->QueueProgramOp([this, Args, selfRef = ref_ptr_int(this)]()
             {
                 this->LinkImpl(Args);
             });
@@ -669,8 +832,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     {
         LinkImpl(Args);
 
-        std::lock_guard Lock(m_Lock);
-        if (m_BuildStatus != CL_BUILD_SUCCESS)
+        if (Args.Common.BuildData->m_BuildStatus != CL_BUILD_SUCCESS)
         {
             return CL_LINK_PROGRAM_FAILURE;
         }
@@ -678,13 +840,21 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     }
 }
 
-const clc_dxil_object* Program::GetKernel(const char* name) const
+void Program::StoreBinary(Device *Device, unique_spirv OwnedBinary, cl_program_binary_type Type)
 {
-    std::lock_guard lock(m_Lock);
-    auto iter = m_Kernels.find(name);
-    if (iter == m_Kernels.end())
-        return nullptr;
-    return iter->second.get();
+    std::lock_guard Lock(m_Lock);
+    auto& BuildData = m_BuildData[Device];
+    assert(!BuildData);
+    BuildData = std::make_shared<PerDeviceData>();
+    BuildData->m_OwnedBinary = std::move(OwnedBinary);
+    BuildData->m_BinaryType = Type;
+    BuildData->m_BuildStatus = CL_BUILD_NONE;
+}
+
+const clc_object* Program::GetSpirV(Device* device) const
+{
+    std::lock_guard Lock(m_Lock);
+    return m_BuildData.find(device)->second->m_OwnedBinary.get();
 }
 
 void Program::KernelCreated()
@@ -706,11 +876,12 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
     if (SupportCompilerOptions)
     {
         optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
-        if (m_Parent->GetDevice().IsMCDM())
-        {
-            // Clang defines this by default for SPIR targets
-            optionsStruct.Args.push_back("-U__IMAGE_SUPPORT__");
-        }
+        // TODO: Should we do a dual-compile if a context includes MCDM devices?
+        //if (m_Parent->GetDevice().IsMCDM())
+        //{
+        //    // Clang defines this by default for SPIR targets
+        //    optionsStruct.Args.push_back("-U__IMAGE_SUPPORT__");
+        //}
     }
 
     std::string curOption;
@@ -834,6 +1005,7 @@ void Program::BuildImpl(BuildArgs const& Args)
     auto Context = g_Platform->GetCompilerContext();
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
+    auto& BuildData = Args.Common.BuildData;
     if (!m_Source.empty())
     {
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
@@ -857,32 +1029,31 @@ void Program::BuildImpl(BuildArgs const& Args)
         link_args.in_objs = &rawCompiledObject;
         link_args.num_in_objs = 1;
         unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
-        m_OwnedBinary = std::move(object);
+        BuildData->m_OwnedBinary = std::move(object);
     }
     else
     {
-        unique_spirv loadedObject = std::move(m_OwnedBinary);
-        const clc_object* rawCompiledObject = loadedObject.get();
+        const clc_object* rawCompiledObject = BuildData->m_OwnedBinary.get();
 
         clc_linker_args link_args = {};
         link_args.create_library = Args.Common.CreateLibrary;
         link_args.in_objs = &rawCompiledObject;
         link_args.num_in_objs = 1;
         unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
-        m_OwnedBinary = std::move(object);
+        BuildData->m_OwnedBinary = std::move(object);
     }
 
     std::lock_guard Lock(m_Lock);
-    if (m_OwnedBinary)
+    if (BuildData->m_OwnedBinary)
     {
-        m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
-        m_BuildStatus = CL_BUILD_SUCCESS;
+        BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+        BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
+        BuildData->CreateKernels();
     }
     else
     {
-        m_BuildStatus = CL_BUILD_ERROR;
+        BuildData->m_BuildStatus = CL_BUILD_ERROR;
     }
-    CreateKernels();
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
@@ -891,6 +1062,7 @@ void Program::BuildImpl(BuildArgs const& Args)
 
 void Program::CompileImpl(CompileArgs const& Args)
 {
+    auto& BuildData = Args.Common.BuildData;
     auto& Compiler = g_Platform->GetCompiler();
     auto Context = g_Platform->GetCompilerContext();
     auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
@@ -920,13 +1092,13 @@ void Program::CompileImpl(CompileArgs const& Args)
         std::lock_guard Lock(m_Lock);
         if (object)
         {
-            m_BinaryType = CL_PROGRAM_BINARY_TYPE_COMPILED_OBJECT;
-            m_BuildStatus = CL_BUILD_SUCCESS;
-            m_OwnedBinary = std::move(object);
+            BuildData->m_OwnedBinary = std::move(object);
+            BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_COMPILED_OBJECT;
+            BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
         }
         else
         {
-            m_BuildStatus = CL_BUILD_ERROR;
+            BuildData->m_BuildStatus = CL_BUILD_ERROR;
         }
     }
     if (Args.Common.pfn_notify)
@@ -943,35 +1115,60 @@ void Program::LinkImpl(LinkArgs const& Args)
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     std::vector<const clc_object*> objects;
     objects.reserve(Args.LinkPrograms.size());
-    std::transform(Args.LinkPrograms.begin(), Args.LinkPrograms.end(), std::back_inserter(objects),
-        [](Program::ref_ptr_int const& program) { return program->m_OwnedBinary.get(); });
 
     clc_linker_args link_args = {};
     link_args.create_library = Args.Common.CreateLibrary;
-    link_args.in_objs = objects.data();
-    link_args.num_in_objs = (unsigned)objects.size();
-    unique_spirv linkedObject(link(Context, &link_args, nullptr), free);
 
-    std::lock_guard Lock(m_Lock);
-    if (linkedObject)
+    for (auto& Device : m_AssociatedDevices)
     {
-        m_BinaryType = Args.Common.CreateLibrary ? 
-            CL_PROGRAM_BINARY_TYPE_LIBRARY : CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
-        m_BuildStatus = CL_BUILD_SUCCESS;
-        m_OwnedBinary = std::move(linkedObject);
+        objects.clear();
+        for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
+        {
+            std::lock_guard Lock(Args.LinkPrograms[i]->m_Lock);
+            auto& BuildData = Args.LinkPrograms[i]->m_BuildData[Device.Get()];
+            if (BuildData)
+                objects.push_back(BuildData->m_OwnedBinary.get());
+        }
+
+        {
+            std::lock_guard Lock(m_Lock);
+            auto& BuildData = m_BuildData[Device.Get()];
+            if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
+            {
+                link_args.in_objs = objects.data();
+                link_args.num_in_objs = (unsigned)objects.size();
+                unique_spirv linkedObject(link(Context, &link_args, nullptr), free);
+
+                if (linkedObject)
+                {
+                    BuildData->m_OwnedBinary = std::move(linkedObject);
+                    BuildData->m_BinaryType = Args.Common.CreateLibrary ?
+                        CL_PROGRAM_BINARY_TYPE_LIBRARY : CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+                    BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
+                    BuildData->CreateKernels();
+                }
+                else
+                {
+                    BuildData->m_BuildStatus = CL_BUILD_ERROR;
+                }
+            }
+        }
+
+        for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
+        {
+            std::lock_guard Lock(Args.LinkPrograms[i]->m_Lock);
+            auto& BuildData = Args.LinkPrograms[i]->m_BuildData[Device.Get()];
+            if (BuildData)
+                --BuildData->m_NumPendingLinks;
+        }
     }
-    else
-    {
-        m_BuildStatus = CL_BUILD_ERROR;
-    }
-    CreateKernels();
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
     }
 }
 
-void Program::CreateKernels()
+void Program::PerDeviceData::CreateKernels()
 {
     if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         return;
@@ -981,7 +1178,6 @@ void Program::CreateKernels()
     auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
     auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 
-    std::lock_guard Lock(m_Lock);
     for (auto kernelMeta = m_OwnedBinary->kernels; kernelMeta != m_OwnedBinary->kernels + m_OwnedBinary->num_kernels; ++kernelMeta)
     {
         auto name = kernelMeta->name;

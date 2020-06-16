@@ -51,7 +51,7 @@ clCreateCommandQueueWithProperties(cl_context               context_,
         return ReportError("Invalid device.", CL_INVALID_DEVICE);
     }
     Device& device = *static_cast<Device*>(device_);
-    if (&context.GetDevice() != &device)
+    if (!context.ValidDeviceForContext(device))
     {
         return ReportError("Provided device not associated with provided context.", CL_INVALID_DEVICE);
     }
@@ -187,7 +187,7 @@ clFlush(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
     auto ReportError = queue.GetContext().GetErrorReporter();
     try
     {
-        queue.Flush(queue.GetDevice().GetTaskPoolLock());
+        queue.Flush(g_Platform->GetTaskPoolLock());
         return CL_SUCCESS;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }

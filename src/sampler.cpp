@@ -33,8 +33,18 @@ static D3D12_SAMPLER_DESC TranslateSamplerDesc(Sampler::Desc const& desc)
 Sampler::Sampler(Context& Parent, Desc const& desc)
     : CLChildBase(Parent)
     , m_Desc(desc)
-    , m_UnderlyingSampler(&Parent.GetDevice().ImmCtx(), TranslateSamplerDesc(desc))
 {
+}
+
+D3D12TranslationLayer::Sampler& Sampler::GetUnderlying(Device* device)
+{
+    std::lock_guard Lock(m_Lock);
+    auto iter = m_UnderlyingSamplers.find(device);
+    if (iter != m_UnderlyingSamplers.end())
+        return iter->second;
+
+    auto ret = m_UnderlyingSamplers.try_emplace(device, &device->ImmCtx(), TranslateSamplerDesc(m_Desc));
+    return ret.first->second;
 }
 
 

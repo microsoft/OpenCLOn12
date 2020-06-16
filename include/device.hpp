@@ -6,14 +6,7 @@
 #include <optional>
 #include <mutex>
 
-#include <Scheduler.hpp>
-
 using ImmCtx = D3D12TranslationLayer::ImmediateContext;
-
-struct TaskPoolLock
-{
-    std::unique_lock<std::recursive_mutex> m_Lock;
-};
 
 class Task;
 
@@ -39,39 +32,9 @@ public:
     ImmCtx& ImmCtx() { return m_ImmCtx.value(); }
     UINT64 GetTimestampFrequency() const { return m_TimestampFrequency; }
 
-    TaskPoolLock GetTaskPoolLock();
     void SubmitTask(Task*, TaskPoolLock const&);
     void ReadyTask(Task*, TaskPoolLock const&);
     void Flush(TaskPoolLock const&);
-
-    template <typename Fn> void QueueCallback(Fn&& fn)
-    {
-        struct Context { Fn m_fn; };
-        std::unique_ptr<Context> context(new Context{ std::forward<Fn>(fn) });
-        m_CallbackScheduler.QueueTask({
-            [](void* pContext)
-            {
-                std::unique_ptr<Context> context(static_cast<Context*>(pContext));
-                context->m_fn();
-            },
-            [](void* pContext) { delete static_cast<Context*>(pContext); },
-            context.get() });
-        context.release();
-    }
-    template <typename Fn> void QueueProgramOp(Fn&& fn)
-    {
-        struct Context { Fn m_fn; };
-        std::unique_ptr<Context> context(new Context{ std::forward<Fn>(fn) });
-        m_CompileAndLinkScheduler.QueueTask({
-            [](void* pContext)
-            {
-                std::unique_ptr<Context> context(static_cast<Context*>(pContext));
-                context->m_fn();
-            },
-            [](void* pContext) { delete static_cast<Context*>(pContext); },
-            context.get() });
-        context.release();
-    }
 
     std::unique_ptr<D3D12TranslationLayer::PipelineState> CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc);
 
@@ -89,13 +52,9 @@ protected:
     std::optional<::ImmCtx> m_ImmCtx;
     unsigned m_ContextCount = 0;
 
-    std::recursive_mutex m_TaskLock;
-
     std::unique_ptr<Submission> m_RecordingSubmission;
 
-    BackgroundTaskScheduler::Scheduler m_CallbackScheduler;
     BackgroundTaskScheduler::Scheduler m_CompletionScheduler;
-    BackgroundTaskScheduler::Scheduler m_CompileAndLinkScheduler;
 
     // All PSO creations need to be kicked off behind this lock,
     // which guards the root signature cache in the immediate context

@@ -42,6 +42,8 @@ using Microsoft::WRL::ComPtr;
 #include <wil/result_macros.h>
 #include "XPlatHelpers.h"
 
+#include <Scheduler.hpp>
+
 #include <TraceLoggingProvider.h>
 TRACELOGGING_DECLARE_PROVIDER(g_hOpenCLOn12Provider);
 template <typename T> struct LifetimeLogger
@@ -83,6 +85,11 @@ public:
 struct adopt_ref {};
 struct clc_context;
 
+struct TaskPoolLock
+{
+    std::unique_lock<std::recursive_mutex> m_Lock;
+};
+
 class Device;
 class Platform : public CLBase<Platform, cl_platform_id>
 {
@@ -104,6 +111,9 @@ public:
     clc_context* GetCompilerContext();
     void UnloadCompiler();
 
+    TaskPoolLock GetTaskPoolLock();
+    void FlushAllDevices(TaskPoolLock const& Lock);
+
     class ref_int
     {
         Platform& m_obj;
@@ -114,6 +124,39 @@ public:
         Platform* operator->() const { return &m_obj; }
     };
 
+    template <typename Fn> void QueueCallback(Fn&& fn)
+    {
+        struct Context { Fn m_fn; };
+        std::unique_ptr<Context> context(new Context{ std::forward<Fn>(fn) });
+        m_CallbackScheduler.QueueTask({
+            [](void* pContext)
+            {
+                std::unique_ptr<Context> context(static_cast<Context*>(pContext));
+                context->m_fn();
+            },
+            [](void* pContext) { delete static_cast<Context*>(pContext); },
+            context.get() });
+        context.release();
+    }
+
+    template <typename Fn> void QueueProgramOp(Fn&& fn)
+    {
+        struct Context { Fn m_fn; };
+        std::unique_ptr<Context> context(new Context{ std::forward<Fn>(fn) });
+        m_CompileAndLinkScheduler.QueueTask({
+            [](void* pContext)
+            {
+                std::unique_ptr<Context> context(static_cast<Context*>(pContext));
+                context->m_fn();
+            },
+            [](void* pContext) { delete static_cast<Context*>(pContext); },
+            context.get() });
+        context.release();
+    }
+
+    void DeviceInit();
+    void DeviceUninit();
+
 protected:
     ComPtr<IDXCoreAdapterList> m_spAdapters;
     std::vector<std::unique_ptr<Device>> m_Devices;
@@ -121,6 +164,12 @@ protected:
     std::recursive_mutex m_ModuleLock;
     XPlatHelpers::unique_module m_Compiler, m_DXIL;
     std::unique_ptr<clc_context, void(*)(clc_context*)> m_CompilerContext = { nullptr, nullptr };
+    unsigned m_ActiveDeviceCount = 0;
+
+    std::recursive_mutex m_TaskLock;
+
+    BackgroundTaskScheduler::Scheduler m_CallbackScheduler;
+    BackgroundTaskScheduler::Scheduler m_CompileAndLinkScheduler;
 };
 extern std::unique_ptr<Platform> g_Platform;
 

@@ -17,20 +17,58 @@ clCreateKernel(cl_program      program_,
 
     Program& program = *static_cast<Program*>(program_);
     auto ReportError = program.GetContext().GetErrorReporter(errcode_ret);
-    const clc_dxil_object* kernel;
+    const clc_dxil_object* kernel = nullptr;
 
     {
         std::lock_guard Lock(program.m_Lock);
-        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
-            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+        cl_uint DeviceCountWithProgram = 0, DeviceCountWithKernel = 0;
+        for (auto& Device : program.m_AssociatedDevices)
+        {
+            auto& BuildData = program.m_BuildData[Device.Get()];
+            if (!BuildData ||
+                BuildData->m_BuildStatus != CL_BUILD_SUCCESS ||
+                BuildData->m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+            {
+                continue;
+            }
+
+            ++DeviceCountWithProgram;
+            auto iter = BuildData->m_Kernels.find(kernel_name);
+            if (iter == BuildData->m_Kernels.end())
+            {
+                continue;
+            }
+
+            ++DeviceCountWithKernel;
+            if (kernel)
+            {
+                if (kernel->kernel->num_args != iter->second->kernel->num_args)
+                {
+                    return ReportError("Kernel argument count differs between devices.", CL_INVALID_KERNEL_DEFINITION);
+                }
+                for (unsigned i = 0; i < kernel->kernel->num_args; ++i)
+                {
+                    auto& a = kernel->kernel->args[i];
+                    auto& b = iter->second->kernel->args[i];
+                    if (strcmp(a.type_name, b.type_name) != 0 ||
+                        strcmp(a.name, b.name) != 0 ||
+                        a.address_qualifier != b.address_qualifier ||
+                        a.access_qualifier != b.access_qualifier ||
+                        a.type_qualifier != b.type_qualifier)
+                    {
+                        return ReportError("Kernel argument differs between devices.", CL_INVALID_KERNEL_DEFINITION);
+                    }
+                }
+            }
+            kernel = iter->second.get();
+        }
+        if (!DeviceCountWithProgram)
         {
             return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
         }
-
-        kernel = program.GetKernel(kernel_name);
-        if (kernel == nullptr)
+        if (!DeviceCountWithKernel)
         {
-            return ReportError("No kernel with that name present in program.", CL_INVALID_KERNEL_NAME);
+            return ReportError("No kernel with that name found.", CL_INVALID_KERNEL_NAME);
         }
     }
 
@@ -57,44 +95,63 @@ clCreateKernelsInProgram(cl_program     program_,
     Program& program = *static_cast<Program*>(program_);
     auto ReportError = program.GetContext().GetErrorReporter();
 
+    try
     {
-        std::lock_guard Lock(program.m_Lock);
-        if (program.m_BuildStatus != CL_BUILD_SUCCESS ||
-            program.m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
-        {
-            return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
-        }
-        if (num_kernels > 0 && num_kernels < program.m_Kernels.size())
-        {
-            return ReportError("num_kernels is too small.", CL_INVALID_VALUE);
-        }
-    }
+        std::map<std::string, Kernel::ref_ptr> temp;
 
-    if (num_kernels > 0)
-    {
-        try
         {
-            std::vector<Kernel::ref_ptr> temp;
-            temp.resize(program.m_Kernels.size());
-            std::transform(program.m_Kernels.begin(), program.m_Kernels.end(), temp.begin(),
-                [&program](std::pair<const std::string, unique_dxil> const& pair)
-                {
-                    return Kernel::ref_ptr(new Kernel(program, pair.second.get()), adopt_ref{});
-                });
-
-            for (cl_uint i = 0; i < program.m_Kernels.size(); ++i)
+            std::lock_guard Lock(program.m_Lock);
+            cl_uint DeviceCountWithProgram = 0;
+            for (auto& Device : program.m_AssociatedDevices)
             {
-                kernels[i] = temp[i].Detach();
+                auto& BuildData = program.m_BuildData[Device.Get()];
+                if (!BuildData ||
+                    BuildData->m_BuildStatus != CL_BUILD_SUCCESS ||
+                    BuildData->m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
+                {
+                    continue;
+                }
+
+                for (auto& pair : BuildData->m_Kernels)
+                {
+                    temp.emplace(pair.first, nullptr);
+                }
+            }
+            if (!DeviceCountWithProgram)
+            {
+                return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
+            }
+            if (num_kernels && num_kernels < temp.size())
+            {
+                return ReportError("num_kernels is too small.", CL_INVALID_VALUE);
             }
         }
-        catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
-        catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
-        catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+        if (num_kernels_ret)
+        {
+            *num_kernels_ret = (cl_uint)temp.size();
+        }
+
+        if (num_kernels)
+        {
+            for (auto& pair : temp)
+            {
+                cl_int error = CL_SUCCESS;
+                pair.second.Attach(static_cast<Kernel*>(clCreateKernel(program_, pair.first.c_str(), &error)));
+                if (error != CL_SUCCESS)
+                {
+                    return error;
+                }
+            }
+            for (auto& pair : temp)
+            {
+                *kernels = pair.second.Detach();
+                ++kernels;
+            }
+        }
     }
-    if (num_kernels_ret)
-    {
-        *num_kernels_ret = (cl_uint)program.m_Kernels.size();
-    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
     return CL_SUCCESS;
 }
 
@@ -201,9 +258,7 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
 {
     m_UAVs.resize(m_pDxil->metadata.num_uavs);
     m_SRVs.resize(m_pDxil->metadata.num_srvs);
-    m_KernelArgResources.resize(m_pDxil->metadata.num_uavs + m_pDxil->metadata.num_srvs);
     m_Samplers.resize(m_pDxil->metadata.num_samplers);
-    m_KernelArgSamplers.resize(m_pDxil->metadata.num_samplers);
     m_ArgMetadataToCompiler.resize(m_pDxil->kernel->num_args);
     size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
     m_KernelArgsCbData.resize(KernelInputsCbSize);
@@ -214,7 +269,7 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
         auto& samplerMeta = m_pDxil->metadata.const_samplers[i];
         Sampler::Desc desc = { samplerMeta.normalized_coords, samplerMeta.addressing_mode, samplerMeta.filter_mode };
         m_ConstSamplers[i] = new Sampler(m_Parent->GetContext(), desc);
-        m_Samplers[samplerMeta.sampler_id] = &m_ConstSamplers[i]->GetUnderlying();
+        m_Samplers[samplerMeta.sampler_id] = m_ConstSamplers[i].Get();
     }
 
     for (cl_uint i = 0; i < m_pDxil->metadata.num_consts; ++i)
@@ -225,7 +280,7 @@ Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
                                                               constMeta.size, constMeta.data,
                                                               nullptr));
         m_InlineConsts.emplace_back(resource, adopt_ref{});
-        m_UAVs[constMeta.uav_id] = &resource->GetUAV();
+        m_UAVs[constMeta.uav_id] = resource;
     }
 
     m_Parent->KernelCreated();
@@ -282,12 +337,10 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 {
                     return ReportError("Invalid mem object flags, binding write-only image to read-write image argument.", CL_INVALID_ARG_VALUE);
                 }
-                D3D12TranslationLayer::UAV* uav = resource ? &resource->GetUAV() : nullptr;
                 for (cl_uint i = 0; i < m_pDxil->metadata.args[arg_index].image.num_buf_ids; ++i)
                 {
-                    m_UAVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = uav;
+                    m_UAVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = resource;
                 }
-                m_KernelArgResources[m_pDxil->metadata.args[arg_index].image.buf_ids[0]] = resource;
             }
             else
             {
@@ -295,13 +348,10 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 {
                     return ReportError("Invalid mem object flags, binding write-only image to read-only image argument.", CL_INVALID_ARG_VALUE);
                 }
-                D3D12TranslationLayer::SRV* srv = resource ? &resource->GetSRV() : nullptr;
                 for (cl_uint i = 0; i < m_pDxil->metadata.args[arg_index].image.num_buf_ids; ++i)
                 {
-                    m_SRVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = srv;
+                    m_SRVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = resource;
                 }
-                m_KernelArgResources[m_pDxil->metadata.num_uavs +
-                    m_pDxil->metadata.args[arg_index].image.buf_ids[0]] = resource;
             }
 
             // Store image format in the kernel args
@@ -325,16 +375,15 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             }
             uint64_t *buffer_val = reinterpret_cast<uint64_t*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset);
             auto buf_id = m_pDxil->metadata.args[arg_index].globconstptr.buf_id;
+            m_UAVs[buf_id] = resource;
             if (resource)
             {
-                m_UAVs[buf_id] = &resource->GetUAV();
                 *buffer_val = (uint64_t)buf_id << 32ull;
             }
             else
             {
                 *buffer_val = ~0ull;
             }
-            m_KernelArgResources[buf_id] = resource;
         }
 
         break;
@@ -349,9 +398,7 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             }
             cl_sampler samp = arg_value ? *reinterpret_cast<cl_sampler const*>(arg_value) : nullptr;
             Sampler* sampler = static_cast<Sampler*>(samp);
-            D3D12TranslationLayer::Sampler* underlying = sampler ? &sampler->GetUnderlying() : nullptr;
-            m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = underlying;
-            m_KernelArgSamplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = sampler;
+            m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = sampler;
             m_ArgMetadataToCompiler[arg_index].sampler.normalized_coords = sampler ? sampler->m_Desc.NormalizedCoords : 1u;
         }
         else

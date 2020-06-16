@@ -15,15 +15,16 @@ public:
     Kernel::ref_ptr_int m_Kernel;
     const std::array<uint32_t, 3> m_DispatchDims;
 
-    const std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
-    const std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
-    const std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
+    std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
+    std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
+    std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
     std::vector<clc_runtime_arg_info> m_ArgInfo;
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
 
-    std::vector<Resource::ref_ptr_int> m_KernelArgResources;
+    std::vector<Resource::ref_ptr_int> m_KernelArgUAVs;
+    std::vector<Resource::ref_ptr_int> m_KernelArgSRVs;
     std::vector<Sampler::ref_ptr_int> m_KernelArgSamplers;
 
     std::mutex m_SpecializeLock;
@@ -34,6 +35,17 @@ public:
     std::unique_ptr<D3D12TranslationLayer::PipelineState> m_PSO;
     bool m_SpecializeError = false;
 
+    void MigrateResources() final
+    {
+        for (auto& res : m_KernelArgUAVs)
+        {
+            res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        }
+        for (auto& res : m_KernelArgSRVs)
+        {
+            res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        }
+    }
     void RecordImpl() final;
     void OnComplete() final
     {
@@ -44,12 +56,13 @@ public:
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
         , m_Kernel(&kernel)
         , m_DispatchDims(dims)
-        , m_UAVs(kernel.m_UAVs)
-        , m_SRVs(kernel.m_SRVs)
-        , m_Samplers(kernel.m_Samplers)
+        , m_UAVs(kernel.m_UAVs.size(), nullptr)
+        , m_SRVs(kernel.m_SRVs.size(), nullptr)
+        , m_Samplers(kernel.m_Samplers.size(), nullptr)
         , m_ArgInfo(kernel.m_ArgMetadataToCompiler)
-        , m_KernelArgResources(kernel.m_KernelArgResources.begin(), kernel.m_KernelArgResources.end())
-        , m_KernelArgSamplers(kernel.m_KernelArgSamplers.begin(), kernel.m_KernelArgSamplers.end())
+        , m_KernelArgUAVs(kernel.m_UAVs.begin(), kernel.m_UAVs.end())
+        , m_KernelArgSRVs(kernel.m_SRVs.begin(), kernel.m_SRVs.end())
+        , m_KernelArgSamplers(kernel.m_Samplers.begin(), kernel.m_Samplers.end())
     {
         cl_uint KernelArgCBIndex = kernel.m_pDxil->metadata.kernel_inputs_cbv_id;
         cl_uint WorkPropertiesCBIndex = kernel.m_pDxil->metadata.work_properties_cbv_id;
@@ -95,6 +108,8 @@ public:
             }
         }
 
+        auto& Device = m_CommandQueue->GetDevice();
+
         D3D12TranslationLayer::ResourceCreationArgs Args = {};
         Args.m_appDesc.m_Subresources = 1;
         Args.m_appDesc.m_SubresourcesPerPlane = 1;
@@ -112,17 +127,17 @@ public:
         Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
         Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(Args.m_appDesc.m_Width);
         Args.m_heapDesc = CD3DX12_HEAP_DESC(Args.m_appDesc.m_Width,
-            m_Parent->GetDevice().GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD));
+            Device.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD));
         assert(Args.m_appDesc.m_Width % D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT == 0);
 
         m_KernelArgsCb =
             D3D12TranslationLayer::Resource::CreateResource(
-                &m_Parent->GetDevice().ImmCtx(),
+                &Device.ImmCtx(),
                 Args,
                 D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
 
         D3D11_SUBRESOURCE_DATA Data = { kernel.m_KernelArgsCbData.data() };
-        m_Parent->GetDevice().ImmCtx().UpdateSubresources(
+        Device.ImmCtx().UpdateSubresources(
             m_KernelArgsCb.get(),
             m_KernelArgsCb->GetFullSubresourceSubset(),
             &Data,
@@ -132,7 +147,7 @@ public:
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
-        m_Parent->GetDevice().QueueProgramOp([this, localSize, offset, numIterations,
+        g_Platform->QueueProgramOp([this, localSize, offset, numIterations, &Device,
                                              kernel = this->m_Kernel,
                                              refThis = Task::ref_int(*this)]()
         {
@@ -150,15 +165,15 @@ public:
                 std::copy(std::begin(localSize), std::end(localSize), config.local_size);
                 config.args = m_ArgInfo.data();
 
-                auto spirv = kernel->m_Parent->GetSpirV();
+                auto spirv = kernel->m_Parent->GetSpirV(&m_CommandQueue->GetDevice());
                 auto name = kernel->m_pDxil->kernel->name;
                 unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
 
                 SignBlob(specialized->binary.data, specialized->binary.size);
 
-                auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&m_Parent->GetDevice().ImmCtx(), specialized->binary.data, specialized->binary.size, kernel->m_ShaderDecls);
+                auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&Device.ImmCtx(), specialized->binary.data, specialized->binary.size, kernel->m_ShaderDecls);
                 D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
-                auto PSO = m_Parent->GetDevice().CreatePSO(Desc);
+                auto PSO = Device.CreatePSO(Desc);
 
                 {
                     std::lock_guard lock(m_SpecializeLock);
@@ -336,7 +351,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     {
         std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes, work_dim));
 
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -403,12 +418,17 @@ void ExecuteKernel::RecordImpl()
 
     if (m_SpecializeError)
     {
-        auto Lock = m_Parent->GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         Complete(CL_BUILD_PROGRAM_FAILURE, Lock);
         throw std::exception("Failed to specialize");
     }
 
-    auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+    auto& Device = m_CommandQueue->GetDevice();
+    std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return &resource->GetUAV(&Device); });
+    std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return &resource->GetSRV(&Device); });
+    std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return &sampler->GetUnderlying(&Device); });
+
+    auto& ImmCtx = Device.ImmCtx();
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
     ImmCtx.SetShaderResources<D3D12TranslationLayer::e_CS>(0, (UINT)m_SRVs.size(), m_SRVs.data());
     ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());

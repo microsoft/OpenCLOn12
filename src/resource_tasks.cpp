@@ -142,6 +142,10 @@ private:
     void CopyFromHostPtr(UpdateSubresourcesScenario);
     std::vector<CPrepareUpdateSubresourcesHelper> m_Helpers;
 
+    void MigrateResources() final
+    {
+        m_Target->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    }
     void RecordImpl() final;
     void OnComplete() final
     {
@@ -173,7 +177,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
     UINT NumSliceCopies = bIsRowByRowCopy ? m_Args.Depth : 1;
 
     D3D12TranslationLayer::CSubresourceSubset subresources =
-        m_Target->GetUnderlyingResource()->GetFullSubresourceSubset();
+        m_Target->GetUnderlyingResource(&m_CommandQueue->GetDevice())->GetFullSubresourceSubset();
     const cl_uint FormatBytes = GetFormatSizeBytes(m_Target->m_Format);
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
@@ -227,14 +231,14 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
                     DstBox.right = DstBox.left + m_Args.Width;
                 }
                 m_Helpers.emplace_back(
-                    *m_Target->GetUnderlyingResource(),
+                    *m_Target->GetUnderlyingResource(&m_CommandQueue->GetDevice()),
                     subresources,
                     pData,
                     &DstBox,
                     scenario,
                     pPattern,
                     PatternSize,
-                    m_Parent->GetDevice().ImmCtx());
+                    m_CommandQueue->GetDevice().ImmCtx());
             }
         }
 
@@ -252,7 +256,7 @@ void MemWriteFillTask::RecordImpl()
     {
         if (Helper.FinalizeNeeded)
         {
-            m_Parent->GetDevice().ImmCtx().FinalizeUpdateSubresources(
+            m_CommandQueue->GetDevice().ImmCtx().FinalizeUpdateSubresources(
                 &Helper.Dst, Helper.PreparedStorage.Base, Helper.PreparedStorage.LocalPlacementDescs);
         }
     }
@@ -389,7 +393,7 @@ cl_int clEnqueueWriteBufferRectImpl(cl_command_queue    command_queue,
     try
     {
         std::unique_ptr<Task> task(new MemWriteFillTask(context, resource, command_type, command_queue, CmdArgs, blocking_write == CL_FALSE));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -554,7 +558,7 @@ clEnqueueFillBuffer(cl_command_queue   command_queue,
     try
     {
         std::unique_ptr<Task> task(new MemWriteFillTask(context, resource, CL_COMMAND_FILL_BUFFER, command_queue, CmdArgs, false));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -650,7 +654,7 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
     try
     {
         std::unique_ptr<Task> task(new MemWriteFillTask(context, resource, CL_COMMAND_WRITE_IMAGE, command_queue, CmdArgs, blocking_write == CL_FALSE));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -689,6 +693,10 @@ private:
     Resource::ref_ptr_int m_Target;
     const Args m_Args;
 
+    void MigrateResources() final
+    {
+        m_Target->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    }
     void RecordImpl() final;
     void OnComplete() final
     {
@@ -705,14 +713,14 @@ FillImageTask::FillImageTask(Context &Parent, Resource &Target, cl_command_queue
 
 void FillImageTask::RecordImpl()
 {
-    auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+    auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
     bool UseLocalUAV = true;
     if (m_Args.FirstArraySlice == 0 &&
-        m_Args.NumArraySlices == m_Target->GetUnderlyingResource()->Parent()->ArraySize())
+        m_Args.NumArraySlices == m_Target->m_CreationArgs.m_appDesc.ArraySize())
     {
         UseLocalUAV = false;
     }
-    if (m_Args.DstZ != 0 && m_Args.Depth != m_Target->GetUnderlyingResource()->AppDesc()->Depth())
+    if (m_Args.DstZ != 0 && m_Args.Depth != m_Target->m_CreationArgs.m_appDesc.Depth())
     {
         UseLocalUAV = false;
     }
@@ -722,7 +730,7 @@ void FillImageTask::RecordImpl()
     {
         D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
         auto &UAVDesc = UAVDescWrapper.m_Desc12;
-        UAVDesc = m_Target->GetUAV().GetDesc12();
+        UAVDesc = m_Target->GetUAV(&m_CommandQueue->GetDevice()).GetDesc12();
         switch (UAVDesc.ViewDimension)
         {
         case D3D12_UAV_DIMENSION_TEXTURE1DARRAY:
@@ -738,9 +746,9 @@ void FillImageTask::RecordImpl()
             UAVDesc.Texture3D.WSize = m_Args.Depth;
             break;
         }
-        LocalUAV.emplace(&ImmCtx, UAVDescWrapper, *m_Target->GetUnderlyingResource());
+        LocalUAV.emplace(&ImmCtx, UAVDescWrapper, *m_Target->GetUnderlyingResource(&m_CommandQueue->GetDevice()));
     }
-    auto pUAV = UseLocalUAV ? &LocalUAV.value() : &m_Target->GetUAV();
+    auto pUAV = UseLocalUAV ? &LocalUAV.value() : &m_Target->GetUAV(&m_CommandQueue->GetDevice());
     D3D12_RECT Rect =
     {
         (LONG)m_Args.DstX,
@@ -828,7 +836,7 @@ clEnqueueFillImage(cl_command_queue   command_queue,
     try
     {
         std::unique_ptr<Task> task(new FillImageTask(context, resource, command_queue, CmdArgs));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -882,6 +890,10 @@ private:
     
     void RecordViaCopy();
 
+    void MigrateResources() final
+    {
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    }
     void RecordImpl() final;
     void OnComplete() final
     {
@@ -928,7 +940,7 @@ void MemReadTask::RecordImpl()
         return;
     }
 
-    auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+    auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
         D3D12TranslationLayer::MappedSubresource MapRet = {};
@@ -952,7 +964,7 @@ void MemReadTask::RecordImpl()
                 ((m_Args.Height - 1) * m_Args.SrcBufferRowPitch) +
                 ((m_Args.Depth - 1) * m_Args.SrcBufferSlicePitch);
         }
-        ImmCtx.Map(m_Source->GetUnderlyingResource(), i,
+        ImmCtx.Map(m_Source->GetActiveUnderlyingResource(), i,
             D3D12TranslationLayer::MAP_TYPE_READ, false,
             nullptr, &MapRet);
 
@@ -970,14 +982,14 @@ void MemReadTask::RecordImpl()
         }
         else
         {
-            assert(m_Source->GetUnderlyingResource()->Parent()->m_desc12.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN);
+            assert(m_Source->m_CreationArgs.m_desc12.Layout == D3D12_TEXTURE_LAYOUT_UNKNOWN);
             assert(m_Args.DstX == 0 && m_Args.DstY == 0 && m_Args.DstZ == 0);
-            auto pResource12 = m_Source->GetUnderlyingResource()->GetUnderlyingResource();
+            auto pResource12 = m_Source->GetActiveUnderlyingResource()->GetUnderlyingResource();
             D3D12TranslationLayer::ThrowFailure(pResource12->ReadFromSubresource(
                 m_Args.pData, m_Args.DstRowPitch, m_Args.DstSlicePitch, i, &SrcBox));
         }
 
-        ImmCtx.Unmap(m_Source->GetUnderlyingResource(), i, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
+        ImmCtx.Unmap(m_Source->GetActiveUnderlyingResource(), i, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
     }
 }
 
@@ -1112,7 +1124,7 @@ cl_int clEnqueueReadBufferRectImpl(cl_command_queue    command_queue,
     {
         std::unique_ptr<Task> task(new MemReadTask(context, resource, command_type, command_queue, CmdArgs));
         {
-            auto Lock = context.GetDevice().GetTaskPoolLock();
+            auto Lock = g_Platform->GetTaskPoolLock();
             task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
             queue.QueueTask(task.get(), Lock);
             if (blocking_read)
@@ -1285,7 +1297,7 @@ clEnqueueReadImage(cl_command_queue     command_queue,
     {
         std::unique_ptr<Task> task(new MemReadTask(context, resource, CL_COMMAND_READ_IMAGE, command_queue, CmdArgs));
         {
-            auto Lock = context.GetDevice().GetTaskPoolLock();
+            auto Lock = g_Platform->GetTaskPoolLock();
             task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
             queue.QueueTask(task.get(), Lock);
             if (blocking_read)
@@ -1358,9 +1370,14 @@ private:
         }
     }
 
+    void MigrateResources() final
+    {
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    }
     void RecordImpl() final
     {
-        auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+        auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
         if (ImageTypesCopyCompatible(m_Source->m_Desc.image_type, m_Dest->m_Desc.image_type))
         {
             for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
@@ -1375,12 +1392,12 @@ private:
                     m_Args.SrcZ + m_Args.Depth
                 };
                 ImmCtx.ResourceCopyRegion(
-                    m_Dest->GetUnderlyingResource(),
+                    m_Dest->GetActiveUnderlyingResource(),
                     m_Args.FirstDstArraySlice + i,
                     m_Args.DstX,
                     m_Args.DstY,
                     m_Args.DstZ,
-                    m_Source->GetUnderlyingResource(),
+                    m_Source->GetActiveUnderlyingResource(),
                     m_Args.FirstSrcArraySlice + i,
                     &SrcBox);
             }
@@ -1405,7 +1422,7 @@ private:
             Args.m_appDesc.m_Depth = 1;
             Args.m_appDesc.m_Width = m_Args.Width;
             Args.m_appDesc.m_Height = m_Args.Height;
-            Args.m_appDesc.m_Format = m_Source->GetUnderlyingResource()->AppDesc()->Format();
+            Args.m_appDesc.m_Format = m_Source->m_CreationArgs.m_appDesc.Format();
             Args.m_appDesc.m_Samples = 1;
             Args.m_appDesc.m_Quality = 0;
             Args.m_appDesc.m_resourceDimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -1429,8 +1446,8 @@ private:
                 m_Args.SrcZ + m_Args.Depth
             };
             ImmCtx.ResourceCopyRegion(tempResource.get(), 0, 0, 0, 0,
-                m_Source->GetUnderlyingResource(), m_Args.FirstSrcArraySlice, &SrcBox);
-            ImmCtx.ResourceCopyRegion(m_Dest->GetUnderlyingResource(), m_Args.FirstDstArraySlice,
+                m_Source->GetActiveUnderlyingResource(), m_Args.FirstSrcArraySlice, &SrcBox);
+            ImmCtx.ResourceCopyRegion(m_Dest->GetActiveUnderlyingResource(), m_Args.FirstDstArraySlice,
                 m_Args.DstX, m_Args.DstY, m_Args.DstZ, tempResource.get(), 0, nullptr);
         }
     }
@@ -1484,7 +1501,7 @@ clEnqueueCopyBuffer(cl_command_queue    command_queue,
         return ReportError("size must be nonzero, and size and offsets must address regions within buffers", CL_INVALID_VALUE);
     }
 
-    if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
+    if (source.GetActiveUnderlyingResource() == dest.GetActiveUnderlyingResource())
     {
         size_t absolute_src_offset = src_offset + source.m_Offset;
         size_t absolute_dst_offset = dst_offset + dest.m_Offset;
@@ -1506,7 +1523,7 @@ clEnqueueCopyBuffer(cl_command_queue    command_queue,
     try
     {
         std::unique_ptr<Task> task(new CopyResourceTask(context, source, dest, command_queue, CmdArgs, CL_COMMAND_COPY_BUFFER));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -1589,7 +1606,7 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
         return imageResult;
     }
 
-    if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
+    if (source.GetActiveUnderlyingResource() == dest.GetActiveUnderlyingResource())
     {
         cl_uint overlap = 0;
         for (cl_uint i = 0; i < 3; ++i)
@@ -1609,7 +1626,7 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
     try
     {
         std::unique_ptr<Task> task(new CopyResourceTask(context, source, dest, command_queue, CmdArgs, CL_COMMAND_COPY_IMAGE));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -1661,6 +1678,11 @@ private:
     Resource::ref_ptr_int m_Dest;
     const Args m_Args;
 
+    void MigrateResources() final
+    {
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    }
     void RecordImpl() final;
     void OnComplete() final
     {
@@ -1729,12 +1751,12 @@ void CopyBufferRectTask::RecordImpl()
                     (z + m_Args.DstZ) * m_Args.DstBufferSlicePitch +
                     (y + m_Args.DstY) * m_Args.DstBufferRowPitch +
                     m_Args.DstX);
-                m_Parent->GetDevice().ImmCtx().ResourceCopyRegion(
-                    m_Dest->GetUnderlyingResource(),
+                m_CommandQueue->GetDevice().ImmCtx().ResourceCopyRegion(
+                    m_Dest->GetActiveUnderlyingResource(),
                     0, //SubresourceIndex
                     DstOffset,
                     0, 0,
-                    m_Source->GetUnderlyingResource(),
+                    m_Source->GetActiveUnderlyingResource(),
                     0, //SubresourceIndex,
                     &SrcBox);
             }
@@ -1896,7 +1918,7 @@ clEnqueueCopyBufferRect(cl_command_queue    command_queue,
         return ReportError("Offsets and region would require accessing out of bounds of buffer objects", CL_INVALID_VALUE);
     }
 
-    if (source.GetUnderlyingResource() == dest.GetUnderlyingResource())
+    if (source.GetActiveUnderlyingResource() == dest.GetActiveUnderlyingResource())
     {
         if ((src_start <= dst_start && dst_start <= src_end) ||
             (dst_start <= src_start && src_start <= dst_end))
@@ -1928,7 +1950,7 @@ clEnqueueCopyBufferRect(cl_command_queue    command_queue,
     try
     {
         std::unique_ptr<Task> task(new CopyBufferRectTask(context, source, dest, command_queue, CmdArgs));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -1970,16 +1992,16 @@ public:
     {
         D3D12_RESOURCE_DESC ImageDesc = {};
         auto& image = m_Source->m_Desc.image_type == CL_IMAGE_BUFFER ? *m_Dest.Get() : *m_Source.Get();
-        ImageDesc.Dimension = image.GetUnderlyingResource()->AppDesc()->ResourceDimension();
+        ImageDesc.Dimension = image.m_CreationArgs.ResourceDimension12();
         ImageDesc.SampleDesc.Count = 1;
         ImageDesc.Width = m_Args.Width;
         ImageDesc.Height = m_Args.Height;
         ImageDesc.DepthOrArraySize = max((cl_ushort)m_Args.Depth, m_Args.NumArraySlices);
         ImageDesc.MipLevels = 1;
-        ImageDesc.Format = image.GetUnderlyingResource()->AppDesc()->Format();
+        ImageDesc.Format = image.m_CreationArgs.m_appDesc.Format();
         UINT64 RowPitch, TotalSize;
-        m_Parent->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, m_Args.FirstImageArraySlice, m_Args.NumArraySlices, 0, nullptr, nullptr, &RowPitch, &TotalSize);
-        m_Parent->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, 0, 1, 0, &m_BufferFootprint, nullptr, nullptr, nullptr);
+        m_CommandQueue->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, m_Args.FirstImageArraySlice, m_Args.NumArraySlices, 0, nullptr, nullptr, &RowPitch, &TotalSize);
+        m_CommandQueue->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, 0, 1, 0, &m_BufferFootprint, nullptr, nullptr, nullptr);
         assert(m_Args.BufferPitch == RowPitch);
         if (m_Args.BufferPitch != m_BufferFootprint.Footprint.RowPitch ||
             (m_Args.NumArraySlices > 1 &&
@@ -2015,10 +2037,16 @@ private:
             Desc.SubresourceIndex++;
         }
     }
+    void MigrateResources() final
+    {
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Temp->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    }
     void RecordImpl() final
     {
-        D3D12TranslationLayer::Resource *UnderlyingSrc = m_Source->GetUnderlyingResource(),
-            *UnderlyingDest = m_Dest->GetUnderlyingResource();
+        D3D12TranslationLayer::Resource *UnderlyingSrc = m_Source->GetActiveUnderlyingResource(),
+            *UnderlyingDest = m_Dest->GetActiveUnderlyingResource();
         if (m_Temp.Get() && m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
             CopyBufferRectTask::Args CopyRectArgs = {};
@@ -2032,11 +2060,11 @@ private:
             CopyRectArgs.DstBufferSlicePitch = m_BufferFootprint.Footprint.RowPitch * m_Args.Height;
             CopyBufferRectTask(m_Parent.get(), *m_Source.Get(), *m_Temp.Get(), m_CommandQueue.Get(), CopyRectArgs).Record();
 
-            UnderlyingSrc = m_Temp->GetUnderlyingResource();
+            UnderlyingSrc = m_Temp->GetActiveUnderlyingResource();
         }
         else if (m_Temp.Get())
         {
-            UnderlyingDest = m_Temp->GetUnderlyingResource();
+            UnderlyingDest = m_Temp->GetActiveUnderlyingResource();
         }
 
         D3D12_TEXTURE_COPY_LOCATION Src, Dest;
@@ -2077,7 +2105,7 @@ private:
             DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
         }
 
-        auto& ImmCtx = m_Parent->GetDevice().ImmCtx();
+        auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
         ImmCtx.GetResourceStateManager().TransitionSubresources(UnderlyingSrc, SrcSubresources, D3D12_RESOURCE_STATE_COPY_SOURCE);
         ImmCtx.GetResourceStateManager().TransitionSubresources(UnderlyingDest, DestSubresources, D3D12_RESOURCE_STATE_COPY_DEST);
         ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
@@ -2182,7 +2210,7 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
     try
     {
         std::unique_ptr<Task> task(new CopyBufferAndImageTask(context, image, buffer, command_queue, CmdArgs, CL_COMMAND_COPY_IMAGE_TO_BUFFER));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -2268,7 +2296,7 @@ clEnqueueCopyBufferToImage(cl_command_queue command_queue,
     try
     {
         std::unique_ptr<Task> task(new CopyBufferAndImageTask(context, buffer, image, command_queue, CmdArgs, CL_COMMAND_COPY_BUFFER_TO_IMAGE));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
@@ -2307,6 +2335,11 @@ MapTask::~MapTask()
 void MapTask::OnComplete()
 {
     m_Resource.ReleaseInternalRef();
+}
+
+void MapTask::MigrateResources()
+{
+    m_Resource.EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
 }
 
 class MapUseHostPtrResourceTask : public MapTask
@@ -2379,18 +2412,19 @@ public:
         : MapTask(Parent, command_queue, resource, flags, command, args)
     {
         void* basePointer = nullptr;
-        D3D12TranslationLayer::ThrowFailure(resource.GetUnderlyingResource()->GetUnderlyingResource()->Map(0, &EmptyRange, &basePointer));
-        auto& Placement = resource.GetUnderlyingResource()->GetSubresourcePlacement(args.FirstArraySlice);
+        auto& Device = m_CommandQueue->GetDevice();
+        D3D12TranslationLayer::ThrowFailure(resource.GetUnderlyingResource(&Device)->GetUnderlyingResource()->Map(0, &EmptyRange, &basePointer));
+        auto& Placement = resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(args.FirstArraySlice);
         m_RowPitch = Placement.Footprint.RowPitch;
         m_SlicePitch = args.NumArraySlices > 1 ?
-            (UINT)(resource.GetUnderlyingResource()->GetSubresourcePlacement(args.FirstArraySlice + 1).Offset - Placement.Offset) :
-            resource.GetUnderlyingResource()->DepthPitch(args.FirstArraySlice);
+            (UINT)(resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(args.FirstArraySlice + 1).Offset - Placement.Offset) :
+            resource.GetUnderlyingResource(&Device)->DepthPitch(args.FirstArraySlice);
 
         m_Pointer = (byte*)basePointer +
             m_SlicePitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
             m_RowPitch * m_Args.SrcY +
             GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX +
-            resource.GetUnderlyingResource()->GetSubresourcePlacement(0).Offset;
+            resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(0).Offset;
     }
 
 private:
@@ -2408,14 +2442,14 @@ private:
         }(m_MapFlags);
         for (cl_uint i = 0; i < m_Args.NumArraySlices; ++i)
         {
-            m_Resource.GetUnderlyingResource()->m_pParent->SynchronizeForMap(
-                m_Resource.GetUnderlyingResource(),
+            m_Resource.GetActiveUnderlyingResource()->m_pParent->SynchronizeForMap(
+                m_Resource.GetActiveUnderlyingResource(),
                 m_Args.FirstArraySlice + i, MapType, false);
         };
     }
     void Unmap([[maybe_unused]] bool IsResourceBeingDestroyed) final
     {
-        m_Resource.GetUnderlyingResource()->GetUnderlyingResource()->Unmap(0, &EmptyRange);
+        m_Resource.GetActiveUnderlyingResource()->GetUnderlyingResource()->Unmap(0, &EmptyRange);
     }
 };
 
@@ -2425,7 +2459,7 @@ public:
     MapCopyTask(Context& Parent, cl_command_queue command_queue, cl_map_flags flags, Resource& resource, Args const& args, cl_command_type command)
         : MapTask(Parent, command_queue, resource, flags, command, args)
     {
-        D3D12TranslationLayer::ResourceCreationArgs Args = *resource.GetUnderlyingResource()->Parent();
+        D3D12TranslationLayer::ResourceCreationArgs Args = resource.m_CreationArgs;
         Args.m_appDesc.m_Subresources = args.NumArraySlices;
         Args.m_appDesc.m_SubresourcesPerPlane = args.NumArraySlices;
         Args.m_appDesc.m_ArraySize = args.NumArraySlices;
@@ -2436,6 +2470,7 @@ public:
         Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_NONE;
         Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
         Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_READBACK);
+        Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_NONE;
 
         cl_mem_flags stagingFlags = CL_MEM_ALLOC_HOST_PTR;
         if (resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
@@ -2454,6 +2489,7 @@ public:
             m_MappableResource.Attach(Resource::CreateImage(Parent, Args, nullptr, resource.m_Format, NewDesc, stagingFlags));
         }
 
+        m_MappableResource->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
         auto UnderlyingMapArgs = args;
         UnderlyingMapArgs.SrcX = 0;
         UnderlyingMapArgs.SrcY = 0;
@@ -2603,7 +2639,7 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
         });
 
         {
-            auto Lock = context.GetDevice().GetTaskPoolLock();
+            auto Lock = g_Platform->GetTaskPoolLock();
             task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
             queue.QueueTask(task.get(), Lock);
             if (blocking_map)
@@ -2731,7 +2767,7 @@ clEnqueueMapImage(cl_command_queue  command_queue,
         });
 
         {
-            auto Lock = context.GetDevice().GetTaskPoolLock();
+            auto Lock = g_Platform->GetTaskPoolLock();
             task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
             queue.QueueTask(task.get(), Lock);
             if (blocking_map)
@@ -2785,6 +2821,9 @@ private:
     ::ref_ptr_int<MapTask> m_MapTask;
     Resource::ref_ptr_int m_Resource;
 
+    void MigrateResources() final
+    {
+    }
     void RecordImpl() final
     {
         m_MapTask->Unmap(false);
@@ -2831,7 +2870,7 @@ clEnqueueUnmapMemObject(cl_command_queue command_queue,
     try
     {
         std::unique_ptr<Task> task(new UnmapTask(context, command_queue, mapTask));
-        auto Lock = context.GetDevice().GetTaskPoolLock();
+        auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);
         queue.QueueTask(task.get(), Lock);
 
