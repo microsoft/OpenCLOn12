@@ -1985,7 +1985,7 @@ public:
             (m_Args.NumArraySlices > 1 &&
              (m_Args.BufferPitch * m_Args.Height) % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT != 0))
         {
-            m_Temp.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), 0, TotalSize, nullptr, nullptr)));
+            m_Temp.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), 0, (size_t)TotalSize, nullptr, nullptr)));
         }
     }
 
