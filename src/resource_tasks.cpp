@@ -2042,7 +2042,8 @@ private:
     {
         m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
         m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
-        m_Temp->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        if (m_Temp.Get())
+            m_Temp->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
     }
     void RecordImpl() final
     {
