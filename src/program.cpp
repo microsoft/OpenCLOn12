@@ -587,7 +587,13 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
         {
             auto &BuildData = m_BuildData[device.Get()];
             if (!BuildData)
+            {
+                if (m_Source.empty())
+                {
+                    return ReportError("Build requested for binary program, for device with no binary.", CL_INVALID_BINARY);
+                }
                 continue;
+            }
 
             if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
             {
@@ -597,15 +603,36 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             {
                 return ReportError("Cannot compile program: program currently being linked against.", CL_INVALID_OPERATION);
             }
+            if (BuildData->m_BinaryType == CL_PROGRAM_BINARY_TYPE_COMPILED_OBJECT ||
+                BuildData->m_BinaryType == CL_PROGRAM_BINARY_TYPE_LIBRARY)
+            {
+                return ReportError("Build requested for compiled objet or library.", CL_INVALID_BINARY);
+            }
         }
 
-        // Update build status to indicate build is starting so nobody else can start a build
-        auto BuildData = std::make_shared<PerDeviceData>();
-        Args.Common.BuildData = BuildData;
-        BuildData->m_LastBuildOptions = options ? options : "";
-        for (auto& device : Devices)
+        if (!m_Source.empty())
         {
-            m_BuildData[device.Get()] = BuildData;
+            // Update build status to indicate build is starting so nobody else can start a build
+            auto BuildData = std::make_shared<PerDeviceData>();
+            Args.Common.BuildData = BuildData;
+            BuildData->m_LastBuildOptions = options ? options : "";
+            for (auto& device : Devices)
+            {
+                m_BuildData[device.Get()] = BuildData;
+            }
+        }
+        else
+        {
+            // Update build data state, but don't throw away existing ones
+            for (auto& device : Devices)
+            {
+                auto& BuildData = m_BuildData[device.Get()];
+                assert(BuildData && BuildData->m_OwnedBinary);
+                BuildData->m_BuildStatus = CL_BUILD_IN_PROGRESS;
+                BuildData->m_BuildLog.clear();
+                BuildData->m_LastBuildOptions = options ? options : "";
+            }
+            Args.BinaryBuildDevices = std::move(Devices);
         }
     }
 
@@ -621,13 +648,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
     }
     else
     {
-        BuildImpl(Args);
-
-        if (Args.Common.BuildData->m_BuildStatus != CL_BUILD_SUCCESS)
-        {
-            return CL_BUILD_PROGRAM_FAILURE;
-        }
-        return CL_SUCCESS;
+        return BuildImpl(Args);
     }
 }
 
@@ -706,13 +727,7 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
     }
     else
     {
-        CompileImpl(Args);
-
-        if (Args.Common.BuildData->m_BuildStatus != CL_BUILD_SUCCESS)
-        {
-            return CL_COMPILE_PROGRAM_FAILURE;
-        }
-        return CL_SUCCESS;
+        return CompileImpl(Args);
     }
 }
 
@@ -830,13 +845,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     }
     else
     {
-        LinkImpl(Args);
-
-        if (Args.Common.BuildData->m_BuildStatus != CL_BUILD_SUCCESS)
-        {
-            return CL_LINK_PROGRAM_FAILURE;
-        }
-        return CL_SUCCESS;
+        return LinkImpl(Args);
     }
 }
 
@@ -998,6 +1007,7 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
     }
     return ValidateAndPushArg();
 }
+
 struct Loggers
 {
     Program& m_Program;
@@ -1034,17 +1044,18 @@ Loggers::operator clc_logger()
     return ret;
 }
 
-void Program::BuildImpl(BuildArgs const& Args)
+cl_int Program::BuildImpl(BuildArgs const& Args)
 {
+    cl_int ret = CL_SUCCESS;
     auto& Compiler = g_Platform->GetCompiler();
     auto Context = g_Platform->GetCompilerContext();
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    auto& BuildData = Args.Common.BuildData;
-    Loggers loggers(*this, *BuildData);
-    clc_logger loggers_impl = loggers;
     if (!m_Source.empty())
     {
+        auto& BuildData = Args.Common.BuildData;
+        Loggers loggers(*this, *BuildData);
+        clc_logger loggers_impl = loggers;
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
         clc_compile_args args = {};
 
@@ -1067,38 +1078,60 @@ void Program::BuildImpl(BuildArgs const& Args)
         link_args.num_in_objs = 1;
         unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
         BuildData->m_OwnedBinary = std::move(object);
+
+        std::lock_guard Lock(m_Lock);
+        if (BuildData->m_OwnedBinary)
+        {
+            BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+            BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
+            BuildData->CreateKernels();
+        }
+        else
+        {
+            ret = CL_BUILD_ERROR;
+            BuildData->m_BuildStatus = CL_BUILD_ERROR;
+        }
     }
     else
     {
-        const clc_object* rawCompiledObject = BuildData->m_OwnedBinary.get();
+        std::lock_guard Lock(m_Lock);
+        for (auto& device : Args.BinaryBuildDevices)
+        {
+            auto& BuildData = m_BuildData[device.Get()];
+            Loggers loggers(*this, *BuildData);
+            clc_logger loggers_impl = loggers;
+            const clc_object* rawCompiledObject = BuildData->m_OwnedBinary.get();
 
-        clc_linker_args link_args = {};
-        link_args.create_library = Args.Common.CreateLibrary;
-        link_args.in_objs = &rawCompiledObject;
-        link_args.num_in_objs = 1;
-        unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
-        BuildData->m_OwnedBinary = std::move(object);
-    }
+            clc_linker_args link_args = {};
+            link_args.create_library = Args.Common.CreateLibrary;
+            link_args.in_objs = &rawCompiledObject;
+            link_args.num_in_objs = 1;
+            unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
+            BuildData->m_OwnedBinary = std::move(object);
 
-    std::lock_guard Lock(m_Lock);
-    if (BuildData->m_OwnedBinary)
-    {
-        BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
-        BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
-        BuildData->CreateKernels();
-    }
-    else
-    {
-        BuildData->m_BuildStatus = CL_BUILD_ERROR;
+            if (BuildData->m_OwnedBinary)
+            {
+                BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
+                BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
+                BuildData->CreateKernels();
+            }
+            else
+            {
+                ret = CL_BUILD_PROGRAM_FAILURE;
+                BuildData->m_BuildStatus = CL_BUILD_ERROR;
+            }
+        }
     }
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
     }
+    return ret;
 }
 
-void Program::CompileImpl(CompileArgs const& Args)
+cl_int Program::CompileImpl(CompileArgs const& Args)
 {
+    cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
     auto& Compiler = g_Platform->GetCompiler();
     auto Context = g_Platform->GetCompilerContext();
@@ -1137,6 +1170,7 @@ void Program::CompileImpl(CompileArgs const& Args)
         }
         else
         {
+            ret = CL_COMPILE_PROGRAM_FAILURE;
             BuildData->m_BuildStatus = CL_BUILD_ERROR;
         }
     }
@@ -1144,10 +1178,12 @@ void Program::CompileImpl(CompileArgs const& Args)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
     }
+    return ret;
 }
 
-void Program::LinkImpl(LinkArgs const& Args)
+cl_int Program::LinkImpl(LinkArgs const& Args)
 {
+    cl_int ret = CL_SUCCESS;
     auto& Compiler = g_Platform->GetCompiler();
     auto Context = g_Platform->GetCompilerContext();
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
@@ -1191,6 +1227,7 @@ void Program::LinkImpl(LinkArgs const& Args)
                 }
                 else
                 {
+                    ret = CL_LINK_PROGRAM_FAILURE;
                     BuildData->m_BuildStatus = CL_BUILD_ERROR;
                 }
             }
@@ -1208,6 +1245,7 @@ void Program::LinkImpl(LinkArgs const& Args)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
     }
+    return ret;
 }
 
 void Program::PerDeviceData::CreateKernels()

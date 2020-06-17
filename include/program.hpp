@@ -87,10 +87,11 @@ private:
     struct BuildArgs
     {
         CommonOptions Common;
+        std::vector<Device::ref_ptr_int> BinaryBuildDevices;
     };
 
     cl_int ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions);
-    void BuildImpl(BuildArgs const& Args);
-    void CompileImpl(CompileArgs const& Args);
-    void LinkImpl(LinkArgs const& Args);
+    cl_int BuildImpl(BuildArgs const& Args);
+    cl_int CompileImpl(CompileArgs const& Args);
+    cl_int LinkImpl(LinkArgs const& Args);
 };
