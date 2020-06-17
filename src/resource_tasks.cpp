@@ -915,10 +915,11 @@ void MemReadTask::CopyBits(void* pData, int Subresource, size_t SrcRowPitch, siz
                     (z + Subresource + m_Args.DstZ) * m_Args.DstSlicePitch +
                     (y + m_Args.DstY) * m_Args.DstRowPitch +
                     m_Args.DstX * FormatBytes;
-                pSrc += (z + m_Args.SrcZ) * SrcSlicePitch +
+                const char *pRowSrc = pSrc +
+                    (z + m_Args.SrcZ) * SrcSlicePitch +
                     (y + m_Args.SrcY) * SrcRowPitch +
                     m_Args.SrcX * FormatBytes;
-                memcpy(pDest, pSrc, m_Args.Width * FormatBytes);
+                memcpy(pDest, pRowSrc, m_Args.Width * FormatBytes);
             }
         }
     }
