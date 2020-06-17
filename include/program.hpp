@@ -60,6 +60,8 @@ private:
     };
     std::unordered_map<Device*, std::shared_ptr<PerDeviceData>> m_BuildData;
 
+    friend struct Loggers;
+
     std::vector<Device::ref_ptr_int> m_AssociatedDevices;
 
     struct CommonOptions

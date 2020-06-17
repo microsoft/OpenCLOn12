@@ -50,9 +50,10 @@ struct clc_linker_args {
    unsigned create_library;
 };
 
-typedef void (*clc_msg_callback)(const char *, int, const char *);
+typedef void (*clc_msg_callback)(void *priv, const char *msg);
 
 struct clc_logger {
+   void *priv;
    clc_msg_callback error;
    clc_msg_callback warning;
 };
@@ -178,7 +179,7 @@ struct clc_context {
    void *libclc_nir;
 };
 
-struct clc_context *clc_context_new(void);
+struct clc_context *clc_context_new(const struct clc_logger *logger);
 
 void clc_free_context(struct clc_context *ctx);
 

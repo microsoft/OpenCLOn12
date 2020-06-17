@@ -998,6 +998,41 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
     }
     return ValidateAndPushArg();
 }
+struct Loggers
+{
+    Program& m_Program;
+    Program::PerDeviceData& m_BuildData;
+    Loggers(Program& program, Program::PerDeviceData& buildData);
+    void Log(const char* msg);
+    static void Log(void* context, const char* msg);
+    operator clc_logger();
+};
+
+Loggers::Loggers(Program& program, Program::PerDeviceData& buildData)
+    : m_Program(program)
+    , m_BuildData(buildData)
+{
+}
+
+void Loggers::Log(const char* message)
+{
+    std::lock_guard Lock(m_Program.m_Lock);
+    m_BuildData.m_BuildLog += message;
+}
+
+void Loggers::Log(void* context, const char* message)
+{
+    static_cast<Loggers*>(context)->Log(message);
+}
+
+Loggers::operator clc_logger()
+{
+    clc_logger ret;
+    ret.priv = this;
+    ret.error = Log;
+    ret.warning = Log;
+    return ret;
+}
 
 void Program::BuildImpl(BuildArgs const& Args)
 {
@@ -1006,6 +1041,8 @@ void Program::BuildImpl(BuildArgs const& Args)
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     auto& BuildData = Args.Common.BuildData;
+    Loggers loggers(*this, *BuildData);
+    clc_logger loggers_impl = loggers;
     if (!m_Source.empty())
     {
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
@@ -1021,14 +1058,14 @@ void Program::BuildImpl(BuildArgs const& Args)
         args.num_args = (unsigned)raw_args.size();
         args.source = { "source.cl", m_Source.c_str() };
 
-        unique_spirv compiledObject(compile(Context, &args, nullptr), free);
+        unique_spirv compiledObject(compile(Context, &args, &loggers_impl), free);
         const clc_object* rawCompiledObject = compiledObject.get();
 
         clc_linker_args link_args = {};
         link_args.create_library = Args.Common.CreateLibrary;
         link_args.in_objs = &rawCompiledObject;
         link_args.num_in_objs = 1;
-        unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
+        unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
         BuildData->m_OwnedBinary = std::move(object);
     }
     else
@@ -1039,7 +1076,7 @@ void Program::BuildImpl(BuildArgs const& Args)
         link_args.create_library = Args.Common.CreateLibrary;
         link_args.in_objs = &rawCompiledObject;
         link_args.num_in_objs = 1;
-        unique_spirv object(rawCompiledObject ? link(Context, &link_args, nullptr) : nullptr, free);
+        unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
         BuildData->m_OwnedBinary = std::move(object);
     }
 
@@ -1067,6 +1104,8 @@ void Program::CompileImpl(CompileArgs const& Args)
     auto Context = g_Platform->GetCompilerContext();
     auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
+    Loggers loggers(*this, *BuildData);
+    clc_logger loggers_impl = loggers;
     clc_compile_args args = {};
 
     std::vector<const char*> raw_args;
@@ -1086,7 +1125,7 @@ void Program::CompileImpl(CompileArgs const& Args)
     args.num_args = (unsigned)raw_args.size();
     args.source = { "source.cl", m_Source.c_str() };
 
-    unique_spirv object(compile(Context, &args, nullptr), free);
+    unique_spirv object(compile(Context, &args, &loggers_impl), free);
 
     {
         std::lock_guard Lock(m_Lock);
@@ -1135,9 +1174,12 @@ void Program::LinkImpl(LinkArgs const& Args)
             auto& BuildData = m_BuildData[Device.Get()];
             if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
             {
+                Loggers loggers(*this, *BuildData);
+                clc_logger loggers_impl = loggers;
+
                 link_args.in_objs = objects.data();
                 link_args.num_in_objs = (unsigned)objects.size();
-                unique_spirv linkedObject(link(Context, &link_args, nullptr), free);
+                unique_spirv linkedObject(link(Context, &link_args, &loggers_impl), free);
 
                 if (linkedObject)
                 {

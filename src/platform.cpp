@@ -233,7 +233,7 @@ clc_context* Platform::GetCompilerContext()
         auto& compiler = GetCompiler();
         auto createContext = compiler.proc_address<decltype(&clc_context_new)>("clc_context_new");
         auto freeContext = compiler.proc_address<decltype(&clc_free_context)>("clc_free_context");
-        m_CompilerContext = decltype(m_CompilerContext)(createContext(), freeContext);
+        m_CompilerContext = decltype(m_CompilerContext)(createContext(nullptr), freeContext);
     }
     return m_CompilerContext.get();
 }
