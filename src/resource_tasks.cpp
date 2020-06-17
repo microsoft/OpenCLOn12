@@ -1436,6 +1436,12 @@ private:
                 1, 1, 1, 0, D3D12_RESOURCE_FLAG_NONE, D3D12_TEXTURE_LAYOUT_ROW_MAJOR);
             Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
 
+            UINT64 totalSize = 0;
+            ImmCtx.m_pDevice12->GetCopyableFootprints(&Args.m_desc12, 0, 1, 0, nullptr, nullptr, nullptr, &totalSize);
+
+            Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(totalSize, D3D12_RESOURCE_FLAG_NONE);
+            Args.m_isPlacedTexture = true;
+
             auto tempResource = D3D12TranslationLayer::Resource::CreateResource(&ImmCtx, Args, D3D12TranslationLayer::ResourceAllocationContext::ImmediateContextThreadTemporary);
             D3D12_BOX SrcBox =
             {
@@ -1580,12 +1586,6 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
         source.m_Format.image_channel_order != dest.m_Format.image_channel_order)
     {
         return ReportError("src_image and dst_image must have the same format", CL_IMAGE_FORMAT_MISMATCH);
-    }
-
-    // TODO: This is going to be tricky...
-    if (source.m_Desc.image_type != dest.m_Desc.image_type)
-    {
-        return ReportError("This implementation does not yet support copying between different image types", CL_INVALID_MEM_OBJECT);
     }
 
     CopyResourceTask::Args CmdArgs = {};
