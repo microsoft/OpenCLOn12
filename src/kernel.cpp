@@ -587,10 +587,20 @@ clGetKernelWorkGroupInfo(cl_kernel                  kernel_,
         return RetValue(size);
     }
     case CL_KERNEL_LOCAL_MEM_SIZE:
-        return kernel.m_Parent->GetContext().GetErrorReporter()("TODO: CL_KERNEL_LOCAL_MEM_SIZE.", CL_INVALID_VALUE);
+    {
+        size_t size = kernel.m_pDxil->metadata.local_mem_size;
+        for (cl_uint i = 0; i < kernel.m_pDxil->kernel->num_args; ++i)
+        {
+            if (kernel.m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_LOCAL)
+            {
+                size -= 4;
+                size += kernel.m_ArgMetadataToCompiler[i].localptr.size;
+            }
+        }
+        return RetValue(size);
+    }
     case CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE: return RetValue((size_t)64);
-    case CL_KERNEL_PRIVATE_MEM_SIZE:
-        return kernel.m_Parent->GetContext().GetErrorReporter()("TODO: CL_KERNEL_PRIVATE_MEM_SIZE.", CL_INVALID_VALUE);
+    case CL_KERNEL_PRIVATE_MEM_SIZE: return RetValue(kernel.m_pDxil->metadata.priv_mem_size);
     }
 
     return CL_INVALID_VALUE;

@@ -30,6 +30,7 @@ private:
     friend class ExecuteKernel;
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelInfo(cl_kernel, cl_kernel_info, size_t, void*, size_t*);
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelArgInfo(cl_kernel, cl_uint, cl_kernel_arg_info, size_t, void*, size_t*);
+    friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelWorkGroupInfo(cl_kernel, cl_device_id, cl_kernel_work_group_info, size_t, void*, size_t*);
 
 public:
     Kernel(Program& Parent, clc_dxil_object const* pDxil);
