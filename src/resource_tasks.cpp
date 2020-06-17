@@ -1992,7 +1992,7 @@ public:
         , m_Args(args)
     {
         D3D12_RESOURCE_DESC ImageDesc = {};
-        auto& image = m_Source->m_Desc.image_type == CL_IMAGE_BUFFER ? *m_Dest.Get() : *m_Source.Get();
+        auto& image = m_Source->m_Desc.image_type == CL_MEM_OBJECT_BUFFER ? *m_Dest.Get() : *m_Source.Get();
         ImageDesc.Dimension = image.m_CreationArgs.ResourceDimension12();
         ImageDesc.SampleDesc.Count = 1;
         ImageDesc.Width = m_Args.Width;
