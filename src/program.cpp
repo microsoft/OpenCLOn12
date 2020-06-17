@@ -504,6 +504,7 @@ clGetProgramInfo(cl_program         program_,
                 {
                     *param_value_size_ret = stringSize;
                 }
+                return CL_SUCCESS;
             }
         }
         return CL_INVALID_PROGRAM_EXECUTABLE;

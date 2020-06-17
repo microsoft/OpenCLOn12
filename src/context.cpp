@@ -157,7 +157,7 @@ clCreateContextFromType(const cl_context_properties * properties,
 
     for (cl_uint i = 0; i < platform->GetNumDevices(); ++i)
     {
-        Device* device = static_cast<Device*>(platform->GetDevice(0));
+        Device* device = static_cast<Device*>(platform->GetDevice(i));
         if (!device->IsAvailable())
         {
             return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);

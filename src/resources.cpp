@@ -898,8 +898,8 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
     {
         size_t size =
             GetFormatSizeBytes(image_format) * image_desc.image_width +
-            image_desc.image_row_pitch * (image_desc.image_height - 1) +
-            image_desc.image_slice_pitch * (image_desc.image_depth * image_desc.image_array_size - 1);
+            image_desc.image_row_pitch * (m_CreationArgs.m_desc12.Height - 1) +
+            image_desc.image_slice_pitch * (m_CreationArgs.m_desc12.DepthOrArraySize - 1);
         m_InitialData.reset(new byte[size]);
         memcpy(m_InitialData.get(), pHostPointer, size);
     }

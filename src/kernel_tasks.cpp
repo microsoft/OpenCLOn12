@@ -39,11 +39,13 @@ public:
     {
         for (auto& res : m_KernelArgUAVs)
         {
-            res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+            if (res.Get())
+                res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
         }
         for (auto& res : m_KernelArgSRVs)
         {
-            res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+            if (res.Get())
+                res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
         }
     }
     void RecordImpl() final;
@@ -424,9 +426,9 @@ void ExecuteKernel::RecordImpl()
     }
 
     auto& Device = m_CommandQueue->GetDevice();
-    std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return &resource->GetUAV(&Device); });
-    std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return &resource->GetSRV(&Device); });
-    std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return &sampler->GetUnderlying(&Device); });
+    std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetUAV(&Device) : nullptr; });
+    std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetSRV(&Device) : nullptr; });
+    std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
 
     auto& ImmCtx = Device.ImmCtx();
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);

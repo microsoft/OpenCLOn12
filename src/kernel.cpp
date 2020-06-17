@@ -101,7 +101,6 @@ clCreateKernelsInProgram(cl_program     program_,
 
         {
             std::lock_guard Lock(program.m_Lock);
-            cl_uint DeviceCountWithProgram = 0;
             for (auto& Device : program.m_AssociatedDevices)
             {
                 auto& BuildData = program.m_BuildData[Device.Get()];
@@ -117,7 +116,7 @@ clCreateKernelsInProgram(cl_program     program_,
                     temp.emplace(pair.first, nullptr);
                 }
             }
-            if (!DeviceCountWithProgram)
+            if (temp.empty())
             {
                 return ReportError("No executable available for program.", CL_INVALID_PROGRAM_EXECUTABLE);
             }
