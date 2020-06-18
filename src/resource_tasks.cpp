@@ -714,69 +714,39 @@ FillImageTask::FillImageTask(Context &Parent, Resource &Target, cl_command_queue
 void FillImageTask::RecordImpl()
 {
     auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
-    bool UseLocalUAV = true;
-    if (m_Args.FirstArraySlice == 0 &&
-        m_Args.NumArraySlices == m_Target->m_CreationArgs.m_appDesc.ArraySize())
+    for (cl_uint i = 0; i < m_Args.NumArraySlices; ++i)
     {
-        UseLocalUAV = false;
-    }
-    if (m_Args.DstZ != 0 && m_Args.Depth != m_Target->m_CreationArgs.m_appDesc.Depth())
-    {
-        UseLocalUAV = false;
-    }
-    
-    std::optional<D3D12TranslationLayer::UAV> LocalUAV;
-    if (UseLocalUAV)
-    {
-        D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER UAVDescWrapper = {};
-        auto &UAVDesc = UAVDescWrapper.m_Desc12;
-        UAVDesc = m_Target->GetUAV(&m_CommandQueue->GetDevice()).GetDesc12();
-        switch (UAVDesc.ViewDimension)
+        D3D12TranslationLayer::CSubresourceSubset Subset(1, 1, 1, 0, (UINT16)(m_Args.FirstArraySlice + i), 0);
+        D3D12_BOX Box =
         {
-        case D3D12_UAV_DIMENSION_TEXTURE1DARRAY:
-            UAVDesc.Texture1DArray.FirstArraySlice = m_Args.FirstArraySlice;
-            UAVDesc.Texture1DArray.ArraySize = m_Args.NumArraySlices;
-            break;
-        case D3D12_UAV_DIMENSION_TEXTURE2DARRAY:
-            UAVDesc.Texture2DArray.FirstArraySlice = m_Args.FirstArraySlice;
-            UAVDesc.Texture2DArray.ArraySize = m_Args.NumArraySlices;
-            break;
-        case D3D12_UAV_DIMENSION_TEXTURE3D:
-            UAVDesc.Texture3D.FirstWSlice = m_Args.DstZ;
-            UAVDesc.Texture3D.WSize = m_Args.Depth;
-            break;
-        }
-        LocalUAV.emplace(&ImmCtx, UAVDescWrapper, *m_Target->GetUnderlyingResource(&m_CommandQueue->GetDevice()));
+            m_Args.DstX,
+            m_Args.DstY,
+            m_Args.DstZ,
+            m_Args.DstX + m_Args.Width,
+            m_Args.DstY + m_Args.Height,
+            m_Args.DstZ + m_Args.Depth
+        };
+        ImmCtx.UpdateSubresources(
+            m_Target->GetActiveUnderlyingResource(),
+            Subset, nullptr, &Box,
+            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::ImmediateContext,
+            m_Args.Pattern);
     }
-    auto pUAV = UseLocalUAV ? &LocalUAV.value() : &m_Target->GetUAV(&m_CommandQueue->GetDevice());
-    D3D12_RECT Rect =
-    {
-        (LONG)m_Args.DstX,
-        (LONG)m_Args.DstY,
-        (LONG)(m_Args.DstX + m_Args.Width),
-        (LONG)(m_Args.DstY + m_Args.Height)
-    };
-    switch (m_Target->m_Format.image_channel_data_type)
-    {
-    case CL_SNORM_INT8:
-    case CL_SNORM_INT16:
-    case CL_UNORM_INT8:
-    case CL_UNORM_INT16:
-    case CL_UNORM_INT24:
-    case CL_FLOAT:
-    case CL_HALF_FLOAT:
-        ImmCtx.ClearUnorderedAccessViewFloat(pUAV, reinterpret_cast<const float*>(m_Args.Pattern), 1, &Rect);
-        break;
-    case CL_UNSIGNED_INT8:
-    case CL_UNSIGNED_INT16:
-    case CL_UNSIGNED_INT32:
-        ImmCtx.ClearUnorderedAccessViewUint(pUAV, reinterpret_cast<const UINT*>(m_Args.Pattern), 1, &Rect);
-        break;
+}
 
-    default:
-        assert(false);
-        break;
-    }
+template <typename T> T FloatToNormalized(float x)
+{
+    constexpr auto max = std::numeric_limits<T>::max();
+    constexpr auto min = std::is_signed_v<T> ? -max : 0;
+    constexpr float min_float = std::is_signed_v<T> ? -1.0f : 0.0f;
+    if (x != x) return (T)0;
+    if (x >= 1.0f) return max;
+    if (x <= min_float) return min;
+    constexpr auto scale = std::is_signed_v<T> ?
+        (1 << (sizeof(T) * 8 - 1)) - 1 :
+        (1 << (sizeof(T) * 8)) - 1;
+    float scaled = x * (float)scale;
+    return (T)scaled;
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -824,8 +794,39 @@ clEnqueueFillImage(cl_command_queue   command_queue,
     CmdArgs.Height = 1;
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
-    // fill_color is either 4 floats, 4 ints, or 4 uints
-    memcpy(CmdArgs.Pattern, fill_color, sizeof(CmdArgs.Pattern));
+
+    // Compact the fill color into the pattern
+    cl_uint PixelDataSize = GetChannelSizeBits(resource.m_Format.image_channel_data_type) / 8;
+    for (cl_uint i = 0; i < GetNumChannelsInOrder(resource.m_Format.image_channel_order); ++i)
+    {
+        cl_uint dest_i = resource.m_Format.image_channel_order != CL_BGRA ? i :
+            (i == 3 ? 3 : 2 - i);
+        cl_uint src_i = resource.m_Format.image_channel_order == CL_A ? 3 : i;
+        auto fill_floats = reinterpret_cast<const float*>(fill_color);
+        switch (resource.m_Format.image_channel_data_type)
+        {
+        default:
+            memcpy(CmdArgs.Pattern + dest_i * PixelDataSize,
+                    &fill_floats[src_i],
+                    PixelDataSize);
+            break;
+        case CL_HALF_FLOAT:
+            reinterpret_cast<cl_ushort*>(CmdArgs.Pattern)[dest_i] = ConvertFloatToHalf(fill_floats[src_i]);
+            break;
+        case CL_UNORM_INT8:
+            reinterpret_cast<cl_uchar*>(CmdArgs.Pattern)[dest_i] = FloatToNormalized<cl_uchar>(fill_floats[src_i]);
+            break;
+        case CL_UNORM_INT16:
+            reinterpret_cast<cl_ushort*>(CmdArgs.Pattern)[dest_i] = FloatToNormalized<cl_ushort>(fill_floats[src_i]);
+            break;
+        case CL_SNORM_INT8:
+            reinterpret_cast<cl_char*>(CmdArgs.Pattern)[dest_i] = FloatToNormalized<cl_char>(fill_floats[src_i]);
+            break;
+        case CL_SNORM_INT16:
+            reinterpret_cast<cl_short*>(CmdArgs.Pattern)[dest_i] = FloatToNormalized<cl_short>(fill_floats[src_i]);
+            break;
+        }
+    }
 
     auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
     if (imageResult != CL_SUCCESS)

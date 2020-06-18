@@ -222,3 +222,81 @@ inline cl_uint GetFormatSizeBytes(cl_image_format format)
             GetNumChannelsInOrder(format.image_channel_order) / 8;
     }
 }
+
+inline float ConvertHalfToFloat(unsigned short halfValue)
+{
+    int sign = (halfValue >> 15) & 0x0001;
+    int exponent = (halfValue >> 10) & 0x001f;
+    int mantissa = (halfValue) & 0x03ff;
+
+    union
+    {
+        unsigned int bits;
+        float floatValue;
+    } outFloat;
+
+    if (exponent == 0)
+    {
+        if (mantissa == 0)
+        {
+            outFloat.bits = sign << 31;
+            return outFloat.floatValue;
+        }
+
+        while ((mantissa & 0x00000400) == 0)
+        {
+            mantissa <<= 1;
+            exponent--;
+        }
+
+        exponent++;
+        mantissa &= ~(0x00000400);
+    }
+    else if (exponent == 31)
+    {
+        outFloat.bits = (sign << 31) | 0x7f800000 | (mantissa << 13);
+        return outFloat.floatValue;
+    }
+
+    exponent += (127 - 15);
+    mantissa <<= 13;
+
+    outFloat.bits = (sign << 31) | (exponent << 23) | mantissa;
+    return outFloat.floatValue;
+}
+
+inline cl_ushort ConvertFloatToHalf(float f)
+{
+    union { float f; cl_uint u; } u = { f };
+    cl_uint sign = (u.u >> 16) & 0x8000;
+    float x = fabsf(f);
+
+    if (x != x)
+    {
+        u.u >>= (24 - 11);
+        u.u &= 0x7fff;
+        u.u |= 0x0200;
+        return (cl_ushort)(u.u | sign);
+    }
+
+    if (x >= 0x1.0p16f)
+    {
+        if (x == INFINITY)
+            return (cl_ushort)(0x7c00 | sign);
+        return (cl_ushort)(0x7bff | sign);
+    }
+
+    if (x < 0x1.0p-24f)
+        return (cl_ushort)sign;
+
+    if (x < 0x1.0p-14f)
+    {
+        x *= 0x1.0p24f;
+        return (cl_ushort)((int)x | sign);
+    }
+
+    u.u &= 0xFFFFE000U;
+    u.u -= 0x38000000U;
+
+    return (cl_ushort)((u.u >> (24 - 11)) | sign);
+}
