@@ -139,7 +139,8 @@ clReleaseEvent(cl_event event) CL_API_SUFFIX__VERSION_1_0
     }
     auto task = static_cast<Task*>(event);
     if (task->m_CommandType == CL_COMMAND_USER &&
-        (task->m_RefCount & UINT_MAX) == 1)
+        (task->m_RefCount & UINT_MAX) == 1 &&
+        task->GetState() > (Task::State)0)
     {
         clSetUserEventStatus(event, -1);
     }
