@@ -9,6 +9,64 @@
 
 extern void SignBlob(void* pBlob, size_t size);
 
+auto Kernel::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
+{
+    uint32_t NumAllocatedArgs = info.num_args ? (uint32_t)info.num_args - 1 : 0;
+    std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(
+        sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs)));
+    new (bits.get()) SpecializationKey(conf, info);
+    return bits;
+}
+
+Kernel::SpecializationKey::SpecializationKey(clc_runtime_kernel_conf const& conf, clc_kernel_info const& info)
+{
+    ConfigData.Bits.LocalSize[0] = conf.local_size[0];
+    ConfigData.Bits.LocalSize[1] = conf.local_size[1];
+    ConfigData.Bits.LocalSize[2] = conf.local_size[2];
+    ConfigData.Bits.SupportGlobalOffsets = conf.support_global_work_id_offsets;
+    ConfigData.Bits.SupportLocalOffsets = conf.support_global_work_id_offsets;
+    ConfigData.Bits.LowerInt64 = 1;
+    ConfigData.Bits.Padding = 0;
+
+    NumArgs = (uint32_t)info.num_args;
+    for (uint32_t i = 0; i < NumArgs; ++i)
+    {
+        if (info.args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_LOCAL)
+        {
+            Args[i].LocalArgSize = conf.args[i].localptr.size;
+        }
+        else if (strcmp(info.args[i].type_name, "sampler_t") == 0)
+        {
+            Args[i].SamplerArgData.AddressingMode = conf.args[i].sampler.addressing_mode;
+            Args[i].SamplerArgData.LinearFiltering = conf.args[i].sampler.linear_filtering;
+            Args[i].SamplerArgData.NormalizedCoords = conf.args[i].sampler.normalized_coords;
+            Args[i].SamplerArgData.Padding = 0;
+        }
+        else
+        {
+            Args[i].LocalArgSize = 0;
+        }
+    }
+}
+
+size_t Kernel::SpecializationKeyHash::operator()(std::unique_ptr<Kernel::SpecializationKey> const& ptr) const
+{
+    size_t val = std::hash<uint64_t>()(ptr->ConfigData.Value);
+    for (uint32_t i = 0; i < ptr->NumArgs; ++i)
+    {
+        D3D12TranslationLayer::hash_combine(val, ptr->Args[i].LocalArgSize);
+    }
+    return val;
+}
+
+bool Kernel::SpecializationKeyEqual::operator()(std::unique_ptr<Kernel::SpecializationKey> const& a, std::unique_ptr<Kernel::SpecializationKey> const& b) const
+{
+    assert(a->NumArgs == b->NumArgs);
+    uint32_t NumAllocatedArgs = a->NumArgs ? a->NumArgs - 1 : 0;
+    size_t size = sizeof(Kernel::SpecializationKey) + sizeof(Kernel::SpecializationKey::PackedArgData) * NumAllocatedArgs;
+    return memcmp(a.get(), b.get(), size) == 0;
+}
+
 class ExecuteKernel : public Task
 {
 public:
@@ -18,7 +76,6 @@ public:
     std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
     std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
     std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
-    std::vector<clc_runtime_arg_info> m_ArgInfo;
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
@@ -29,10 +86,8 @@ public:
 
     std::mutex m_SpecializeLock;
     std::condition_variable m_SpecializeEvent;
-    // TODO: Cache these
-    unique_dxil m_Specialized = {nullptr, nullptr};
-    std::unique_ptr<D3D12TranslationLayer::Shader> m_Shader;
-    std::unique_ptr<D3D12TranslationLayer::PipelineState> m_PSO;
+    
+    Kernel::SpecializationValue *m_Specialized = nullptr;
     bool m_SpecializeError = false;
 
     void MigrateResources() final
@@ -61,7 +116,6 @@ public:
         , m_UAVs(kernel.m_UAVs.size(), nullptr)
         , m_SRVs(kernel.m_SRVs.size(), nullptr)
         , m_Samplers(kernel.m_Samplers.size(), nullptr)
-        , m_ArgInfo(kernel.m_ArgMetadataToCompiler)
         , m_KernelArgUAVs(kernel.m_UAVs.begin(), kernel.m_UAVs.end())
         , m_KernelArgSRVs(kernel.m_SRVs.begin(), kernel.m_SRVs.end())
         , m_KernelArgSamplers(kernel.m_Samplers.begin(), kernel.m_Samplers.end())
@@ -149,51 +203,75 @@ public:
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
-        g_Platform->QueueProgramOp([this, localSize, offset, numIterations, &Device,
-                                             kernel = this->m_Kernel,
-                                             refThis = Task::ref_int(*this)]()
+        clc_runtime_kernel_conf config = {};
+        config.lower_int64 = true;
+        config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
+        config.support_work_group_id_offsets = numIterations != 1;
+        std::copy(std::begin(localSize), std::end(localSize), config.local_size);
+        config.args = kernel.m_ArgMetadataToCompiler.data();
+        auto SpecKey = Kernel::SpecializationKey::Allocate(config, *kernel.m_pDxil->kernel);
+        
         {
-            try
+            std::lock_guard SpecLock(kernel.m_SpecializationCacheLock);
+            auto iter = kernel.m_SpecializationCache.find(SpecKey);
+            if (iter != kernel.m_SpecializationCache.end())
+                m_Specialized = &iter->second;
+        }
+
+        if (!m_Specialized)
+        {
+            g_Platform->QueueProgramOp([this, localSize, offset, numIterations, &Device, config,
+                                                 ArgInfo = kernel.m_ArgMetadataToCompiler,
+                                                 SpecKey = std::move(SpecKey),
+                                                 kernel = this->m_Kernel,
+                                                 refThis = Task::ref_int(*this)]() mutable
             {
-                auto& Compiler = g_Platform->GetCompiler();
-                auto Context = g_Platform->GetCompilerContext();
-                auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
-                auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
-
-                clc_runtime_kernel_conf config = {};
-                config.lower_int64 = true;
-                config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
-                config.support_work_group_id_offsets = numIterations != 1;
-                std::copy(std::begin(localSize), std::end(localSize), config.local_size);
-                config.args = m_ArgInfo.data();
-
-                auto spirv = kernel->m_Parent->GetSpirV(&m_CommandQueue->GetDevice());
-                auto name = kernel->m_pDxil->kernel->name;
-                unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
-
-                SignBlob(specialized->binary.data, specialized->binary.size);
-
-                auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&Device.ImmCtx(), specialized->binary.data, specialized->binary.size, kernel->m_ShaderDecls);
-                D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
-                auto PSO = Device.CreatePSO(Desc);
-
+                try
                 {
-                    std::lock_guard lock(m_SpecializeLock);
-                    std::swap(m_Specialized, specialized);
-                    std::swap(m_Shader, CS);
-                    std::swap(m_PSO, PSO);
+                    auto& Compiler = g_Platform->GetCompiler();
+                    auto Context = g_Platform->GetCompilerContext();
+                    auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
+                    auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
+
+                    config.args = ArgInfo.data();
+
+                    auto spirv = kernel->m_Parent->GetSpirV(&m_CommandQueue->GetDevice());
+                    auto name = kernel->m_pDxil->kernel->name;
+                    unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
+
+                    SignBlob(specialized->binary.data, specialized->binary.size);
+
+                    auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&Device.ImmCtx(), specialized->binary.data, specialized->binary.size, kernel->m_ShaderDecls);
+                    D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
+                    auto PSO = Device.CreatePSO(Desc);
+
+                    Kernel::SpecializationValue *cacheEntry = nullptr;
+
+                    {
+                        std::lock_guard lock(kernel->m_SpecializationCacheLock);
+                        auto ret = kernel->m_SpecializationCache.try_emplace(std::move(SpecKey),
+                                                                             std::move(specialized),
+                                                                             std::move(CS),
+                                                                             std::move(PSO));
+                        cacheEntry = &ret.first->second;
+                    }
+
+                    {
+                        std::lock_guard lock(m_SpecializeLock);
+                        m_Specialized = cacheEntry;
+                    }
+                    m_SpecializeEvent.notify_all();
                 }
-                m_SpecializeEvent.notify_all();
-            }
-            catch (...)
-            {
+                catch (...)
                 {
-                    std::lock_guard lock(m_SpecializeLock);
-                    m_SpecializeError = true;
+                    {
+                        std::lock_guard lock(m_SpecializeLock);
+                        m_SpecializeError = true;
+                    }
+                    m_SpecializeEvent.notify_all();
                 }
-                m_SpecializeEvent.notify_all();
-            }
-        });
+            });
+        }
     }
 };
 
@@ -413,7 +491,7 @@ constexpr UINT c_NumConstants[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT]
 void ExecuteKernel::RecordImpl()
 {
     std::unique_lock lock(m_SpecializeLock);
-    while (!m_PSO.get() && !m_SpecializeError)
+    while (!m_Specialized && !m_SpecializeError)
     {
         m_SpecializeEvent.wait(lock);
     }
@@ -434,7 +512,7 @@ void ExecuteKernel::RecordImpl()
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
     ImmCtx.SetShaderResources<D3D12TranslationLayer::e_CS>(0, (UINT)m_SRVs.size(), m_SRVs.data());
     ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());
-    ImmCtx.SetPipelineState(m_PSO.get());
+    ImmCtx.SetPipelineState(m_Specialized->m_PSO.get());
 
     cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
