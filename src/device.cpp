@@ -313,6 +313,15 @@ bool Device::IsUMA() const noexcept
     return ArchCaps.UMA;
 }
 
+bool Device::SupportsInt16() const noexcept
+{
+    if (!m_ImmCtx)
+        return true;
+    D3D12_FEATURE_DATA_D3D12_OPTIONS4 Options = {};
+    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &Options, sizeof(Options));
+    return Options.Native16BitShaderOpsSupported;
+}
+
 std::string Device::GetDeviceName() const
 {
     std::string name;

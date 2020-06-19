@@ -38,9 +38,10 @@ private:
             {
                 uint16_t LocalSize[3];
                 uint16_t LowerInt64 : 1;
+                uint16_t LowerInt16 : 1;
                 uint16_t SupportGlobalOffsets : 1;
                 uint16_t SupportLocalOffsets : 1;
-                uint16_t Padding : 13;
+                uint16_t Padding : 12;
             } Bits;
             uint64_t Value;
         } ConfigData;
