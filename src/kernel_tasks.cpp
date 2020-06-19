@@ -25,7 +25,8 @@ Kernel::SpecializationKey::SpecializationKey(clc_runtime_kernel_conf const& conf
     ConfigData.Bits.LocalSize[2] = conf.local_size[2];
     ConfigData.Bits.SupportGlobalOffsets = conf.support_global_work_id_offsets;
     ConfigData.Bits.SupportLocalOffsets = conf.support_global_work_id_offsets;
-    ConfigData.Bits.LowerInt64 = 1;
+    ConfigData.Bits.LowerInt64 = (conf.lower_bit_size & 64) != 0;
+    ConfigData.Bits.LowerInt16 = (conf.lower_bit_size & 16) != 0;
     ConfigData.Bits.Padding = 0;
 
     NumArgs = (uint32_t)info.num_args;
@@ -204,7 +205,8 @@ public:
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
         clc_runtime_kernel_conf config = {};
-        config.lower_int64 = true;
+        config.lower_bit_size = 64;
+        config.lower_bit_size |= (m_Device->SupportsInt16() ? 0 : 16);
         config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
         config.support_work_group_id_offsets = numIterations != 1;
         std::copy(std::begin(localSize), std::end(localSize), config.local_size);

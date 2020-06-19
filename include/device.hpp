@@ -23,6 +23,7 @@ public:
     DXCoreHardwareID const& GetHardwareIds() const noexcept;
     bool IsMCDM() const noexcept;
     bool IsUMA() const noexcept;
+    bool SupportsInt16() const noexcept;
 
     std::string GetDeviceName() const;
 
