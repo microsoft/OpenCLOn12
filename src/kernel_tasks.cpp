@@ -7,7 +7,11 @@
 #include "sampler.hpp"
 #include "clc_compiler.h"
 
+#include <wil/resource.h>
+#include <sstream>
+
 extern void SignBlob(void* pBlob, size_t size);
+constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 
 auto Kernel::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
 {
@@ -79,6 +83,7 @@ public:
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
+    Resource::ref_ptr m_PrintfUAV;
 
     std::vector<Resource::ref_ptr_int> m_KernelArgUAVs;
     std::vector<Resource::ref_ptr_int> m_KernelArgSRVs;
@@ -104,10 +109,7 @@ public:
         }
     }
     void RecordImpl() final;
-    void OnComplete() final
-    {
-        m_Kernel.Release();
-    }
+    void OnComplete() final;
 
     ExecuteKernel(Kernel& kernel, cl_command_queue queue, std::array<uint32_t, 3> const& dims, std::array<uint32_t, 3> const& offset, std::array<uint16_t, 3> const& localSize, cl_uint workDims)
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
@@ -202,6 +204,13 @@ public:
 
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
+
+        if (kernel.m_pDxil->metadata.printf_uav_id >= 0)
+        {
+            m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR, PrintfBufferSize, nullptr, nullptr)));
+            m_PrintfUAV->EnqueueMigrateResource(&Device, this, 0);
+            m_UAVs[kernel.m_pDxil->metadata.printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
+        }
 
         clc_runtime_kernel_conf config = {};
         config.lower_int64 = true;
@@ -507,6 +516,10 @@ void ExecuteKernel::RecordImpl()
     std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetUAV(&Device) : nullptr; });
     std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetSRV(&Device) : nullptr; });
     std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
+    if (m_PrintfUAV.Get())
+    {
+        m_UAVs[m_Kernel->m_pDxil->metadata.printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
+    }
 
     auto& ImmCtx = Device.ImmCtx();
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
@@ -536,4 +549,315 @@ void ExecuteKernel::RecordImpl()
     }
 
     ImmCtx.ClearState();
+}
+
+static const char* StringFromConstantBuffer(uint64_t address, clc_dxil_metadata const& metadata)
+{
+    uint32_t bufferId = (uint32_t)(address >> 32);
+    uint32_t bufferOffset = (uint32_t)(address & 0xffffffff);
+    for (uint32_t i = 0; i < metadata.num_consts; ++i)
+    {
+        if (metadata.consts[i].uav_id == bufferId)
+        {
+            return reinterpret_cast<const char*>(metadata.consts[i].data) + bufferOffset;
+        }
+    }
+    return nullptr;
+}
+
+void ExecuteKernel::OnComplete()
+{
+    auto Cleanup = wil::scope_exit([this]()
+    {
+        m_Kernel.Release();
+    });
+
+    if (m_PrintfUAV.Get())
+    {
+        auto& Device = m_CommandQueue->GetDevice();
+        auto& ImmCtx = Device.ImmCtx();
+        auto TranslationResource = m_PrintfUAV->GetUnderlyingResource(&Device);
+        D3D12TranslationLayer::MappedSubresource MapRet = {};
+        ImmCtx.Map(TranslationResource, 0, D3D12TranslationLayer::MAP_TYPE_READ, false, nullptr, &MapRet);
+
+        auto Unmap = wil::scope_exit([&]()
+        {
+            ImmCtx.Unmap(TranslationResource, 0, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
+        });
+
+        uint32_t NumBytesWritten = *reinterpret_cast<uint32_t*>(MapRet.pData);
+        uint32_t CurOffset = sizeof(uint32_t);
+        byte* ByteStream = reinterpret_cast<byte*>(MapRet.pData);
+        while (CurOffset - sizeof(uint32_t) < NumBytesWritten && CurOffset < PrintfBufferSize)
+        {
+            uint64_t FormatStringAddress = *reinterpret_cast<uint64_t*>(ByteStream + CurOffset);
+            auto FormatString = StringFromConstantBuffer(FormatStringAddress, m_Kernel->m_pDxil->metadata);
+            assert(FormatString);
+            CurOffset += sizeof(uint64_t);
+            auto StructBeginOffset = CurOffset;
+
+            std::ostringstream stream;
+            const char* SectionStart = FormatString;
+            while (const char* SectionEnd = strchr(SectionStart, '%'))
+            {
+                if (SectionEnd[1] == '%')
+                {
+                    stream << std::string_view(SectionStart, SectionEnd - SectionStart + 2);
+                    SectionStart = SectionEnd + 2;
+                    continue;
+                }
+                stream << std::string_view(SectionStart, SectionEnd - SectionStart);
+
+                // Parse the printf declaration to find what type we should load
+                char FinalFormatString[16] = "%", *OutputFormatString = FinalFormatString + 1;
+                const char* FormatStr = SectionEnd + 1;
+                for (; *FormatStr; ++FormatStr)
+                {
+                    switch (*FormatStr)
+                    {
+                    case '+':
+                    case '-':
+                    case ' ':
+                    case '#':
+                    case '0':
+                    case '1':
+                    case '2':
+                    case '3':
+                    case '4':
+                    case '5':
+                    case '6':
+                    case '7':
+                    case '8':
+                    case '9':
+                    case '.':
+                        // Flag, field width, or precision
+                        *(OutputFormatString++) = *FormatStr;
+                        continue;
+                    }
+                    break;
+                }
+
+                uint32_t VectorSize = 1;
+                if (*FormatStr == 'v')
+                {
+                    ++FormatStr;
+                    switch (*FormatStr)
+                    {
+                    case '2': VectorSize = 2; break;
+                    case '3': VectorSize = 3; break;
+                    case '4': VectorSize = 4; break;
+                    case '8': VectorSize = 8; break;
+                    case '1':
+                        ++FormatStr;
+                        if (*FormatStr == '6')
+                        {
+                            VectorSize = 16;
+                            break;
+                        }
+                        // fallthrough
+                    default:
+                        printf("Invalid format string, unexpected vector size.\n");
+                        return;
+                    }
+                    ++FormatStr;
+                }
+
+                uint32_t DataSize = 4, PromotedDataSize = 4;
+                bool ExplicitDataSize = false;
+                switch (*FormatStr)
+                {
+                case 'h':
+                    ExplicitDataSize = true;
+                    ++FormatStr;
+                    if (*FormatStr == 'h')
+                    {
+                        DataSize = 1;
+                        *(OutputFormatString++) = 'h';
+                        *(OutputFormatString++) = 'h';
+                        ++FormatStr;
+                    }
+                    else if (*FormatStr == 'l')
+                    {
+                        if (VectorSize == 1)
+                        {
+                            printf("Invalid format string, hl precision only valid with vectors.\n");
+                            return;
+                        }
+                        DataSize = 4;
+                        ++FormatStr;
+                    }
+                    else
+                    {
+                        *(OutputFormatString++) = 'h';
+                        DataSize = 2;
+                    }
+                    break;
+                case 'l':
+                    ExplicitDataSize = true;
+                    *(OutputFormatString++) = 'l';
+                    ++FormatStr;
+                    DataSize = 8;
+                    PromotedDataSize = 8;
+                    break;
+                }
+
+                if (!ExplicitDataSize && VectorSize > 1)
+                {
+                    printf("Invalid format string, vectors require explicit data size.\n");
+                    return;
+                }
+
+                *(OutputFormatString++) = *FormatStr;
+                if (!ExplicitDataSize)
+                {
+                    switch (*FormatStr)
+                    {
+                    case 's':
+                    case 'p':
+                        // Pointers are 64bit
+                        DataSize = PromotedDataSize = 8;
+                        break;
+                    }
+                }
+
+                if (VectorSize == 1)
+                {
+                    switch (*FormatStr)
+                    {
+                    case 'f':
+                    case 'F':
+                    case 'e':
+                    case 'E':
+                    case 'g':
+                    case 'G':
+                    case 'a':
+                    case 'A':
+                        // Space for these was reserved as doubles, but we only wrote a float
+                        PromotedDataSize = 8;
+                        break;
+                    }
+                }
+                else
+                {
+                    PromotedDataSize = DataSize;
+                }
+
+                // Get the base pointer to the arg, now that we know how big it is
+                uint32_t ArgSize = PromotedDataSize * (VectorSize == 3 ? 4 : VectorSize);
+                uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(
+                    CurOffset - StructBeginOffset,
+                    ArgSize) + StructBeginOffset;
+                byte* ArgPtr = ByteStream + ArgOffset;
+                CurOffset += ArgSize;
+                CurOffset = D3D12TranslationLayer::Align<uint32_t>(CurOffset, 4);
+
+                std::string StringBuffer;
+                StringBuffer.resize(32);
+                for (uint32_t i = 0; i < VectorSize; ++i)
+                {
+                    switch (*FormatStr)
+                    {
+                    default:
+                        printf("Invalid format string, unknown conversion specifier.\n");
+                        return;
+                    case 's':
+                    {
+                        if (DataSize != 8 || VectorSize != 1)
+                        {
+                            printf("Invalid format string, precision or vector applied to string.\n");
+                            return;
+                        }
+                        uint64_t StringAddress = *reinterpret_cast<uint64_t*>(ArgPtr);
+                        const char *Str = StringFromConstantBuffer(StringAddress, m_Kernel->m_pDxil->metadata);
+                        // Use sprintf to deal with precision potentially shortening how much is printed
+                        StringBuffer.resize(snprintf(nullptr, 0, FinalFormatString, Str) + 1);
+                        sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString, Str);
+                        break;
+                    }
+                    case 'f':
+                    case 'F':
+                    case 'e':
+                    case 'E':
+                    case 'g':
+                    case 'G':
+                    case 'a':
+                    case 'A':
+                    {
+                        if (DataSize != 4)
+                        {
+                            printf("Invalid format string, floats other than 4 bytes are not supported.\n");
+                            return;
+                        }
+                        DataSize = 4;
+                        float val = *reinterpret_cast<float*>(ArgPtr);
+                        sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString, val);
+                        break;
+                    }
+                    break;
+                    case 'c':
+                        DataSize = 1;
+                        // fallthrough
+                    case 'd':
+                    case 'i':
+                        switch (PromotedDataSize)
+                        {
+                        case 1:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<int8_t*>(ArgPtr));
+                            break;
+                        case 2:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<int16_t*>(ArgPtr));
+                            break;
+                        case 4:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<int32_t*>(ArgPtr));
+                            break;
+                        case 8:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<int64_t*>(ArgPtr));
+                            break;
+                        }
+                        break;
+                    case 'o':
+                    case 'u':
+                    case 'x':
+                    case 'X':
+                    case 'p':
+                        switch (DataSize)
+                        {
+                        case 1:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<uint8_t*>(ArgPtr));
+                            break;
+                        case 2:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<uint16_t*>(ArgPtr));
+                            break;
+                        case 4:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<uint32_t*>(ArgPtr));
+                            break;
+                        case 8:
+                            sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
+                                      *reinterpret_cast<uint64_t*>(ArgPtr));
+                            break;
+                        }
+                        break;
+                    }
+
+                    ArgPtr += DataSize;
+                    stream << StringBuffer.c_str();
+                    if (i < VectorSize - 1)
+                        stream << ",";
+                }
+
+                SectionStart = FormatStr + 1;
+            }
+
+            stream << SectionStart;
+            printf("%s", stream.str().c_str());
+            fflush(NULL);
+        }
+    }
 }
