@@ -164,6 +164,8 @@ struct clc_dxil_metadata {
 
    uint16_t local_size[3];
    uint16_t local_size_hint[3];
+
+   int printf_uav_id;
 };
 
 struct clc_dxil_object {
