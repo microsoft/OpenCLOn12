@@ -698,16 +698,20 @@ clGetImageInfo(cl_mem           image,
 
 auto Resource::GetUnderlyingResource(Device* device) -> UnderlyingResource*
 {
-    if (m_ParentBuffer.Get())
-        return m_ParentBuffer->GetUnderlyingResource(device);
-
     std::lock_guard Lock(m_MultiDeviceLock);
     auto& Entry = m_UnderlyingMap[device];
     if (Entry.get())
         return Entry.get();
 
-    Entry = UnderlyingResource::CreateResource(&device->ImmCtx(), m_CreationArgs,
-        D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
+    if (m_ParentBuffer.Get())
+    {
+        Entry.reset(m_ParentBuffer->GetUnderlyingResource(device));
+    }
+    else
+    {
+        Entry = UnderlyingResource::CreateResource(&device->ImmCtx(), m_CreationArgs,
+            D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
+    }
 
     if (m_CreationArgs.m_desc12.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
     {
