@@ -182,9 +182,10 @@ public:
         Args.m_appDesc.m_resourceDimension = D3D12_RESOURCE_DIMENSION_BUFFER;
         Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
         Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
+        Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
         Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(Args.m_appDesc.m_Width);
-        Args.m_heapDesc = CD3DX12_HEAP_DESC(Args.m_appDesc.m_Width,
-            Device.GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD));
+        Args.m_heapDesc = CD3DX12_HEAP_DESC(Args.m_appDesc.m_Width, D3D12_HEAP_TYPE_UPLOAD);
+        Args.m_heapType = D3D12TranslationLayer::AllocatorHeapType::Upload;
         assert(Args.m_appDesc.m_Width % D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT == 0);
 
         m_KernelArgsCb =
