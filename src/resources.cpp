@@ -866,7 +866,6 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
     {
         DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-        UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
         assert(m_Offset == 0);
 
         {
@@ -878,7 +877,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             UAVDesc.Buffer.StructureByteStride = 0;
             UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
             UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-            UAVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
+            UAVDesc.Buffer.NumElements = (UINT)size;
 
             UAVDescWrapper.m_D3D11UAVFlags = 0;
         }
@@ -890,7 +889,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             SRVDesc.Buffer.StructureByteStride = 0;
             SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
             SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
-            SRVDesc.Buffer.NumElements = (UINT)((size - 1) / FormatByteSize) + 1;
+            SRVDesc.Buffer.NumElements = (UINT)size;
         }
     }
     else
