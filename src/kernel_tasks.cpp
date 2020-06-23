@@ -24,7 +24,7 @@ Kernel::SpecializationKey::SpecializationKey(clc_runtime_kernel_conf const& conf
     ConfigData.Bits.LocalSize[1] = conf.local_size[1];
     ConfigData.Bits.LocalSize[2] = conf.local_size[2];
     ConfigData.Bits.SupportGlobalOffsets = conf.support_global_work_id_offsets;
-    ConfigData.Bits.SupportLocalOffsets = conf.support_global_work_id_offsets;
+    ConfigData.Bits.SupportLocalOffsets = conf.support_work_group_id_offsets;
     ConfigData.Bits.LowerInt64 = (conf.lower_bit_size & 64) != 0;
     ConfigData.Bits.LowerInt16 = (conf.lower_bit_size & 16) != 0;
     ConfigData.Bits.Padding = 0;
