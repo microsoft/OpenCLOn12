@@ -593,6 +593,30 @@ clGetSupportedImageFormats(cl_context           context_,
                 {
                     return false;
                 }
+
+                D3D12_FORMAT_SUPPORT1 bit = D3D12_FORMAT_SUPPORT1_NONE;
+                switch (image_type)
+                {
+                case CL_MEM_OBJECT_IMAGE1D_BUFFER:
+                    bit = D3D12_FORMAT_SUPPORT1_BUFFER;
+                    break;
+                case CL_MEM_OBJECT_IMAGE1D:
+                case CL_MEM_OBJECT_IMAGE1D_ARRAY:
+                    bit = D3D12_FORMAT_SUPPORT1_TEXTURE1D;
+                    break;
+                case CL_MEM_OBJECT_IMAGE2D:
+                case CL_MEM_OBJECT_IMAGE2D_ARRAY:
+                    bit = D3D12_FORMAT_SUPPORT1_TEXTURE2D;
+                    break;
+                case CL_MEM_OBJECT_IMAGE3D:
+                    bit = D3D12_FORMAT_SUPPORT1_TEXTURE3D;
+                    break;
+                }
+
+                if ((Support.Support1 & bit) == D3D12_FORMAT_SUPPORT1_NONE)
+                {
+                    return false;
+                }
             }
             return true;
         }();
