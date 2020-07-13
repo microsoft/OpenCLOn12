@@ -180,7 +180,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_PLATFORM: return RetValue(static_cast<cl_platform_id>(&pDevice->m_Parent.get()));
         case CL_DEVICE_NAME: return RetValue(pDevice->GetDeviceName().c_str());
         case CL_DEVICE_VENDOR: return RetValue(pDevice->m_Parent->Vendor);
-        case CL_DRIVER_VERSION: return RetValue("0.0.1");
+        case CL_DRIVER_VERSION: return RetValue("1.0.0");
         case CL_DEVICE_PROFILE: return RetValue(pDevice->m_Parent->Profile);
         case CL_DEVICE_VERSION: return RetValue(pDevice->m_Parent->Version);
         case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.2 ");

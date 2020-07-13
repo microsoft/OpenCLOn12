@@ -19,9 +19,7 @@ For more details about OpenCLOn12, see:
 
 ## Current Status
 
-At this point, the OpenCL API is more or less fully implemented, but largely untested. Further, the compiler is still undergoing significant development and churn. Known gaps:
-* OpenCL contexts do not support more than one device.
-* Printf is not supported.
+At this point, the OpenCL 1.2 API is fully implemented, with no optional extensions.
 
 ## Building
 
