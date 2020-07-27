@@ -369,7 +369,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
         }
 
         LocalSize = local_work_size ? (uint16_t)local_work_size[i] :
-            (DimsHint ? DimsHint[i] : AutoDims[work_dim][i]);
+            (DimsHint ? DimsHint[i] : AutoDims[work_dim - 1][i]);
         if (RequiredDims)
         {
             if (RequiredDims[i] != LocalSize)
