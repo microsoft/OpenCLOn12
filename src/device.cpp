@@ -285,11 +285,11 @@ cl_bool Device::IsAvailable() const noexcept
 
 cl_ulong Device::GetGlobalMemSize() const noexcept
 {
-    size_t localMemory = 0;
+    uint64_t localMemory = 0;
     m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedAdapterMemory, sizeof(localMemory), &localMemory);
-    size_t nonlocalMemory = 0;
+    uint64_t nonlocalMemory = 0;
     m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedSystemMemory, sizeof(nonlocalMemory), &nonlocalMemory);
-    size_t sharedMemory = 0;
+    uint64_t sharedMemory = 0;
     m_spAdapter->GetProperty(DXCoreAdapterProperty::SharedSystemMemory, sizeof(sharedMemory), &sharedMemory);
     return ((cl_ulong)localMemory + nonlocalMemory + sharedMemory);
 }
