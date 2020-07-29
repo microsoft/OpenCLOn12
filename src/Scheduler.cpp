@@ -281,7 +281,7 @@ struct SetSchedulingModeTaskContext
     SchedulingMode mode;
 };
 //-------------------------------------------------------------------------------------------------
-void Scheduler::SetSchedulingModeTaskStatic(void* pContext)
+void __stdcall Scheduler::SetSchedulingModeTaskStatic(void* pContext)
 {
     std::unique_ptr<SetSchedulingModeTaskContext> spContext(static_cast<SetSchedulingModeTaskContext*>(pContext));
     spContext->pThis->SetSchedulingModeTask(spContext->mode);

@@ -90,7 +90,7 @@ namespace BackgroundTaskScheduler
 
         // These methods will take the lock.
         void SetSchedulingModeTask(SchedulingMode mode) noexcept;
-        static void SetSchedulingModeTaskStatic(void* pContext);
+        static void __stdcall SetSchedulingModeTaskStatic(void* pContext);
         void TaskThread(int ThreadID) noexcept;
 
     public:
