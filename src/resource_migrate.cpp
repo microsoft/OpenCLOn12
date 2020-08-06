@@ -35,11 +35,11 @@ public:
         }
 
         m_ImmCtx.GetResourceStateManager().TransitionResource(
-            m_Resource.GetActiveUnderlyingResource(),
+            m_Resource.GetUnderlyingResource(&m_Device),
             m_ToCrossAdapter ? D3D12_RESOURCE_STATE_COPY_SOURCE : D3D12_RESOURCE_STATE_COPY_DEST);
         m_ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
 
-        ID3D12Resource* CLResource = m_Resource.GetActiveUnderlyingResource()->GetUnderlyingResource();
+        ID3D12Resource* CLResource = m_Resource.GetUnderlyingResource(&m_Device)->GetUnderlyingResource();
         if (m_Resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
             ID3D12Resource* Source = m_ToCrossAdapter ? CLResource : m_CrossAdapterBuffer.get();
@@ -48,7 +48,7 @@ public:
         }
         else
         {
-            auto TransRes = m_Resource.GetActiveUnderlyingResource();
+            auto TransRes = m_Resource.GetUnderlyingResource(&m_Device);
             UINT NumSubresources = TransRes->NumSubresources();
             D3D12_TEXTURE_COPY_LOCATION Buffer, Image;
             Buffer.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
