@@ -72,6 +72,13 @@ public:
 
 void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, cl_mem_migration_flags flags)
 {
+    if (m_ParentBuffer.Get())
+    {
+        m_ParentBuffer->EnqueueMigrateResource(newDevice, triggeringTask, flags);
+        SetActiveDevice(newDevice);
+        return;
+    }
+
     if (m_CurrentActiveDevice == newDevice)
         return;
 
