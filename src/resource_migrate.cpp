@@ -79,11 +79,14 @@ void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, c
         (flags & CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED))
     {
         SetActiveDevice(newDevice);
-        UploadInitialData();
+        if ((flags & CL_MIGRATE_MEM_OBJECT_CONTENT_UNDEFINED) == 0)
+        {
+            UploadInitialData(triggeringTask);
+        }
         return;
     }
 
-    assert(m_CurrentActiveDevice != nullptr);
+    assert(m_CurrentActiveDevice != nullptr && triggeringTask != nullptr);
     unique_comptr<ID3D12Heap> CrossAdapterHeap;
     D3D12_HEAP_DESC HeapDesc = CD3DX12_HEAP_DESC(GetActiveUnderlyingResource()->GetResourceSize(), D3D12_HEAP_TYPE_DEFAULT, 0,
                                                  D3D12_HEAP_FLAG_SHARED | D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER);
@@ -128,6 +131,68 @@ void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, c
     triggeringTask->AddDependencies(&e, 1, Lock);
     newDevice->SubmitTask(CopyFromCrossAdapter.get(), Lock);
     CopyFromCrossAdapter.release();
+
+    m_CurrentActiveDevice->Flush(Lock);
+}
+
+class UploadInitialData : public Task
+{
+    Resource& m_Resource;
+public:
+    UploadInitialData(Context& Context, Resource& Resource, Device& Device)
+        : Task(Context, Device)
+        , m_Resource(Resource)
+    {
+    }
+
+    void MigrateResources() final {}
+    void RecordImpl() final
+    {
+        if (!m_Resource.m_InitialData)
+            return;
+
+        assert(m_ActiveUnderlying && m_CurrentActiveDevice);
+        std::vector<D3D11_SUBRESOURCE_DATA> InitialData;
+        D3D11_SUBRESOURCE_DATA SingleSubresourceInitialData;
+        auto pData = &SingleSubresourceInitialData;
+        assert(m_Resource.m_CreationArgs.m_appDesc.m_MipLevels == 1);
+        if (m_Resource.m_CreationArgs.m_appDesc.m_SubresourcesPerPlane > 1)
+        {
+            InitialData.resize(m_Resource.m_CreationArgs.m_appDesc.m_SubresourcesPerPlane);
+            pData = InitialData.data();
+        }
+        char* pSubresourceData = reinterpret_cast<char*>(m_Resource.m_InitialData.get());
+        for (UINT i = 0; i < m_Resource.m_CreationArgs.m_appDesc.m_SubresourcesPerPlane; ++i)
+        {
+            pData[i].pSysMem = pSubresourceData;
+            pData[i].SysMemPitch = (UINT)m_Resource.m_Desc.image_row_pitch;
+            pData[i].SysMemSlicePitch = (UINT)m_Resource.m_Desc.image_slice_pitch;
+            pSubresourceData += m_Resource.m_Desc.image_slice_pitch;
+        }
+        m_Resource.m_CurrentActiveDevice->ImmCtx().UpdateSubresources(
+            m_Resource.m_ActiveUnderlying,
+            m_Resource.m_ActiveUnderlying->GetFullSubresourceSubset(),
+            pData,
+            nullptr,
+            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::ImmediateContextInternalOp);
+        m_Resource.m_InitialData.reset();
+    }
+};
+
+void Resource::UploadInitialData(Task* triggeringTask)
+{
+    if (!m_InitialData)
+        return;
+
+    std::unique_ptr<Task> UploadTask(new ::UploadInitialData(
+        m_Parent.get(), *this, *m_CurrentActiveDevice));
+
+    auto Lock = g_Platform->GetTaskPoolLock();
+
+    cl_event e = UploadTask.get();
+    triggeringTask->AddDependencies(&e, 1, Lock);
+    m_CurrentActiveDevice->SubmitTask(UploadTask.get(), Lock);
+    UploadTask.release();
 
     m_CurrentActiveDevice->Flush(Lock);
 }

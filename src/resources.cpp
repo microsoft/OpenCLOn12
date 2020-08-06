@@ -757,37 +757,6 @@ void Resource::SetActiveDevice(Device* device)
     m_CurrentActiveDevice = device;
 }
 
-void Resource::UploadInitialData()
-{
-    if (!m_InitialData)
-        return;
-
-    assert(m_ActiveUnderlying && m_CurrentActiveDevice);
-    std::vector<D3D11_SUBRESOURCE_DATA> InitialData;
-    D3D11_SUBRESOURCE_DATA SingleSubresourceInitialData;
-    auto pData = &SingleSubresourceInitialData;
-    assert(m_CreationArgs.m_appDesc.m_MipLevels == 1);
-    if (m_CreationArgs.m_appDesc.m_SubresourcesPerPlane > 1)
-    {
-        InitialData.resize(m_CreationArgs.m_appDesc.m_SubresourcesPerPlane);
-        pData = InitialData.data();
-    }
-    char* pSubresourceData = reinterpret_cast<char*>(m_InitialData.get());
-    for (UINT i = 0; i < m_CreationArgs.m_appDesc.m_SubresourcesPerPlane; ++i)
-    {
-        pData[i].pSysMem = pSubresourceData;
-        pData[i].SysMemPitch = (UINT)m_Desc.image_row_pitch;
-        pData[i].SysMemSlicePitch = (UINT)m_Desc.image_slice_pitch;
-        pSubresourceData += m_Desc.image_slice_pitch;
-    }
-    m_CurrentActiveDevice->ImmCtx().UpdateSubresources(
-        m_ActiveUnderlying,
-        m_ActiveUnderlying->GetFullSubresourceSubset(),
-        pData,
-        nullptr,
-        D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
-}
-
 D3D12TranslationLayer::SRV& Resource::GetSRV(Device* device)
 {
     auto iter = m_SRVs.find(device);
@@ -845,12 +814,6 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
     UAVDesc.Buffer.FirstElement = m_Offset / 4;
     UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
     UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
-
-    if (m_Parent->GetDeviceCount() == 1)
-    {
-        SetActiveDevice(&m_Parent->GetDevice(0));
-        UploadInitialData();
-    }
 }
 
 Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags)
@@ -904,12 +867,6 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
         UAVDesc.Buffer.FirstElement = m_Offset / 4;
         UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
         UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
-    }
-
-    if (m_Parent->GetDeviceCount() == 1)
-    {
-        SetActiveDevice(&m_Parent->GetDevice(0));
-        UploadInitialData();
     }
 }
 
@@ -1015,12 +972,6 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
             break;
         default: assert(false);
         }
-    }
-
-    if (m_Parent->GetDeviceCount() == 1)
-    {
-        SetActiveDevice(&m_Parent->GetDevice(0));
-        UploadInitialData();
     }
 }
 

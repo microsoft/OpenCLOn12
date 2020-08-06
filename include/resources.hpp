@@ -36,7 +36,6 @@ public:
     void SetActiveDevice(Device*);
     UnderlyingResource* GetActiveUnderlyingResource() const { return m_ActiveUnderlying; }
     cl_uint GetMapCount() const { std::lock_guard MapLock(m_MapLock); return m_MapCount; }
-    void UploadInitialData();
 
     void EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, cl_mem_migration_flags flags);
 
@@ -74,4 +73,6 @@ protected:
     Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
 
     static cl_image_desc GetBufferDesc(size_t size, cl_mem_object_type type);
+    void UploadInitialData(Task* triggeringTask);
+    friend class UploadInitialData;
 };

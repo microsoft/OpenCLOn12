@@ -1509,7 +1509,9 @@ clEnqueueCopyBuffer(cl_command_queue    command_queue,
         return ReportError("size must be nonzero, and size and offsets must address regions within buffers", CL_INVALID_VALUE);
     }
 
-    if (source.GetActiveUnderlyingResource() == dest.GetActiveUnderlyingResource())
+    if (source.m_ParentBuffer.Get() == &dest ||
+        dest.m_ParentBuffer.Get() == &source ||
+        &source == &dest)
     {
         size_t absolute_src_offset = src_offset + source.m_Offset;
         size_t absolute_dst_offset = dst_offset + dest.m_Offset;
@@ -1608,7 +1610,9 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
         return imageResult;
     }
 
-    if (source.GetActiveUnderlyingResource() == dest.GetActiveUnderlyingResource())
+    if (source.m_ParentBuffer.Get() == &dest ||
+        dest.m_ParentBuffer.Get() == &source ||
+        &source == &dest)
     {
         cl_uint overlap = 0;
         for (cl_uint i = 0; i < 3; ++i)
@@ -1920,7 +1924,9 @@ clEnqueueCopyBufferRect(cl_command_queue    command_queue,
         return ReportError("Offsets and region would require accessing out of bounds of buffer objects", CL_INVALID_VALUE);
     }
 
-    if (source.GetActiveUnderlyingResource() == dest.GetActiveUnderlyingResource())
+    if (source.m_ParentBuffer.Get() == &dest ||
+        dest.m_ParentBuffer.Get() == &source ||
+        &source == &dest)
     {
         if ((src_start <= dst_start && dst_start <= src_end) ||
             (dst_start <= src_start && src_start <= dst_end))
