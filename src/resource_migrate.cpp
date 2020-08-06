@@ -151,7 +151,7 @@ public:
         if (!m_Resource.m_InitialData)
             return;
 
-        assert(m_ActiveUnderlying && m_CurrentActiveDevice);
+        assert(m_Resource.m_ActiveUnderlying && m_Resource.m_CurrentActiveDevice);
         std::vector<D3D11_SUBRESOURCE_DATA> InitialData;
         D3D11_SUBRESOURCE_DATA SingleSubresourceInitialData;
         auto pData = &SingleSubresourceInitialData;
