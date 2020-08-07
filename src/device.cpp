@@ -294,13 +294,19 @@ cl_bool Device::IsAvailable() const noexcept
 
 cl_ulong Device::GetGlobalMemSize() const noexcept
 {
-    uint64_t localMemory = 0;
-    m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedAdapterMemory, sizeof(localMemory), &localMemory);
-    uint64_t nonlocalMemory = 0;
-    m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedSystemMemory, sizeof(nonlocalMemory), &nonlocalMemory);
-    uint64_t sharedMemory = 0;
-    m_spAdapter->GetProperty(DXCoreAdapterProperty::SharedSystemMemory, sizeof(sharedMemory), &sharedMemory);
-    return ((cl_ulong)localMemory + nonlocalMemory + sharedMemory);
+    // Just report one segment's worth of memory, depending on whether we're UMA or not.
+    if (IsUMA())
+    {
+        uint64_t sharedMemory = 0;
+        m_spAdapter->GetProperty(DXCoreAdapterProperty::SharedSystemMemory, sizeof(sharedMemory), &sharedMemory);
+        return sharedMemory;
+    }
+    else
+    {
+        uint64_t localMemory = 0;
+        m_spAdapter->GetProperty(DXCoreAdapterProperty::DedicatedAdapterMemory, sizeof(localMemory), &localMemory);
+        return localMemory;
+    }
 }
 
 DXCoreHardwareID const& Device::GetHardwareIds() const noexcept
