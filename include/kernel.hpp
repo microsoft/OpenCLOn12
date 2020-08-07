@@ -32,6 +32,7 @@ private:
     // or clCloneKernel instances when we get there.
     struct SpecializationKey
     {
+        Device* const CompilingDevice;
         union
         {
             struct
@@ -57,9 +58,9 @@ private:
                 unsigned Padding : 27;
             } SamplerArgData;
         } Args[1];
-        static std::unique_ptr<SpecializationKey> Allocate(struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
+        static std::unique_ptr<SpecializationKey> Allocate(Device *device, struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
     private:
-        SpecializationKey(struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
+        SpecializationKey(Device* device, struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
     };
     struct SpecializationKeyHash
     {

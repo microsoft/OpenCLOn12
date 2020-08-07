@@ -13,16 +13,17 @@
 extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 
-auto Kernel::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
+auto Kernel::SpecializationKey::Allocate(Device* device, clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
 {
     uint32_t NumAllocatedArgs = info.num_args ? (uint32_t)info.num_args - 1 : 0;
     std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(
         sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs)));
-    new (bits.get()) SpecializationKey(conf, info);
+    new (bits.get()) SpecializationKey(device, conf, info);
     return bits;
 }
 
-Kernel::SpecializationKey::SpecializationKey(clc_runtime_kernel_conf const& conf, clc_kernel_info const& info)
+Kernel::SpecializationKey::SpecializationKey(Device* device, clc_runtime_kernel_conf const& conf, clc_kernel_info const& info)
+    : CompilingDevice(device)
 {
     ConfigData.Bits.LocalSize[0] = conf.local_size[0];
     ConfigData.Bits.LocalSize[1] = conf.local_size[1];
@@ -61,6 +62,7 @@ size_t Kernel::SpecializationKeyHash::operator()(std::unique_ptr<Kernel::Special
     {
         D3D12TranslationLayer::hash_combine(val, ptr->Args[i].LocalArgSize);
     }
+    D3D12TranslationLayer::hash_combine(val, ptr->CompilingDevice);
     return val;
 }
 
@@ -221,7 +223,7 @@ public:
         config.support_work_group_id_offsets = numIterations != 1;
         std::copy(std::begin(localSize), std::end(localSize), config.local_size);
         config.args = kernel.m_ArgMetadataToCompiler.data();
-        auto SpecKey = Kernel::SpecializationKey::Allocate(config, *kernel.m_pDxil->kernel);
+        auto SpecKey = Kernel::SpecializationKey::Allocate(m_Device.Get(), config, *kernel.m_pDxil->kernel);
         
         {
             std::lock_guard SpecLock(kernel.m_SpecializationCacheLock);
