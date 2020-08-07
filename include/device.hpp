@@ -32,6 +32,7 @@ public:
     ID3D12Device* GetDevice() const { return m_spDevice.Get(); }
     ImmCtx& ImmCtx() { return m_ImmCtx.value(); }
     UINT64 GetTimestampFrequency() const { return m_TimestampFrequency; }
+    INT64 GPUToQPCTimestampOffset() const { return m_GPUToQPCTimestampOffset; }
 
     void SubmitTask(Task*, TaskPoolLock const&);
     void ReadyTask(Task*, TaskPoolLock const&);
@@ -62,4 +63,5 @@ protected:
     std::mutex m_PSOCreateLock;
 
     UINT64 m_TimestampFrequency = 0;
+    INT64 m_GPUToQPCTimestampOffset = 0;
 };

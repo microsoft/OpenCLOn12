@@ -595,12 +595,14 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
         if (m_StartTimestamp &&
             m_StartTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
         {
-            GetTimestamp(CL_PROFILING_COMMAND_START) = TimestampToNanoseconds(GPUTimestamp, Frequency);
+            GetTimestamp(CL_PROFILING_COMMAND_START) =
+                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->GPUToQPCTimestampOffset();
         }
         if (m_StopTimestamp &&
             m_StopTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
         {
-            GetTimestamp(CL_PROFILING_COMMAND_END) = TimestampToNanoseconds(GPUTimestamp, Frequency);
+            GetTimestamp(CL_PROFILING_COMMAND_END) =
+                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->GPUToQPCTimestampOffset();
         }
     }
 

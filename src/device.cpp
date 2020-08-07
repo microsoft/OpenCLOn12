@@ -255,7 +255,16 @@ void Device::InitD3D()
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
     m_CompletionScheduler.SetSchedulingMode(mode);
 
-    (void)m_ImmCtx->GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS)->GetTimestampFrequency(&m_TimestampFrequency);
+    auto commandQueue = m_ImmCtx->GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+    (void)commandQueue->GetTimestampFrequency(&m_TimestampFrequency);
+
+    UINT64 CPUTimestamp = 0, GPUTimestamp = 0;
+    (void)commandQueue->GetClockCalibration(&GPUTimestamp, &CPUTimestamp);
+    LARGE_INTEGER QPCFrequency = {};
+    QueryPerformanceFrequency(&QPCFrequency);
+    m_GPUToQPCTimestampOffset =
+        (INT64)Task::TimestampToNanoseconds(CPUTimestamp, QPCFrequency.QuadPart) -
+        (INT64)Task::TimestampToNanoseconds(GPUTimestamp, m_TimestampFrequency);
 
     m_RecordingSubmission.reset(new Submission);
 }
