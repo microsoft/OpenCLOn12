@@ -241,7 +241,7 @@ void Device::InitD3D()
 
     THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_spDevice)));
     //THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&m_spDevice)));
-    THROW_IF_FAILED(m_spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options)));
+    CacheCaps(Lock);
 
     m_Callbacks.m_pfnPostSubmit = []() {};
 
@@ -292,7 +292,7 @@ cl_bool Device::IsAvailable() const noexcept
         && !driverUpdateInProgress;
 }
 
-cl_ulong Device::GetGlobalMemSize() const noexcept
+cl_ulong Device::GetGlobalMemSize()
 {
     // Just report one segment's worth of memory, depending on whether we're UMA or not.
     if (IsUMA())
@@ -319,22 +319,22 @@ bool Device::IsMCDM() const noexcept
     return !m_spAdapter->IsAttributeSupported(DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS);
 }
 
-bool Device::IsUMA() const noexcept
+bool Device::IsUMA()
 {
-    if (!m_ImmCtx)
-        return false;
-    D3D12_FEATURE_DATA_ARCHITECTURE ArchCaps = {};
-    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &ArchCaps, sizeof(ArchCaps));
-    return ArchCaps.UMA;
+    {
+        std::lock_guard Lock(m_InitLock);
+        CacheCaps(Lock);
+    }
+    return m_Architecture.UMA;
 }
 
-bool Device::SupportsInt16() const noexcept
+bool Device::SupportsInt16()
 {
-    if (!m_ImmCtx)
-        return true;
-    D3D12_FEATURE_DATA_D3D12_OPTIONS4 Options = {};
-    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &Options, sizeof(Options));
-    return Options.Native16BitShaderOpsSupported;
+    {
+        std::lock_guard Lock(m_InitLock);
+        CacheCaps(Lock);
+    }
+    return m_D3D12Options4.Native16BitShaderOpsSupported;
 }
 
 std::string Device::GetDeviceName() const
@@ -457,6 +457,28 @@ void Device::ExecuteTasks(Submission& tasks)
         // Enqueue another execution task if there's new items ready to go
         g_Platform->FlushAllDevices(Lock);
     }
+}
+
+void Device::CacheCaps(std::lock_guard<std::mutex> const&)
+{
+    if (m_CapsValid)
+        return;
+
+    bool bTempDevice = false;
+    if (!m_spDevice)
+    {
+        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_spDevice)));
+        bTempDevice = true;
+    }
+    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_Architecture, sizeof(m_Architecture));
+    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
+    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &m_D3D12Options4, sizeof(m_D3D12Options4));
+    if (bTempDevice)
+    {
+        m_spDevice.Reset();
+    }
+
+    m_CapsValid = true;
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL

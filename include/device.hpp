@@ -19,11 +19,11 @@ public:
     ~Device();
 
     cl_bool IsAvailable() const noexcept;
-    cl_ulong GetGlobalMemSize() const noexcept;
+    cl_ulong GetGlobalMemSize();
     DXCoreHardwareID const& GetHardwareIds() const noexcept;
     bool IsMCDM() const noexcept;
-    bool IsUMA() const noexcept;
-    bool SupportsInt16() const noexcept;
+    bool IsUMA();
+    bool SupportsInt16();
 
     std::string GetDeviceName() const;
 
@@ -42,6 +42,7 @@ public:
 
 protected:
     void ExecuteTasks(Submission& tasks);
+    void CacheCaps(std::lock_guard<std::mutex> const&);
 
     ComPtr<IDXCoreAdapter> m_spAdapter;
     ComPtr<ID3D12Device> m_spDevice;
@@ -49,7 +50,10 @@ protected:
 
     // Lazy-initialized
     std::mutex m_InitLock;
-    D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options;
+    bool m_CapsValid = false;
+    D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options = {};
+    D3D12_FEATURE_DATA_D3D12_OPTIONS4 m_D3D12Options4 = {};
+    D3D12_FEATURE_DATA_ARCHITECTURE m_Architecture = {};
     D3D12TranslationLayer::TranslationLayerCallbacks m_Callbacks;
     std::optional<::ImmCtx> m_ImmCtx;
     unsigned m_ContextCount = 0;
