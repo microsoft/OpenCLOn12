@@ -5,6 +5,7 @@
 #include "queue.hpp"
 #include "resources.hpp"
 #include "sampler.hpp"
+#include "program.hpp"
 #include "clc_compiler.h"
 
 #include <wil/resource.h>
@@ -13,17 +14,16 @@
 extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 
-auto Kernel::SpecializationKey::Allocate(Device* device, clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
+auto Program::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
 {
     uint32_t NumAllocatedArgs = info.num_args ? (uint32_t)info.num_args - 1 : 0;
     std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(
         sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs)));
-    new (bits.get()) SpecializationKey(device, conf, info);
+    new (bits.get()) SpecializationKey(conf, info);
     return bits;
 }
 
-Kernel::SpecializationKey::SpecializationKey(Device* device, clc_runtime_kernel_conf const& conf, clc_kernel_info const& info)
-    : CompilingDevice(device)
+Program::SpecializationKey::SpecializationKey(clc_runtime_kernel_conf const& conf, clc_kernel_info const& info)
 {
     ConfigData.Bits.LocalSize[0] = conf.local_size[0];
     ConfigData.Bits.LocalSize[1] = conf.local_size[1];
@@ -55,23 +55,39 @@ Kernel::SpecializationKey::SpecializationKey(Device* device, clc_runtime_kernel_
     }
 }
 
-size_t Kernel::SpecializationKeyHash::operator()(std::unique_ptr<Kernel::SpecializationKey> const& ptr) const
+size_t Program::SpecializationKeyHash::operator()(std::unique_ptr<Program::SpecializationKey> const& ptr) const
 {
     size_t val = std::hash<uint64_t>()(ptr->ConfigData.Value);
     for (uint32_t i = 0; i < ptr->NumArgs; ++i)
     {
         D3D12TranslationLayer::hash_combine(val, ptr->Args[i].LocalArgSize);
     }
-    D3D12TranslationLayer::hash_combine(val, ptr->CompilingDevice);
     return val;
 }
 
-bool Kernel::SpecializationKeyEqual::operator()(std::unique_ptr<Kernel::SpecializationKey> const& a, std::unique_ptr<Kernel::SpecializationKey> const& b) const
+bool Program::SpecializationKeyEqual::operator()(std::unique_ptr<Program::SpecializationKey> const& a,
+                                                 std::unique_ptr<Program::SpecializationKey> const& b) const
 {
     assert(a->NumArgs == b->NumArgs);
     uint32_t NumAllocatedArgs = a->NumArgs ? a->NumArgs - 1 : 0;
-    size_t size = sizeof(Kernel::SpecializationKey) + sizeof(Kernel::SpecializationKey::PackedArgData) * NumAllocatedArgs;
+    size_t size = sizeof(Program::SpecializationKey) +
+        sizeof(Program::SpecializationKey::PackedArgData) * NumAllocatedArgs;
     return memcmp(a.get(), b.get(), size) == 0;
+}
+
+Program::SpecializationValue* Program::FindExistingSpecialization(Device* device, std::unique_ptr<Program::SpecializationKey> const& key) const
+{
+    std::lock_guard programLock(m_Lock);
+    auto buildDataIter = m_BuildData.find(device);
+    assert(buildDataIter != m_BuildData.end());
+    auto& buildData = buildDataIter->second;
+
+    std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
+    auto iter = buildData->m_SpecializationCache.find(key);
+    if (iter != buildData->m_SpecializationCache.end())
+        return &iter->second;
+
+    return nullptr;
 }
 
 class ExecuteKernel : public Task
@@ -95,7 +111,7 @@ public:
     std::mutex m_SpecializeLock;
     std::condition_variable m_SpecializeEvent;
     
-    Kernel::SpecializationValue *m_Specialized = nullptr;
+    Program::SpecializationValue *m_Specialized = nullptr;
     bool m_SpecializeError = false;
 
     void MigrateResources() final
@@ -223,22 +239,17 @@ public:
         config.support_work_group_id_offsets = numIterations != 1;
         std::copy(std::begin(localSize), std::end(localSize), config.local_size);
         config.args = kernel.m_ArgMetadataToCompiler.data();
-        auto SpecKey = Kernel::SpecializationKey::Allocate(m_Device.Get(), config, *kernel.m_pDxil->kernel);
+        auto SpecKey = Program::SpecializationKey::Allocate(config, *kernel.m_pDxil->kernel);
         
-        {
-            std::lock_guard SpecLock(kernel.m_SpecializationCacheLock);
-            auto iter = kernel.m_SpecializationCache.find(SpecKey);
-            if (iter != kernel.m_SpecializationCache.end())
-                m_Specialized = &iter->second;
-        }
+        m_Specialized = kernel.m_Parent->FindExistingSpecialization(m_Device.Get(), SpecKey);
 
         if (!m_Specialized)
         {
-            g_Platform->QueueProgramOp([this, localSize, offset, numIterations, &Device, config,
-                                                 ArgInfo = kernel.m_ArgMetadataToCompiler,
-                                                 SpecKey = std::move(SpecKey),
-                                                 kernel = this->m_Kernel,
-                                                 refThis = Task::ref_int(*this)]() mutable
+            g_Platform->QueueProgramOp([this, &Device, config,
+                                              ArgInfo = kernel.m_ArgMetadataToCompiler,
+                                              SpecKey = std::move(SpecKey),
+                                              kernel = this->m_Kernel,
+                                              refThis = Task::ref_int(*this)]() mutable
             {
                 try
                 {
@@ -259,16 +270,11 @@ public:
                     D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
                     auto PSO = Device.CreatePSO(Desc);
 
-                    Kernel::SpecializationValue *cacheEntry = nullptr;
-
-                    {
-                        std::lock_guard lock(kernel->m_SpecializationCacheLock);
-                        auto ret = kernel->m_SpecializationCache.try_emplace(std::move(SpecKey),
-                                                                             std::move(specialized),
-                                                                             std::move(CS),
-                                                                             std::move(PSO));
-                        cacheEntry = &ret.first->second;
-                    }
+                    auto cacheEntry = kernel->m_Parent->StoreSpecialization(m_Device.Get(),
+                                                                            SpecKey,
+                                                                            std::move(specialized),
+                                                                            std::move(CS),
+                                                                            std::move(PSO));
 
                     {
                         std::lock_guard lock(m_SpecializeLock);

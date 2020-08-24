@@ -41,6 +41,67 @@ public:
     void KernelCreated();
     void KernelFreed();
 
+
+    struct SpecializationKey
+    {
+        union
+        {
+            struct
+            {
+                uint16_t LocalSize[3];
+                uint16_t LowerInt64 : 1;
+                uint16_t LowerInt16 : 1;
+                uint16_t SupportGlobalOffsets : 1;
+                uint16_t SupportLocalOffsets : 1;
+                uint16_t Padding : 12;
+            } Bits;
+            uint64_t Value;
+        } ConfigData;
+        uint32_t NumArgs;
+        union PackedArgData
+        {
+            uint32_t LocalArgSize;
+            struct
+            {
+                unsigned NormalizedCoords : 1;
+                unsigned AddressingMode : 3;
+                unsigned LinearFiltering : 1;
+                unsigned Padding : 27;
+            } SamplerArgData;
+        } Args[1];
+        static std::unique_ptr<SpecializationKey> Allocate(struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
+    private:
+        SpecializationKey(struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
+    };
+    struct SpecializationKeyHash
+    {
+        size_t operator()(std::unique_ptr<SpecializationKey> const&) const;
+    };
+    struct SpecializationKeyEqual
+    {
+        bool operator()(std::unique_ptr<SpecializationKey> const& a, std::unique_ptr<SpecializationKey> const& b) const;
+    };
+    struct SpecializationValue
+    {
+        unique_dxil m_Dxil;
+        std::unique_ptr<D3D12TranslationLayer::Shader> m_Shader;
+        std::unique_ptr<D3D12TranslationLayer::PipelineState> m_PSO;
+        SpecializationValue(decltype(m_Dxil) d, decltype(m_Shader) s, decltype(m_PSO) p)
+            : m_Dxil(std::move(d)), m_Shader(std::move(s)), m_PSO(std::move(p)) { }
+    };
+
+    SpecializationValue *FindExistingSpecialization(Device* device, std::unique_ptr<SpecializationKey> const& key) const;
+    
+    template <typename... TArgs>
+    SpecializationValue *StoreSpecialization(Device* device, std::unique_ptr<SpecializationKey>& key, TArgs&&... args)
+    {
+        std::lock_guard programLock(m_Lock);
+        auto& buildData = m_BuildData[device];
+        std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
+        auto ret = buildData->m_SpecializationCache.try_emplace(std::move(key), std::forward<TArgs>(args)...);
+        return &ret.first->second;
+    }
+
 private:
     mutable std::recursive_mutex m_Lock;
     uint32_t m_NumLiveKernels = 0;
@@ -57,6 +118,10 @@ private:
         uint32_t m_NumPendingLinks = 0;
 
         void CreateKernels();
+
+        std::mutex m_SpecializationCacheLock;
+        std::unordered_map<std::unique_ptr<SpecializationKey>, SpecializationValue,
+            SpecializationKeyHash, SpecializationKeyEqual> m_SpecializationCache;
     };
     std::unordered_map<Device*, std::shared_ptr<PerDeviceData>> m_BuildData;
 
