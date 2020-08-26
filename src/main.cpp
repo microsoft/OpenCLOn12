@@ -226,7 +226,7 @@ cl_icd_dispatch g_DispatchTable
     clSetProgramSpecializationConstant,
 };
 
-std::unique_ptr<Platform> g_Platform;
+Platform* g_Platform = nullptr;
 
 CL_API_ENTRY cl_int CL_API_CALL
 clIcdGetPlatformIDsKHR(cl_uint           num_entries,
@@ -237,7 +237,7 @@ clIcdGetPlatformIDsKHR(cl_uint           num_entries,
     {
         try
         {
-            g_Platform = std::make_unique<Platform>(&g_DispatchTable);
+            g_Platform = new Platform(&g_DispatchTable);
         }
         catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
         catch (std::exception&) { return CL_OUT_OF_RESOURCES; }
@@ -251,7 +251,7 @@ clIcdGetPlatformIDsKHR(cl_uint           num_entries,
 
     if (platforms && num_entries >= 1)
     {
-        platforms[0] = g_Platform.get();
+        platforms[0] = g_Platform;
     }
 
     if (num_platforms)
@@ -268,6 +268,25 @@ clGetPlatformIDs(cl_uint          num_entries,
     cl_uint *        num_platforms) CL_API_SUFFIX__VERSION_1_0
 {
     return clIcdGetPlatformIDsKHR(num_entries, platforms, num_platforms);
+}
+
+extern "C" extern BOOL WINAPI DllMain(HINSTANCE, UINT dwReason, LPVOID lpReserved)
+{
+    if (dwReason == DLL_PROCESS_DETACH)
+    {
+        if (!g_Platform)
+            return TRUE;
+
+        // If this is process termination, and we have D3D devices owned by
+        // the platform, just go ahead and leak them, rather than trying
+        // to clean them up.
+        if (lpReserved && g_Platform->AnyD3DDevicesExist())
+            return TRUE;
+
+        delete g_Platform;
+    }
+
+    return TRUE;
 }
 
 #ifndef HAS_TELASSERT

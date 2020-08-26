@@ -114,6 +114,8 @@ public:
     TaskPoolLock GetTaskPoolLock();
     void FlushAllDevices(TaskPoolLock const& Lock);
 
+    bool AnyD3DDevicesExist() const noexcept;
+
     class ref_int
     {
         Platform& m_obj;
@@ -171,7 +173,7 @@ protected:
     BackgroundTaskScheduler::Scheduler m_CallbackScheduler;
     BackgroundTaskScheduler::Scheduler m_CompileAndLinkScheduler;
 };
-extern std::unique_ptr<Platform> g_Platform;
+extern Platform* g_Platform;
 
 template <typename TClass>
 class ref_ptr

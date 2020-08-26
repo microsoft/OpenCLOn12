@@ -245,3 +245,8 @@ void Platform::UnloadCompiler()
     // they need to call back into the compiler to be able to
     // free their program memory.
 }
+
+bool Platform::AnyD3DDevicesExist() const noexcept
+{
+    return std::any_of(m_Devices.begin(), m_Devices.end(), [](auto& dev) { return dev->GetDevice(); });
+}

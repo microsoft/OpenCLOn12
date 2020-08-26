@@ -90,7 +90,7 @@ clCreateContext(const cl_context_properties * properties,
             return ReportError("Platform specified in properties doesn't match device platform.", CL_INVALID_PLATFORM);
         }
         platform = &device->m_Parent.get();
-        if (platform != g_Platform.get())
+        if (platform != g_Platform)
         {
             return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
         }
@@ -148,7 +148,7 @@ clCreateContextFromType(const cl_context_properties * properties,
     {
         return ReportError("Platform specified but null.", CL_INVALID_PLATFORM);
     }
-    if (platform != g_Platform.get())
+    if (platform != g_Platform)
     {
         return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
     }
