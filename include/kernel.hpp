@@ -10,6 +10,7 @@ class Kernel : public CLChildBase<Kernel, Program, cl_kernel>
 {
 private:
     clc_dxil_object const* m_pDxil;
+    std::string const m_Name;
     D3D12TranslationLayer::SShaderDecls m_ShaderDecls;
 
     std::vector<byte> m_KernelArgsCbData;
@@ -37,7 +38,7 @@ private:
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelWorkGroupInfo(cl_kernel, cl_device_id, cl_kernel_work_group_info, size_t, void*, size_t*);
 
 public:
-    Kernel(Program& Parent, clc_dxil_object const* pDxil);
+    Kernel(Program& Parent, std::string const& name, clc_dxil_object const* pDxil);
     ~Kernel();
 
     cl_int SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value);

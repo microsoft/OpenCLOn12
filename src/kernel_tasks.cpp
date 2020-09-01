@@ -75,16 +75,19 @@ bool Program::SpecializationKeyEqual::operator()(std::unique_ptr<Program::Specia
     return memcmp(a.get(), b.get(), size) == 0;
 }
 
-Program::SpecializationValue* Program::FindExistingSpecialization(Device* device, std::unique_ptr<Program::SpecializationKey> const& key) const
+Program::SpecializationValue* Program::FindExistingSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<Program::SpecializationKey> const& key) const
 {
     std::lock_guard programLock(m_Lock);
     auto buildDataIter = m_BuildData.find(device);
     assert(buildDataIter != m_BuildData.end());
     auto& buildData = buildDataIter->second;
+    auto kernelsIter = buildData->m_Kernels.find(kernelName);
+    assert(kernelsIter != buildData->m_Kernels.end());
+    auto& kernel = kernelsIter->second;
 
     std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
-    auto iter = buildData->m_SpecializationCache.find(key);
-    if (iter != buildData->m_SpecializationCache.end())
+    auto iter = kernel.m_SpecializationCache.find(key);
+    if (iter != kernel.m_SpecializationCache.end())
         return &iter->second;
 
     return nullptr;
@@ -241,7 +244,7 @@ public:
         config.args = kernel.m_ArgMetadataToCompiler.data();
         auto SpecKey = Program::SpecializationKey::Allocate(config, *kernel.m_pDxil->kernel);
         
-        m_Specialized = kernel.m_Parent->FindExistingSpecialization(m_Device.Get(), SpecKey);
+        m_Specialized = kernel.m_Parent->FindExistingSpecialization(m_Device.Get(), kernel.m_Name, SpecKey);
 
         if (!m_Specialized)
         {
@@ -271,6 +274,7 @@ public:
                     auto PSO = Device.CreatePSO(Desc);
 
                     auto cacheEntry = kernel->m_Parent->StoreSpecialization(m_Device.Get(),
+                                                                            kernel->m_Name,
                                                                             SpecKey,
                                                                             std::move(specialized),
                                                                             std::move(CS),

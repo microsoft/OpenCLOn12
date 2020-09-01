@@ -90,21 +90,32 @@ public:
             : m_Dxil(std::move(d)), m_Shader(std::move(s)), m_PSO(std::move(p)) { }
     };
 
-    SpecializationValue *FindExistingSpecialization(Device* device, std::unique_ptr<SpecializationKey> const& key) const;
+    SpecializationValue *FindExistingSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey> const& key) const;
     
     template <typename... TArgs>
-    SpecializationValue *StoreSpecialization(Device* device, std::unique_ptr<SpecializationKey>& key, TArgs&&... args)
+    SpecializationValue *StoreSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey>& key, TArgs&&... args)
     {
         std::lock_guard programLock(m_Lock);
         auto& buildData = m_BuildData[device];
         std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
-        auto ret = buildData->m_SpecializationCache.try_emplace(std::move(key), std::forward<TArgs>(args)...);
+        auto kernelsIter = buildData->m_Kernels.find(kernelName);
+        assert(kernelsIter != buildData->m_Kernels.end());
+        auto ret = kernelsIter->second.m_SpecializationCache.try_emplace(std::move(key), std::forward<TArgs>(args)...);
         return &ret.first->second;
     }
 
 private:
     mutable std::recursive_mutex m_Lock;
     uint32_t m_NumLiveKernels = 0;
+
+    struct KernelData
+    {
+        KernelData(unique_dxil d) : m_GenericDxil(std::move(d)) {}
+
+        unique_dxil m_GenericDxil;
+        std::unordered_map<std::unique_ptr<SpecializationKey>, SpecializationValue,
+            SpecializationKeyHash, SpecializationKeyEqual> m_SpecializationCache;
+    };
 
     struct PerDeviceData
     {
@@ -113,15 +124,13 @@ private:
         unique_spirv m_OwnedBinary{ nullptr, nullptr };
         cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
         std::string m_LastBuildOptions;
-        std::map<std::string, unique_dxil> m_Kernels;
+        std::map<std::string, KernelData> m_Kernels;
 
         uint32_t m_NumPendingLinks = 0;
 
         void CreateKernels();
 
         std::mutex m_SpecializationCacheLock;
-        std::unordered_map<std::unique_ptr<SpecializationKey>, SpecializationValue,
-            SpecializationKeyHash, SpecializationKeyEqual> m_SpecializationCache;
     };
     std::unordered_map<Device*, std::shared_ptr<PerDeviceData>> m_BuildData;
 

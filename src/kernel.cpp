@@ -42,14 +42,14 @@ clCreateKernel(cl_program      program_,
             ++DeviceCountWithKernel;
             if (kernel)
             {
-                if (kernel->kernel->num_args != iter->second->kernel->num_args)
+                if (kernel->kernel->num_args != iter->second.m_GenericDxil->kernel->num_args)
                 {
                     return ReportError("Kernel argument count differs between devices.", CL_INVALID_KERNEL_DEFINITION);
                 }
                 for (unsigned i = 0; i < kernel->kernel->num_args; ++i)
                 {
                     auto& a = kernel->kernel->args[i];
-                    auto& b = iter->second->kernel->args[i];
+                    auto& b = iter->second.m_GenericDxil->kernel->args[i];
                     if (strcmp(a.type_name, b.type_name) != 0 ||
                         strcmp(a.name, b.name) != 0 ||
                         a.address_qualifier != b.address_qualifier ||
@@ -60,7 +60,7 @@ clCreateKernel(cl_program      program_,
                     }
                 }
             }
-            kernel = iter->second.get();
+            kernel = iter->second.m_GenericDxil.get();
         }
         if (!DeviceCountWithProgram)
         {
@@ -74,7 +74,7 @@ clCreateKernel(cl_program      program_,
 
     try
     {
-        return new Kernel(program, kernel);
+        return new Kernel(program, kernel_name, kernel);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -265,9 +265,10 @@ static cl_filter_mode CLFilterModeFromSpirv(unsigned filter_mode)
     return filter_mode + CL_FILTER_NEAREST;
 }
 
-Kernel::Kernel(Program& Parent, clc_dxil_object const* pDxil)
+Kernel::Kernel(Program& Parent, std::string const& name, clc_dxil_object const* pDxil)
     : CLChildBase(Parent)
     , m_pDxil(pDxil)
+    , m_Name(name)
     , m_ShaderDecls(DeclsFromMetadata(pDxil))
 {
     m_UAVs.resize(m_pDxil->metadata.num_uavs);

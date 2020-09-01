@@ -1263,8 +1263,8 @@ void Program::PerDeviceData::CreateKernels()
     {
         auto name = kernelMeta->name;
         auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
-        kernel.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, nullptr /*logger*/));
-        if (kernel)
-            SignBlob(kernel->binary.data, kernel->binary.size);
+        kernel.m_GenericDxil.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, nullptr /*logger*/));
+        if (kernel.m_GenericDxil)
+            SignBlob(kernel.m_GenericDxil->binary.data, kernel.m_GenericDxil->binary.size);
     }
 }
