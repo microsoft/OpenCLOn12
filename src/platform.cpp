@@ -291,3 +291,14 @@ bool Platform::AnyD3DDevicesExist() const noexcept
 {
     return std::any_of(m_Devices.begin(), m_Devices.end(), [](auto& dev) { return dev->GetDevice(); });
 }
+
+void Platform::CloseCaches()
+{
+    for (auto& device : m_Devices)
+    {
+        if (device->GetDevice())
+        {
+            device->GetShaderCache().Close();
+        }
+    }
+}

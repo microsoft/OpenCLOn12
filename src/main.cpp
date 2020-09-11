@@ -281,7 +281,12 @@ extern "C" extern BOOL WINAPI DllMain(HINSTANCE, UINT dwReason, LPVOID lpReserve
         // the platform, just go ahead and leak them, rather than trying
         // to clean them up.
         if (lpReserved && g_Platform->AnyD3DDevicesExist())
+        {
+            // At the very least close shader caches cleanly so they can be flushed
+            // to disk.
+            g_Platform->CloseCaches();
             return TRUE;
+        }
 
         delete g_Platform;
     }

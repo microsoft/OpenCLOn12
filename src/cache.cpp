@@ -119,3 +119,10 @@ ShaderCache::FoundValue ShaderCache::Find(const void* const* keys, const size_t*
 #endif
     return {};
 }
+
+void ShaderCache::Close()
+{
+#ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    m_pSession.Reset();
+#endif
+}
