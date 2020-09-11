@@ -108,7 +108,7 @@ public:
     cl_device_id GetDevice(cl_uint i) const noexcept;
     XPlatHelpers::unique_module const& GetCompiler();
     XPlatHelpers::unique_module const& GetDXIL();
-    clc_context* GetCompilerContext();
+    clc_context* GetCompilerContext(class ShaderCache&);
     void UnloadCompiler();
 
     TaskPoolLock GetTaskPoolLock();

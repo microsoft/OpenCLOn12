@@ -119,6 +119,7 @@ private:
 
     struct PerDeviceData
     {
+        Device* m_Device;
         cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
         std::string m_BuildLog;
         unique_spirv m_OwnedBinary{ nullptr, nullptr };
