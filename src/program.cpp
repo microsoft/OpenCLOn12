@@ -616,6 +616,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             // Update build status to indicate build is starting so nobody else can start a build
             auto BuildData = std::make_shared<PerDeviceData>();
             Args.Common.BuildData = BuildData;
+            BuildData->m_Device = Devices[0].Get();
             BuildData->m_LastBuildOptions = options ? options : "";
             for (auto& device : Devices)
             {
@@ -709,6 +710,7 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
         // Update build status to indicate build is starting so nobody else can start a build
         auto BuildData = std::make_shared<PerDeviceData>();
         Args.Common.BuildData = BuildData;
+        BuildData->m_Device = Devices[0].Get();
         BuildData->m_LastBuildOptions = options ? options : "";
         for (auto& device : Devices)
         {
@@ -822,6 +824,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
         {
             m_BuildData[Device.Get()] = Args.Common.BuildData;
         }
+        Args.Common.BuildData->m_Device = m_AssociatedDevices[0].Get();
         Args.Common.BuildData->m_LastBuildOptions = options ? options : "";
     }
     else
@@ -830,6 +833,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
         {
             auto& BuildData = m_BuildData[Device.Get()];
             BuildData = std::make_shared<PerDeviceData>();
+            BuildData->m_Device = Device.Get();
             BuildData->m_LastBuildOptions = options ? options : "";
         }
     }
@@ -1049,12 +1053,14 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext();
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     if (!m_Source.empty())
     {
         auto& BuildData = Args.Common.BuildData;
+
+        auto Context = g_Platform->GetCompilerContext(BuildData->m_Device->GetShaderCache());
+
         Loggers loggers(*this, *BuildData);
         clc_logger loggers_impl = loggers;
         auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
@@ -1096,9 +1102,14 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     else
     {
         std::lock_guard Lock(m_Lock);
+        clc_context* Context = nullptr;
         for (auto& device : Args.BinaryBuildDevices)
         {
             auto& BuildData = m_BuildData[device.Get()];
+            if (!Context)
+            {
+                Context = g_Platform->GetCompilerContext(device->GetShaderCache());
+            }
             Loggers loggers(*this, *BuildData);
             clc_logger loggers_impl = loggers;
             const clc_object* rawCompiledObject = BuildData->m_OwnedBinary.get();
@@ -1135,7 +1146,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
     auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext();
+    auto Context = g_Platform->GetCompilerContext(BuildData->m_Device->GetShaderCache());
     auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     Loggers loggers(*this, *BuildData);
@@ -1186,7 +1197,7 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext();
+    clc_context* Context = nullptr;
     auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
     auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
     std::vector<const clc_object*> objects;
@@ -1197,6 +1208,11 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
 
     for (auto& Device : m_AssociatedDevices)
     {
+        if (!Context)
+        {
+            Context = g_Platform->GetCompilerContext(Device->GetShaderCache());
+        }
+
         objects.clear();
         for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
         {
@@ -1255,7 +1271,7 @@ void Program::PerDeviceData::CreateKernels()
         return;
 
     auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext();
+    auto Context = g_Platform->GetCompilerContext(m_Device->GetShaderCache());
     auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
     auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 

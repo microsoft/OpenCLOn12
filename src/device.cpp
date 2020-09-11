@@ -267,6 +267,7 @@ void Device::InitD3D()
         (INT64)Task::TimestampToNanoseconds(GPUTimestamp, m_TimestampFrequency);
 
     m_RecordingSubmission.reset(new Submission);
+    m_ShaderCache.emplace(GetDevice());
 }
 
 void Device::ReleaseD3D()
@@ -282,6 +283,7 @@ void Device::ReleaseD3D()
     m_CompletionScheduler.SetSchedulingMode(mode);
     m_RecordingSubmission.reset();
     m_spDevice.Reset();
+    m_ShaderCache.reset();
 }
 
 cl_bool Device::IsAvailable() const noexcept
@@ -335,6 +337,11 @@ bool Device::SupportsInt16()
         CacheCaps(Lock);
     }
     return m_D3D12Options4.Native16BitShaderOpsSupported;
+}
+
+ShaderCache& Device::GetShaderCache()
+{
+    return *m_ShaderCache;
 }
 
 std::string Device::GetDeviceName() const

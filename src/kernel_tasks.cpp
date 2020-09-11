@@ -257,7 +257,7 @@ public:
                 try
                 {
                     auto& Compiler = g_Platform->GetCompiler();
-                    auto Context = g_Platform->GetCompilerContext();
+                    auto Context = g_Platform->GetCompilerContext(Device.GetShaderCache());
                     auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
                     auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
 

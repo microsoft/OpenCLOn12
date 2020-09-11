@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 #pragma once
 #include "platform.hpp"
+#include "cache.hpp"
 #include <string>
 #include <optional>
 #include <mutex>
@@ -24,6 +25,7 @@ public:
     bool IsMCDM() const noexcept;
     bool IsUMA();
     bool SupportsInt16();
+    ShaderCache& GetShaderCache();
 
     std::string GetDeviceName() const;
 
@@ -61,6 +63,7 @@ protected:
     std::unique_ptr<Submission> m_RecordingSubmission;
 
     BackgroundTaskScheduler::Scheduler m_CompletionScheduler;
+    std::optional<ShaderCache> m_ShaderCache;
 
     // All PSO creations need to be kicked off behind this lock,
     // which guards the root signature cache in the immediate context
