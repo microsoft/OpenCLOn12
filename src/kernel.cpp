@@ -243,7 +243,7 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
             else
             {
                 decls.m_UAVDecls[metadata.args[i].globconstptr.buf_id] =
-                    D3D12TranslationLayer::RESOURCE_DIMENSION::RAW_BUFFER;
+                    D3D12TranslationLayer::RESOURCE_DIMENSION::BUFFER;
             }
         }
     }
