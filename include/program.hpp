@@ -129,7 +129,7 @@ private:
 
         uint32_t m_NumPendingLinks = 0;
 
-        void CreateKernels();
+        void CreateKernels(Program& program);
 
         std::mutex m_SpecializationCacheLock;
     };

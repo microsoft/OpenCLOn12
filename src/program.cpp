@@ -1091,7 +1091,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
         {
             BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
             BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
-            BuildData->CreateKernels();
+            BuildData->CreateKernels(*this);
         }
         else
         {
@@ -1125,7 +1125,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
             {
                 BuildData->m_BinaryType = CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
                 BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
-                BuildData->CreateKernels();
+                BuildData->CreateKernels(*this);
             }
             else
             {
@@ -1240,7 +1240,7 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
                     BuildData->m_BinaryType = Args.Common.CreateLibrary ?
                         CL_PROGRAM_BINARY_TYPE_LIBRARY : CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
                     BuildData->m_BuildStatus = CL_BUILD_SUCCESS;
-                    BuildData->CreateKernels();
+                    BuildData->CreateKernels(*this);
                 }
                 else
                 {
@@ -1265,7 +1265,7 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
     return ret;
 }
 
-void Program::PerDeviceData::CreateKernels()
+void Program::PerDeviceData::CreateKernels(Program& program)
 {
     if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         return;
@@ -1279,7 +1279,9 @@ void Program::PerDeviceData::CreateKernels()
     {
         auto name = kernelMeta->name;
         auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
-        kernel.m_GenericDxil.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, nullptr /*logger*/));
+        Loggers loggers(program, *this);
+        clc_logger loggers_impl = loggers;
+        kernel.m_GenericDxil.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, &loggers_impl));
         if (kernel.m_GenericDxil)
             SignBlob(kernel.m_GenericDxil->binary.data, kernel.m_GenericDxil->binary.size);
     }
