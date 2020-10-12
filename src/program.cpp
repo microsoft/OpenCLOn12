@@ -1095,7 +1095,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
         }
         else
         {
-            ret = CL_BUILD_ERROR;
+            ret = CL_BUILD_PROGRAM_FAILURE;
             BuildData->m_BuildStatus = CL_BUILD_ERROR;
         }
     }
