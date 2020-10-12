@@ -61,6 +61,10 @@ clCreateKernel(cl_program      program_,
                 }
             }
             kernel = iter->second.m_GenericDxil.get();
+            if (!kernel)
+            {
+                return ReportError("Kernel failed to compile.", CL_OUT_OF_RESOURCES);
+            }
         }
         if (!DeviceCountWithProgram)
         {
