@@ -250,29 +250,26 @@ clc_context* Platform::GetCompilerContext(ShaderCache& cache)
         }
 
         auto createContext = compiler.proc_address<decltype(&clc_context_new)>("clc_context_new");
-        m_CompilerContext = decltype(m_CompilerContext)(createContext(nullptr), freeContext);
+        auto serialize = compiler.proc_address<decltype(&clc_context_serialize)>("clc_context_serialize");
+        auto freeSerialized = compiler.proc_address<decltype(&clc_context_free_serialized)>("clc_context_free_serialized");
+        clc_context_options options = {};
+        options.optimize = cache.HasCache() && serialize && freeSerialized;
+        m_CompilerContext = decltype(m_CompilerContext)(createContext(nullptr, &options), freeContext);
 
-        if (cache.HasCache())
+        if (options.optimize)
         {
-            auto optimize = compiler.proc_address<decltype(&clc_context_optimize)>("clc_context_optimize");
-            auto serialize = compiler.proc_address<decltype(&clc_context_serialize)>("clc_context_serialize");
-            auto freeSerialized = compiler.proc_address<decltype(&clc_context_free_serialized)>("clc_context_free_serialized");
-            if (optimize && serialize && freeSerialized)
-            {
-                optimize(m_CompilerContext.get());
-                void* serialized = nullptr;
-                size_t serializedSize = 0;
-                serialize(m_CompilerContext.get(), &serialized, &serializedSize);
+            void* serialized = nullptr;
+            size_t serializedSize = 0;
+            serialize(m_CompilerContext.get(), &serialized, &serializedSize);
 
-                if (serialized)
+            if (serialized)
+            {
+                try
                 {
-                    try
-                    {
-                        cache.Store(&ClcContextKey, sizeof(ClcContextKey), serialized, serializedSize);
-                    }
-                    catch (...) {}
-                    freeSerialized(serialized);
+                    cache.Store(&ClcContextKey, sizeof(ClcContextKey), serialized, serializedSize);
                 }
+                catch (...) {}
+                freeSerialized(serialized);
             }
         }
     }

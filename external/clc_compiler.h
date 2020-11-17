@@ -178,14 +178,17 @@ struct clc_dxil_object {
 };
 
 struct clc_context {
-   void *libclc_nir;
+   const void *libclc_nir;
 };
 
-struct clc_context *clc_context_new(const struct clc_logger *logger);
+struct clc_context_options {
+   unsigned optimize;
+};
+
+struct clc_context *clc_context_new(const struct clc_logger *logger, const struct clc_context_options *options);
 
 void clc_free_context(struct clc_context *ctx);
 
-void clc_context_optimize(struct clc_context *ctx);
 void clc_context_serialize(struct clc_context *ctx, void **serialized, size_t *size);
 void clc_context_free_serialized(void *serialized);
 struct clc_context *clc_context_deserialize(void *serialized, size_t size);
