@@ -172,8 +172,8 @@ struct clc_dxil_metadata {
    uint16_t local_size_hint[3];
 
    struct {
-      unsigned string_arg_count;
-      char **string_args;
+      unsigned string_arg_size;
+      char *string_args;
       unsigned fmt_string_count;
       struct clc_printf_format_string *fmt_strings;
       unsigned uav_id;

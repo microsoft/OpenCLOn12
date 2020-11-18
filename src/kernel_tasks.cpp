@@ -781,8 +781,8 @@ void ExecuteKernel::OnComplete()
                             return;
                         }
                         uint64_t StringId = *reinterpret_cast<uint64_t*>(ArgPtr);
-                        assert(StringId > 0 && StringId <= m_Kernel->m_pDxil->metadata.printf.string_arg_count);
-                        const char *Str = m_Kernel->m_pDxil->metadata.printf.string_args[StringId - 1];
+                        assert(StringId < m_Kernel->m_pDxil->metadata.printf.string_arg_size);
+                        const char *Str = &m_Kernel->m_pDxil->metadata.printf.string_args[StringId];
                         // Use sprintf to deal with precision potentially shortening how much is printed
                         StringBuffer.resize(snprintf(nullptr, 0, FinalFormatString, Str) + 1);
                         sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString, Str);
