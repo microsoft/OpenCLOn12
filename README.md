@@ -2,24 +2,24 @@
 
 OpenCLOn12 is a mapping layer, which implements the OpenCL 1.2 API on top of D3D12. It also implements the OpenCL ICD extension, and can therefore be loaded by the existing ICD loader.
 
-OpenCLOn12 is very much still a work in progress.
-
 This repository contains the implementations of the APIs. It depends on various other repositories for further functionality, either implicitly or explicitly:
 * [WIL](https://github.com/microsoft/wil) is used occasionally throughout.
 * The [OpenCL headers](https://github.com/KhronosGroup/OpenCL-Headers) are referenced.
 * [GoogleTest](https://github.com/google/googletest) is used for unit testing.
 * The [D3D12TranslationLayer](https://github.com/microsoft/D3D12TranslationLayer) handles some of the complexity of using D3D12 for us.
-* The compiler infrastructure for consuming OpenCL C and SPIR-V and converting to DXIL comes from the [Mesa](https://gitlab.freedesktop.org/mesa/mesa) project. This dependency is only required at runtime, as a copy of the compiler interface header is contained in this repo.
+* The compiler infrastructure for consuming OpenCL C and SPIR-V and converting to DXIL comes from the [Mesa](https://gitlab.freedesktop.org/mesa/mesa) project. This dependency is only required at runtime, as a copy of the compiler interface header is contained in this repo. The compiler interface in the `master` branch of this repository tracks `master` of Mesa.
+  * The compiler was originally developed downstream from `master`, and the `downstream-abi` branch of this repository is intended to interface with that downstream interface.
 
 Additionally, DXIL.dll from the Windows SDK will be required at runtime to sign and validate the DXIL shaders produced by the compiler.
 
 For more details about OpenCLOn12, see:
+* [Product release blog post](https://devblogs.microsoft.com/directx/announcing-the-opencl-and-opengl-compatibility-pack-for-windows-10-on-arm)
 * [Microsoft blog post](https://devblogs.microsoft.com/directx/in-the-works-opencl-and-opengl-mapping-layers-to-directx/)
 * [Collabora blog post](https://www.collabora.com/news-and-blog/news-and-events/introducing-opencl-and-opengl-on-directx.html)
 
 ## Current Status
 
-At this point, the OpenCL 1.2 API is fully implemented, with no optional extensions.
+At this point, the OpenCL 1.2 API is fully implemented, with no optional extensions. It has not yet been certified conformant, though it passes every conformance test for OpenCL 1.2, but has not yet passed all tests on a single underlying implementation.
 
 ## Building
 
