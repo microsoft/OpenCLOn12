@@ -760,7 +760,7 @@ void ExecuteKernel::OnComplete()
                 // Get the base pointer to the arg, now that we know how big it is
                 uint32_t ArgSize = PromotedDataSize * (VectorSize == 3 ? 4 : VectorSize);
                 assert(ArgSize == FormatStringData.arg_sizes[ArgIdx]);
-                uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(OffsetInStruct, ArgSize) + StructBeginOffset;
+                uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(OffsetInStruct, 4) + StructBeginOffset;
                 byte* ArgPtr = ByteStream + ArgOffset;
                 OffsetInStruct += ArgSize;
 
@@ -867,7 +867,6 @@ void ExecuteKernel::OnComplete()
                 }
 
                 SectionStart = FormatStr + 1;
-                OffsetInStruct += ArgSize;
                 ArgIdx++;
             }
 
