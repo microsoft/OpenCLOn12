@@ -118,7 +118,7 @@ struct clc_object {
 #define CLC_MAX_BINDINGS_PER_ARG 3
 #define CLC_MAX_SAMPLERS 16
 
-struct clc_printf_format_string {
+struct clc_printf_info {
    unsigned num_args;
    unsigned *arg_sizes;
    char *str;
@@ -172,10 +172,8 @@ struct clc_dxil_metadata {
    uint16_t local_size_hint[3];
 
    struct {
-      unsigned string_arg_size;
-      char *string_args;
-      unsigned fmt_string_count;
-      struct clc_printf_format_string *fmt_strings;
+      unsigned info_count;
+      struct clc_printf_info *infos;
       unsigned uav_id;
    } printf;
 };

@@ -593,18 +593,18 @@ void ExecuteKernel::OnComplete()
         while (CurOffset - sizeof(uint32_t) < NumBytesWritten && CurOffset < PrintfBufferSize)
         {
             uint32_t FormatStringId = *reinterpret_cast<uint32_t*>(ByteStream + CurOffset);
-            assert(FormatStringId <= m_Kernel->m_pDxil->metadata.printf.fmt_string_count);
+            assert(FormatStringId <= m_Kernel->m_pDxil->metadata.printf.info_count);
             if (FormatStringId == 0)
                 break;
 
-            auto& FormatStringData = m_Kernel->m_pDxil->metadata.printf.fmt_strings[FormatStringId - 1];
+            auto& PrintfData = m_Kernel->m_pDxil->metadata.printf.infos[FormatStringId - 1];
             CurOffset += sizeof(FormatStringId);
             auto StructBeginOffset = CurOffset;
             uint32_t OffsetInStruct = 0;
 
             uint32_t ArgIdx = 0;
-            uint32_t TotalArgSize = std::accumulate(FormatStringData.arg_sizes,
-                                                    FormatStringData.arg_sizes + FormatStringData.num_args,
+            uint32_t TotalArgSize = std::accumulate(PrintfData.arg_sizes,
+                                                    PrintfData.arg_sizes + PrintfData.num_args,
                                                     0u);
             TotalArgSize = D3D12TranslationLayer::Align<uint32_t>(TotalArgSize, 4);
 
@@ -612,7 +612,7 @@ void ExecuteKernel::OnComplete()
                 break;
 
             std::ostringstream stream;
-            const char* SectionStart = FormatStringData.str;
+            const char* SectionStart = PrintfData.str;
             while (const char* SectionEnd = strchr(SectionStart, '%'))
             {
                 if (SectionEnd[1] == '%')
@@ -759,7 +759,7 @@ void ExecuteKernel::OnComplete()
 
                 // Get the base pointer to the arg, now that we know how big it is
                 uint32_t ArgSize = PromotedDataSize * (VectorSize == 3 ? 4 : VectorSize);
-                assert(ArgSize == FormatStringData.arg_sizes[ArgIdx]);
+                assert(ArgSize == PrintfData.arg_sizes[ArgIdx]);
                 uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(OffsetInStruct, 4) + StructBeginOffset;
                 byte* ArgPtr = ByteStream + ArgOffset;
                 OffsetInStruct += ArgSize;
@@ -781,8 +781,7 @@ void ExecuteKernel::OnComplete()
                             return;
                         }
                         uint64_t StringId = *reinterpret_cast<uint64_t*>(ArgPtr);
-                        assert(StringId < m_Kernel->m_pDxil->metadata.printf.string_arg_size);
-                        const char *Str = &m_Kernel->m_pDxil->metadata.printf.string_args[StringId];
+                        const char *Str = &PrintfData.str[StringId];
                         // Use sprintf to deal with precision potentially shortening how much is printed
                         StringBuffer.resize(snprintf(nullptr, 0, FinalFormatString, Str) + 1);
                         sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString, Str);
