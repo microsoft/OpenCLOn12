@@ -174,7 +174,7 @@ struct clc_dxil_metadata {
    struct {
       unsigned info_count;
       struct clc_printf_info *infos;
-      unsigned uav_id;
+      int uav_id;
    } printf;
 };
 
