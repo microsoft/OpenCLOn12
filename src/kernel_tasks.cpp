@@ -14,6 +14,7 @@
 
 extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
+constexpr uint32_t PrintfBufferInitialData[PrintfBufferSize / sizeof(uint32_t)] = { sizeof(uint32_t) * 2, PrintfBufferSize };
 
 auto Program::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
 {
@@ -231,7 +232,7 @@ public:
 
         if (kernel.m_pDxil->metadata.printf.uav_id >= 0)
         {
-            m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR, PrintfBufferSize, nullptr, nullptr)));
+            m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
             m_PrintfUAV->EnqueueMigrateResource(&Device, this, 0);
             m_UAVs[kernel.m_pDxil->metadata.printf.uav_id] = &m_PrintfUAV->GetUAV(&Device);
         }
@@ -587,10 +588,15 @@ void ExecuteKernel::OnComplete()
             ImmCtx.Unmap(TranslationResource, 0, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
         });
 
+        // The buffer has a two-uint header.
+        constexpr uint32_t InitialBufferOffset = sizeof(uint32_t) * 2;
+        // The first uint is the offset where the next chunk of data would be written. Alternatively,
+        // it's the size of the buffer that's *been* written, including the size of the header.
         uint32_t NumBytesWritten = *reinterpret_cast<uint32_t*>(MapRet.pData);
-        uint32_t CurOffset = sizeof(uint32_t);
+        uint32_t CurOffset = InitialBufferOffset;
+
         byte* ByteStream = reinterpret_cast<byte*>(MapRet.pData);
-        while (CurOffset - sizeof(uint32_t) < NumBytesWritten && CurOffset < PrintfBufferSize)
+        while (CurOffset < NumBytesWritten && CurOffset < PrintfBufferSize)
         {
             uint32_t FormatStringId = *reinterpret_cast<uint32_t*>(ByteStream + CurOffset);
             assert(FormatStringId <= m_Kernel->m_pDxil->metadata.printf.info_count);
