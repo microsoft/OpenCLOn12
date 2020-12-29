@@ -10,9 +10,11 @@
 
 #include <wil/resource.h>
 #include <sstream>
+#include <numeric>
 
 extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
+constexpr uint32_t PrintfBufferInitialData[PrintfBufferSize / sizeof(uint32_t)] = { sizeof(uint32_t) * 2, PrintfBufferSize };
 
 auto Program::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
 {
@@ -228,11 +230,11 @@ public:
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
-        if (kernel.m_pDxil->metadata.printf_uav_id >= 0)
+        if (kernel.m_pDxil->metadata.printf.uav_id >= 0)
         {
-            m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR, PrintfBufferSize, nullptr, nullptr)));
+            m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
             m_PrintfUAV->EnqueueMigrateResource(&Device, this, 0);
-            m_UAVs[kernel.m_pDxil->metadata.printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
+            m_UAVs[kernel.m_pDxil->metadata.printf.uav_id] = &m_PrintfUAV->GetUAV(&Device);
         }
 
         clc_runtime_kernel_conf config = {};
@@ -533,7 +535,7 @@ void ExecuteKernel::RecordImpl()
     std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
     if (m_PrintfUAV.Get())
     {
-        m_UAVs[m_Kernel->m_pDxil->metadata.printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
+        m_UAVs[m_Kernel->m_pDxil->metadata.printf.uav_id] = &m_PrintfUAV->GetUAV(&Device);
     }
 
     auto& ImmCtx = Device.ImmCtx();
@@ -566,20 +568,6 @@ void ExecuteKernel::RecordImpl()
     ImmCtx.ClearState();
 }
 
-static const char* StringFromConstantBuffer(uint64_t address, clc_dxil_metadata const& metadata)
-{
-    uint32_t bufferId = (uint32_t)(address >> 32);
-    uint32_t bufferOffset = (uint32_t)(address & 0xffffffff);
-    for (uint32_t i = 0; i < metadata.num_consts; ++i)
-    {
-        if (metadata.consts[i].uav_id == bufferId)
-        {
-            return reinterpret_cast<const char*>(metadata.consts[i].data) + bufferOffset;
-        }
-    }
-    return nullptr;
-}
-
 void ExecuteKernel::OnComplete()
 {
     auto Cleanup = wil::scope_exit([this]()
@@ -600,19 +588,37 @@ void ExecuteKernel::OnComplete()
             ImmCtx.Unmap(TranslationResource, 0, D3D12TranslationLayer::MAP_TYPE_READ, nullptr);
         });
 
+        // The buffer has a two-uint header.
+        constexpr uint32_t InitialBufferOffset = sizeof(uint32_t) * 2;
+        // The first uint is the offset where the next chunk of data would be written. Alternatively,
+        // it's the size of the buffer that's *been* written, including the size of the header.
         uint32_t NumBytesWritten = *reinterpret_cast<uint32_t*>(MapRet.pData);
-        uint32_t CurOffset = sizeof(uint32_t);
+        uint32_t CurOffset = InitialBufferOffset;
+
         byte* ByteStream = reinterpret_cast<byte*>(MapRet.pData);
-        while (CurOffset - sizeof(uint32_t) < NumBytesWritten && CurOffset < PrintfBufferSize)
+        while (CurOffset < NumBytesWritten && CurOffset < PrintfBufferSize)
         {
-            uint64_t FormatStringAddress = *reinterpret_cast<uint64_t*>(ByteStream + CurOffset);
-            auto FormatString = StringFromConstantBuffer(FormatStringAddress, m_Kernel->m_pDxil->metadata);
-            assert(FormatString);
-            CurOffset += sizeof(uint64_t);
+            uint32_t FormatStringId = *reinterpret_cast<uint32_t*>(ByteStream + CurOffset);
+            assert(FormatStringId <= m_Kernel->m_pDxil->metadata.printf.info_count);
+            if (FormatStringId == 0)
+                break;
+
+            auto& PrintfData = m_Kernel->m_pDxil->metadata.printf.infos[FormatStringId - 1];
+            CurOffset += sizeof(FormatStringId);
             auto StructBeginOffset = CurOffset;
+            uint32_t OffsetInStruct = 0;
+
+            uint32_t ArgIdx = 0;
+            uint32_t TotalArgSize = std::accumulate(PrintfData.arg_sizes,
+                                                    PrintfData.arg_sizes + PrintfData.num_args,
+                                                    0u);
+            TotalArgSize = D3D12TranslationLayer::Align<uint32_t>(TotalArgSize, 4);
+
+            if (CurOffset + TotalArgSize > PrintfBufferSize)
+                break;
 
             std::ostringstream stream;
-            const char* SectionStart = FormatString;
+            const char* SectionStart = PrintfData.str;
             while (const char* SectionEnd = strchr(SectionStart, '%'))
             {
                 if (SectionEnd[1] == '%')
@@ -759,12 +765,10 @@ void ExecuteKernel::OnComplete()
 
                 // Get the base pointer to the arg, now that we know how big it is
                 uint32_t ArgSize = PromotedDataSize * (VectorSize == 3 ? 4 : VectorSize);
-                uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(
-                    CurOffset - StructBeginOffset,
-                    ArgSize) + StructBeginOffset;
+                assert(ArgSize == PrintfData.arg_sizes[ArgIdx]);
+                uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(OffsetInStruct, 4) + StructBeginOffset;
                 byte* ArgPtr = ByteStream + ArgOffset;
-                CurOffset += ArgSize;
-                CurOffset = D3D12TranslationLayer::Align<uint32_t>(CurOffset, 4);
+                OffsetInStruct += ArgSize;
 
                 std::string StringBuffer;
                 StringBuffer.resize(32);
@@ -782,8 +786,8 @@ void ExecuteKernel::OnComplete()
                             printf("Invalid format string, precision or vector applied to string.\n");
                             return;
                         }
-                        uint64_t StringAddress = *reinterpret_cast<uint64_t*>(ArgPtr);
-                        const char *Str = StringFromConstantBuffer(StringAddress, m_Kernel->m_pDxil->metadata);
+                        uint64_t StringId = *reinterpret_cast<uint64_t*>(ArgPtr);
+                        const char *Str = &PrintfData.str[StringId];
                         // Use sprintf to deal with precision potentially shortening how much is printed
                         StringBuffer.resize(snprintf(nullptr, 0, FinalFormatString, Str) + 1);
                         sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString, Str);
@@ -868,11 +872,14 @@ void ExecuteKernel::OnComplete()
                 }
 
                 SectionStart = FormatStr + 1;
+                ArgIdx++;
             }
 
             stream << SectionStart;
             printf("%s", stream.str().c_str());
-            fflush(NULL);
+            fflush(stdout);
+
+            CurOffset += TotalArgSize;
         }
     }
 }

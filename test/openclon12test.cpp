@@ -183,6 +183,28 @@ TEST(OpenCLOn12, LargeDispatch)
     }
 }
 
+TEST(OpenCLOn12, Printf)
+{
+    auto&& [context, device] = GetWARPContext();
+    cl::CommandQueue queue(context, device);
+
+    const char* kernel_source =
+    R"(
+    constant uchar arr[6] = {'c', 'l', 'o', 'n', '1', '2'};
+    kernel void test_printf() {
+	    printf("hello %d %f %s %s %c\n", 15, 1.5, "test", "this string", arr[3]);
+	    printf("goodbye %d %f %s %c %s\n", 30, -1.5, "cruel", arr[2], "world");
+        printf("hello cl\n", 10, "oh now");
+        printf("hello cl %s\n", "again");
+    })";
+
+    cl::Program program(context, kernel_source, true /*build*/);
+    cl::Kernel kernel(program, "test_printf");
+
+    queue.enqueueTask(kernel);
+    queue.finish();
+}
+
 int main(int argc, char** argv)
 {
     ID3D12Debug* pDebug = nullptr;
