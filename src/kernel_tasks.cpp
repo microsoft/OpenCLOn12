@@ -677,7 +677,7 @@ void ExecuteKernel::OnComplete()
                     ++FormatStr;
                 }
 
-                uint32_t DataSize = 4, PromotedDataSize = 4;
+                uint32_t DataSize = 4;
                 bool ExplicitDataSize = false;
                 switch (*FormatStr)
                 {
@@ -712,7 +712,6 @@ void ExecuteKernel::OnComplete()
                     *(OutputFormatString++) = 'l';
                     ++FormatStr;
                     DataSize = 8;
-                    PromotedDataSize = 8;
                     break;
                 }
 
@@ -730,35 +729,13 @@ void ExecuteKernel::OnComplete()
                     case 's':
                     case 'p':
                         // Pointers are 64bit
-                        DataSize = PromotedDataSize = 8;
+                        DataSize = 8;
                         break;
                     }
-                }
-
-                if (VectorSize == 1)
-                {
-                    switch (*FormatStr)
-                    {
-                    case 'f':
-                    case 'F':
-                    case 'e':
-                    case 'E':
-                    case 'g':
-                    case 'G':
-                    case 'a':
-                    case 'A':
-                        // Space for these was reserved as doubles, but we only wrote a float
-                        PromotedDataSize = 8;
-                        break;
-                    }
-                }
-                else
-                {
-                    PromotedDataSize = DataSize;
                 }
 
                 // Get the base pointer to the arg, now that we know how big it is
-                uint32_t ArgSize = PromotedDataSize * (VectorSize == 3 ? 4 : VectorSize);
+                uint32_t ArgSize = DataSize * (VectorSize == 3 ? 4 : VectorSize);
                 uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(
                     CurOffset - StructBeginOffset,
                     ArgSize) + StructBeginOffset;
@@ -803,7 +780,6 @@ void ExecuteKernel::OnComplete()
                             printf("Invalid format string, floats other than 4 bytes are not supported.\n");
                             return;
                         }
-                        DataSize = 4;
                         float val = *reinterpret_cast<float*>(ArgPtr);
                         sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString, val);
                         break;
@@ -814,7 +790,7 @@ void ExecuteKernel::OnComplete()
                         // fallthrough
                     case 'd':
                     case 'i':
-                        switch (PromotedDataSize)
+                        switch (DataSize)
                         {
                         case 1:
                             sprintf_s(StringBuffer.data(), StringBuffer.size(), FinalFormatString,
