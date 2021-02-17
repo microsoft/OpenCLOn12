@@ -890,6 +890,7 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
     if (SupportCompilerOptions)
     {
         optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
+        optionsStruct.Args.push_back("-cl-ext=-cl_khr_fp64");
         // TODO: Should we do a dual-compile if a context includes MCDM devices?
         //if (m_Parent->GetDevice().IsMCDM())
         //{
