@@ -101,13 +101,31 @@ Platform::Platform(cl_icd_dispatch* dispatch)
         m_Devices[i] = std::make_unique<Device>(*this, spAdapter.Get());
     }
 
-    // TODO: Find some runtime way to enable this logic to force WARP
-    //(void)std::remove_if(m_Devices.begin(), m_Devices.end(), [](std::unique_ptr<Device> const& a)
-    //{
-    //    auto&& hwids = a->GetHardwareIds();
-    //    return hwids.deviceID != 0x8c && hwids.vendorID != 0x1414;
-    //});
-    //m_Devices.resize(1);
+    char *forceWarpStr = nullptr;
+    bool forceWarp = _dupenv_s(&forceWarpStr, nullptr, "CLON12_FORCE_WARP") == 0 &&
+        forceWarpStr &&
+        strcmp(forceWarpStr, "1") == 0;
+    free(forceWarpStr);
+
+    char *forceHardwareStr = nullptr;
+    bool forceHardware = !forceWarp &&
+        _dupenv_s(&forceHardwareStr, nullptr, "CLON12_FORCE_HARDWARE") == 0 &&
+        forceHardwareStr &&
+        strcmp(forceHardwareStr, "1") == 0;
+    free(forceHardwareStr);
+
+    if (forceWarp)
+    {
+        (void)std::remove_if(m_Devices.begin(), m_Devices.end(), [](std::unique_ptr<Device> const& a)
+            {
+                auto&& hwids = a->GetHardwareIds();
+                return hwids.deviceID != 0x8c && hwids.vendorID != 0x1414;
+            });
+    }
+    if (forceWarp || forceHardware)
+    {
+        m_Devices.resize(1);
+    }
 }
 
 Platform::~Platform() = default;
