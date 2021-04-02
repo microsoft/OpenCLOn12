@@ -219,14 +219,6 @@ public:
                 Args,
                 D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
 
-        D3D11_SUBRESOURCE_DATA Data = { kernel.m_KernelArgsCbData.data() };
-        Device.ImmCtx().UpdateSubresources(
-            m_KernelArgsCb.get(),
-            m_KernelArgsCb->GetFullSubresourceSubset(),
-            &Data,
-            nullptr,
-            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
-
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
@@ -543,6 +535,25 @@ void ExecuteKernel::RecordImpl()
     ImmCtx.SetShaderResources<D3D12TranslationLayer::e_CS>(0, (UINT)m_SRVs.size(), m_SRVs.data());
     ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());
     ImmCtx.SetPipelineState(m_Specialized->m_PSO.get());
+
+    // Fill out offsets that'll be read by the kernel for local arg pointers, based on the offsets
+    // returned by the compiler for this specialization
+    for (UINT i = 0; i < m_Specialized->m_Dxil->kernel->num_args; ++i)
+    {
+        if (m_Specialized->m_Dxil->kernel->args[i].address_qualifier != CLC_KERNEL_ARG_ADDRESS_LOCAL)
+            continue;
+
+        UINT *offsetLocation = reinterpret_cast<UINT*>(&m_Kernel->m_KernelArgsCbData[m_Specialized->m_Dxil->metadata.args[i].offset]);
+        *offsetLocation = m_Specialized->m_Dxil->metadata.args[i].localptr.sharedmem_offset;
+    }
+
+    D3D11_SUBRESOURCE_DATA Data = { m_Kernel->m_KernelArgsCbData.data() };
+    Device.ImmCtx().UpdateSubresources(
+        m_KernelArgsCb.get(),
+        m_KernelArgsCb->GetFullSubresourceSubset(),
+        &Data,
+        nullptr,
+        D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
 
     cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
