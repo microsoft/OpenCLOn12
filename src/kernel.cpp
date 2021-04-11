@@ -78,6 +78,7 @@ clCreateKernel(cl_program      program_,
 
     try
     {
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
         return new Kernel(program, kernel_name, kernel);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -307,6 +308,22 @@ Kernel::Kernel(Program& Parent, std::string const& name, clc_dxil_object const* 
         m_UAVs[constMeta.uav_id] = resource;
     }
 
+    m_Parent->KernelCreated();
+}
+
+Kernel::Kernel(Kernel const& other)
+    : CLChildBase(other.m_Parent.get())
+    , m_pDxil(other.m_pDxil)
+    , m_Name(other.m_Name)
+    , m_ShaderDecls(other.m_ShaderDecls)
+    , m_UAVs(other.m_UAVs)
+    , m_SRVs(other.m_SRVs)
+    , m_Samplers(other.m_Samplers)
+    , m_ArgMetadataToCompiler(other.m_ArgMetadataToCompiler)
+    , m_KernelArgsCbData(other.m_KernelArgsCbData)
+    , m_ConstSamplers(other.m_ConstSamplers)
+    , m_InlineConsts(other.m_InlineConsts)
+{
     m_Parent->KernelCreated();
 }
 
@@ -609,4 +626,24 @@ clGetKernelWorkGroupInfo(cl_kernel                  kernel_,
     }
 
     return CL_INVALID_VALUE;
+}
+
+extern CL_API_ENTRY cl_kernel CL_API_CALL
+clCloneKernel(cl_kernel     source_kernel,
+    cl_int*       errcode_ret) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!source_kernel)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_KERNEL;
+        return nullptr;
+    }
+    Kernel &kernel = *static_cast<Kernel*>(source_kernel);
+    auto ReportError = kernel.m_Parent->m_Parent->GetErrorReporter(errcode_ret);
+    try
+    {
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        return new Kernel(kernel);
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
 }

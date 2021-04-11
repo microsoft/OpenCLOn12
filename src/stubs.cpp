@@ -185,18 +185,6 @@ clSetProgramSpecializationConstant(cl_program  program,
     return context.GetErrorReporter()("This platform does not yet support SPIR-V programs", CL_INVALID_OPERATION);
 }
 
-#ifdef CL_VERSION_2_1
-
-extern CL_API_ENTRY cl_kernel CL_API_CALL
-clCloneKernel(cl_kernel     source_kernel,
-    cl_int*       errcode_ret) CL_API_SUFFIX__VERSION_2_1
-{
-    *errcode_ret = CL_INVALID_PLATFORM;
-    return nullptr;
-}
-
-#endif
-
 #ifdef CL_VERSION_2_0
 
 extern CL_API_ENTRY cl_int CL_API_CALL
