@@ -128,8 +128,8 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_IMAGE_MAX_BUFFER_SIZE: return ImageRetValueOrZero((size_t)(2 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP));
         case CL_DEVICE_IMAGE_MAX_ARRAY_SIZE: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION);
         case CL_DEVICE_MAX_SAMPLERS: return ImageRetValueOrZero((cl_uint)D3D12_COMMONSHADER_SAMPLER_SLOT_COUNT);
-        case CL_DEVICE_IMAGE_PITCH_ALIGNMENT: return ImageRetValueOrZero((size_t)D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
-        case CL_DEVICE_IMAGE_BASE_ADDRESS_ALIGNMENT: return RetValue((cl_uint)D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+        case CL_DEVICE_IMAGE_PITCH_ALIGNMENT: return ImageRetValueOrZero((cl_uint)0);
+        case CL_DEVICE_IMAGE_BASE_ADDRESS_ALIGNMENT: return RetValue((cl_uint)0);
 
         case CL_DEVICE_MAX_PARAMETER_SIZE: return RetValue((size_t)1024);
         case CL_DEVICE_MEM_BASE_ADDR_ALIGN: return RetValue((cl_uint)D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT * 8);
@@ -152,7 +152,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE: return RetValue((cl_ulong)(D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16));
         case CL_DEVICE_MAX_CONSTANT_ARGS: return RetValue((cl_uint)15);
 
-        case CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE: return RetValue((size_t)65536);
+        case CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE: return RetValue((size_t)0);
         case CL_DEVICE_GLOBAL_VARIABLE_PREFERRED_TOTAL_SIZE: return RetValue((size_t)0);
 
         case CL_DEVICE_LOCAL_MEM_TYPE: return RetValue((cl_device_local_mem_type)CL_LOCAL);
@@ -169,12 +169,11 @@ clGetDeviceInfo(cl_device_id    device,
 
         case CL_DEVICE_QUEUE_ON_HOST_PROPERTIES: return RetValue(
             (cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE));
-        case CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES: return RetValue(
-            (cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE));
-        case CL_DEVICE_QUEUE_ON_DEVICE_PREFERRED_SIZE: return RetValue((cl_uint)(16 * 1024));
-        case CL_DEVICE_QUEUE_ON_DEVICE_MAX_SIZE: return RetValue((cl_uint)(256 * 1024));
-        case CL_DEVICE_MAX_ON_DEVICE_QUEUES: return RetValue((cl_uint)1);
-        case CL_DEVICE_MAX_ON_DEVICE_EVENTS: return RetValue(UINT_MAX);
+        case CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES: return RetValue((cl_command_queue_properties)0);
+        case CL_DEVICE_QUEUE_ON_DEVICE_PREFERRED_SIZE: return RetValue((cl_uint)0);
+        case CL_DEVICE_QUEUE_ON_DEVICE_MAX_SIZE: return RetValue((cl_uint)0);
+        case CL_DEVICE_MAX_ON_DEVICE_QUEUES: return RetValue((cl_uint)0);
+        case CL_DEVICE_MAX_ON_DEVICE_EVENTS: return RetValue((cl_uint)0);
 
         case CL_DEVICE_BUILT_IN_KERNELS: return RetValue("");
         case CL_DEVICE_PLATFORM: return RetValue(static_cast<cl_platform_id>(&pDevice->m_Parent.get()));
