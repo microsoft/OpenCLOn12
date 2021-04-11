@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include "context.hpp"
+#include "program.hpp"
 
 #pragma warning(disable: 4100)
 
@@ -156,15 +157,18 @@ clCreateProgramWithIL(cl_context    context_,
     return ReportError("Platform does not yet support IL programs", CL_INVALID_OPERATION);
 }
 
-#ifdef CL_VERSION_2_2
-
-extern CL_API_ENTRY cl_int CL_API_CALL
+extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_2_2_DEPRECATED cl_int CL_API_CALL
 clSetProgramReleaseCallback(cl_program          program,
     void (CL_CALLBACK * pfn_notify)(cl_program program,
         void * user_data),
-    void *              user_data) CL_API_SUFFIX__VERSION_2_2
+    void *              user_data) CL_EXT_SUFFIX__VERSION_2_2_DEPRECATED
 {
-    return CL_INVALID_PLATFORM;
+    if (!program)
+    {
+        return CL_INVALID_PROGRAM;
+    }
+    Context& context = static_cast<Program*>(program)->m_Parent.get();
+    return context.GetErrorReporter()("This platform does not support global program destructors", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -173,10 +177,13 @@ clSetProgramSpecializationConstant(cl_program  program,
     size_t      spec_size,
     const void* spec_value) CL_API_SUFFIX__VERSION_2_2
 {
-    return CL_INVALID_PLATFORM;
+    if (!program)
+    {
+        return CL_INVALID_PROGRAM;
+    }
+    Context& context = static_cast<Program*>(program)->m_Parent.get();
+    return context.GetErrorReporter()("This platform does not yet support SPIR-V programs", CL_INVALID_OPERATION);
 }
-
-#endif
 
 #ifdef CL_VERSION_2_1
 
