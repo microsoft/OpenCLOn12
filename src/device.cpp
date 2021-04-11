@@ -115,8 +115,8 @@ clGetDeviceInfo(cl_device_id    device,
 
         case CL_DEVICE_IMAGE_SUPPORT: return ImageRetValue((cl_bool)CL_TRUE, (cl_bool)CL_FALSE);
         case CL_DEVICE_MAX_READ_IMAGE_ARGS: /*SRVs*/ return ImageRetValueOrZero((cl_uint)128);
-        case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: // Fallthrough
-        case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*UAVs*/ return ImageRetValueOrZero((cl_uint)64);
+        case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: /*UAVs*/return ImageRetValueOrZero((cl_uint)64);
+        case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*Typed UAVs*/ return ImageRetValueOrZero((cl_uint)(pDevice->SupportsTypedUAVLoad() ? 64 : 0));
 
         case CL_DEVICE_IL_VERSION: return RetValue("");
 
@@ -337,6 +337,15 @@ bool Device::SupportsInt16()
         CacheCaps(Lock);
     }
     return m_D3D12Options4.Native16BitShaderOpsSupported;
+}
+
+bool Device::SupportsTypedUAVLoad()
+{
+    {
+        std::lock_guard Lock(m_InitLock);
+        CacheCaps(Lock);
+    }
+    return m_D3D12Options.TypedUAVLoadAdditionalFormats;
 }
 
 ShaderCache& Device::GetShaderCache()
