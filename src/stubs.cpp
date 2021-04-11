@@ -16,21 +16,6 @@ clSetDefaultDeviceCommandQueue(cl_context           context,
     return CL_INVALID_PLATFORM;
 }
 
-extern CL_API_ENTRY cl_int CL_API_CALL
-clGetDeviceAndHostTimer(cl_device_id    device,
-    cl_ulong*       device_timestamp,
-    cl_ulong*       host_timestamp) CL_API_SUFFIX__VERSION_2_1
-{
-    return CL_INVALID_PLATFORM;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clGetHostTimer(cl_device_id device,
-    cl_ulong *   host_timestamp) CL_API_SUFFIX__VERSION_2_1
-{
-    return CL_INVALID_PLATFORM;
-}
-
 #ifdef CL_VERSION_2_0
 
 extern CL_API_ENTRY cl_mem CL_API_CALL

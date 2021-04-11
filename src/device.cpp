@@ -3,6 +3,8 @@
 #include "device.hpp"
 #include "task.hpp"
 
+#include <wil/resource.h>
+
 extern CL_API_ENTRY cl_int CL_API_CALL
 clGetDeviceIDs(cl_platform_id   platform,
     cl_device_type   device_type,
@@ -545,6 +547,53 @@ clReleaseDevice(cl_device_id device) CL_API_SUFFIX__VERSION_1_2
 {
     if (!device)
         return CL_INVALID_DEVICE;
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetDeviceAndHostTimer(cl_device_id device_,
+    cl_ulong*       device_timestamp,
+    cl_ulong*       host_timestamp) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!device_)
+    {
+        return CL_INVALID_DEVICE;
+    }
+    if (!device_timestamp || !host_timestamp)
+    {
+        return CL_INVALID_VALUE;
+    }
+
+    Device& device = *static_cast<Device*>(device_);
+    try
+    {
+        // Should I just return 0 here if they haven't created a context on this device?
+        device.InitD3D();
+        auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(); });
+
+        auto pQueue = device.ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+        D3D12TranslationLayer::ThrowFailure(pQueue->GetClockCalibration(device_timestamp, host_timestamp));
+        return CL_SUCCESS;
+    }
+    catch (_com_error&) { return CL_OUT_OF_RESOURCES; }
+    catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetHostTimer(cl_device_id device,
+    cl_ulong *   host_timestamp) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!device)
+    {
+        return CL_INVALID_DEVICE;
+    }
+    if (!host_timestamp)
+    {
+        return CL_INVALID_VALUE;
+    }
+    LARGE_INTEGER QPC;
+    QueryPerformanceCounter(&QPC);
+    *host_timestamp = QPC.QuadPart;
     return CL_SUCCESS;
 }
 
