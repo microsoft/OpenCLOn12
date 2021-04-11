@@ -9,16 +9,6 @@
 #pragma warning(disable: 4100)
 
 extern CL_API_ENTRY cl_int CL_API_CALL
-clCreateSubDevices(cl_device_id                         in_device,
-    const cl_device_partition_property * properties,
-    cl_uint                              num_devices,
-    cl_device_id *                       out_devices,
-    cl_uint *                            num_devices_ret) CL_API_SUFFIX__VERSION_1_2
-{
-    return CL_INVALID_DEVICE_PARTITION_COUNT;
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
 clSetDefaultDeviceCommandQueue(cl_context           context,
     cl_device_id         device,
     cl_command_queue     command_queue) CL_API_SUFFIX__VERSION_2_1
