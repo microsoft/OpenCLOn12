@@ -9,7 +9,7 @@
 class CommandQueue : public CLChildBase<CommandQueue, Device, cl_command_queue>
 {
 public:
-    CommandQueue(Device& device, Context& context, const cl_queue_properties* properties);
+    CommandQueue(Device& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties);
 
     friend cl_int CL_API_CALL clGetCommandQueueInfo(cl_command_queue, cl_command_queue_info, size_t, void*, size_t*);
 
@@ -23,6 +23,7 @@ public:
 
     const bool m_bOutOfOrder;
     const bool m_bProfile;
+    const bool m_bPropertiesSynthesized;
     std::vector<cl_queue_properties> const m_Properties;
 
 protected:
