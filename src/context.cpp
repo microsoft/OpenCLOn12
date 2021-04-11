@@ -232,6 +232,23 @@ clGetContextInfo(cl_context         context_,
     return context->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
+extern CL_API_ENTRY cl_int CL_API_CALL
+clSetContextDestructorCallback(cl_context context_,
+    void (CL_CALLBACK* pfn_notify)(cl_context context, void* user_data),
+    void* user_data) CL_API_SUFFIX__VERSION_3_0
+{
+    if (!context_)
+    {
+        return CL_INVALID_CONTEXT;
+    }
+    if (!pfn_notify)
+    {
+        return CL_INVALID_VALUE;
+    }
+    static_cast<Context*>(context_)->AddDestructionCallback(pfn_notify, user_data);
+    return CL_SUCCESS;
+}
+
 Context::Context(Platform& Platform, std::vector<Device::ref_ptr_int> Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)
     : CLChildBase(Platform)
     , m_AssociatedDevices(std::move(Devices))
@@ -247,6 +264,12 @@ Context::Context(Platform& Platform, std::vector<Device::ref_ptr_int> Devices, c
 
 Context::~Context()
 {
+    for (auto iter = m_DestructorCallbacks.rbegin(); iter != m_DestructorCallbacks.rend(); ++iter)
+    {
+        auto& callback = *iter;
+        callback.m_pfn(this, callback.m_userData);
+    }
+
     for (auto& device : m_AssociatedDevices)
     {
         device->ReleaseD3D();
@@ -273,4 +296,10 @@ bool Context::ValidDeviceForContext(Device& device) const noexcept
 {
     return std::find_if(m_AssociatedDevices.begin(), m_AssociatedDevices.end(),
                         [&device](Device::ref_ptr_int const& d) { return d.Get() == &device; }) != m_AssociatedDevices.end();
+}
+
+void Context::AddDestructionCallback(DestructorCallback::Fn pfn, void *pUserData)
+{
+    std::lock_guard DestructorLock(m_DestructorLock);
+    m_DestructorCallbacks.push_back({ pfn, pUserData });
 }

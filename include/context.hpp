@@ -13,12 +13,22 @@ public:
         size_t       cb,
         void *       user_data);
 
+    struct DestructorCallback
+    {
+        using Fn = void(CL_CALLBACK *)(cl_context, void*);
+        Fn m_pfn;
+        void* m_userData;
+    };
+
 private:
     std::vector<Device::ref_ptr_int> m_AssociatedDevices;
     const PfnCallbackType m_ErrorCallback;
     void* const m_CallbackContext;
 
     std::vector<cl_context_properties> const m_Properties;
+
+    mutable std::mutex m_DestructorLock;
+    std::vector<DestructorCallback> m_DestructorCallbacks;
 
     static void CL_CALLBACK DummyCallback(const char*, const void*, size_t, void*) {}
 
@@ -56,4 +66,6 @@ public:
     Device& GetDevice(cl_uint index) const noexcept;
     bool ValidDeviceForContext(Device& device) const noexcept;
     std::vector<Device::ref_ptr_int> GetDevices() const noexcept { return m_AssociatedDevices; }
+
+    void AddDestructionCallback(DestructorCallback::Fn pfn, void* pUserData);
 };
