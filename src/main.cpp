@@ -224,6 +224,11 @@ cl_icd_dispatch g_DispatchTable
     /* OpenCL 2.2 */
     clSetProgramReleaseCallback,
     clSetProgramSpecializationConstant,
+
+    /* OpenCL 3.0 */
+    clCreateBufferWithProperties,
+    clCreateImageWithProperties,
+    clSetContextDestructorCallback,
 };
 
 Platform* g_Platform = nullptr;
