@@ -108,7 +108,13 @@ public:
     static constexpr const char* Version = "OpenCL 1.2 D3D12 Implementation";
     static constexpr const char* Name = "OpenCLOn12";
     static constexpr const char* Vendor = "Microsoft";
-    static constexpr const char* Extensions = "cl_khr_icd";
+    static constexpr const char* Extensions = "cl_khr_icd "
+                                              "cl_khr_extended_versioning "
+                                              "cl_khr_global_int32_base_atomics "
+                                              "cl_khr_global_int32_extended_atomics "
+                                              "cl_khr_local_int32_base_atomics "
+                                              "cl_khr_local_int32_extended_atomics "
+                                              "cl_khr_byte_addressable_store ";
     static constexpr const char* ICDSuffix = "oclon12";
 
     Platform(cl_icd_dispatch* dispatch);
