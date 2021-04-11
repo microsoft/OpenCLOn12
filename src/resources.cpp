@@ -135,11 +135,12 @@ bool ValidateMemFlagsForBufferReference(cl_mem_flags& flags, Resource& buffer, T
 
 /* Memory Object APIs */
 extern CL_API_ENTRY cl_mem CL_API_CALL
-clCreateBuffer(cl_context   context_,
+clCreateBufferWithProperties(cl_context   context_,
+    const cl_mem_properties* properties,
     cl_mem_flags flags,
     size_t       size,
     void *       host_ptr,
-    cl_int *     errcode_ret) CL_API_SUFFIX__VERSION_1_0
+    cl_int *     errcode_ret) CL_API_SUFFIX__VERSION_3_0
 {
     if (!context_)
     {
@@ -148,6 +149,10 @@ clCreateBuffer(cl_context   context_,
     }
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter(errcode_ret);
+    if (properties && properties[0] != 0)
+    {
+        return ReportError("Invalid properties specified", CL_INVALID_PROPERTY);
+    }
 
     if (size == 0 || size > UINT_MAX)
     {
@@ -197,6 +202,16 @@ clCreateBuffer(cl_context   context_,
 }
 
 extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateBuffer(cl_context   context,
+    cl_mem_flags flags,
+    size_t       size,
+    void *       host_ptr,
+    cl_int *     errcode_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    return clCreateBufferWithProperties(context, nullptr, flags, size, host_ptr, errcode_ret);
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
 clCreateSubBuffer(cl_mem                   buffer_,
     cl_mem_flags             flags,
     cl_buffer_create_type    buffer_create_type,
@@ -238,12 +253,13 @@ clCreateSubBuffer(cl_mem                   buffer_,
 }
 
 extern CL_API_ENTRY cl_mem CL_API_CALL
-clCreateImage(cl_context              context_,
+clCreateImageWithProperties(cl_context              context_,
+    const cl_mem_properties* properties,
     cl_mem_flags            flags,
     const cl_image_format * image_format,
     const cl_image_desc *   image_desc,
     void *                  host_ptr,
-    cl_int *                errcode_ret) CL_API_SUFFIX__VERSION_1_2
+    cl_int *                errcode_ret) CL_API_SUFFIX__VERSION_3_0
 {
     if (!context_)
     {
@@ -252,6 +268,11 @@ clCreateImage(cl_context              context_,
     }
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter(errcode_ret);
+
+    if (properties && properties[0] != 0)
+    {
+        return ReportError("Invalid properties", CL_INVALID_PROPERTY);
+    }
 
     if (!ValidateMemFlags(flags, host_ptr != nullptr, ReportError))
     {
@@ -462,6 +483,17 @@ clCreateImage(cl_context              context_,
     {
         return ReportError(e.what(), CL_OUT_OF_RESOURCES);
     }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateImage(cl_context              context,
+    cl_mem_flags            flags,
+    const cl_image_format * image_format,
+    const cl_image_desc *   image_desc,
+    void *                  host_ptr,
+    cl_int *                errcode_ret) CL_API_SUFFIX__VERSION_1_2
+{
+    return clCreateImageWithProperties(context, nullptr, flags, image_format, image_desc, host_ptr, errcode_ret);
 }
 
 extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
