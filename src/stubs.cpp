@@ -8,14 +8,6 @@
 
 #pragma warning(disable: 4100)
 
-extern CL_API_ENTRY cl_int CL_API_CALL
-clSetDefaultDeviceCommandQueue(cl_context           context,
-    cl_device_id         device,
-    cl_command_queue     command_queue) CL_API_SUFFIX__VERSION_2_1
-{
-    return CL_INVALID_PLATFORM;
-}
-
 #ifdef CL_VERSION_2_0
 
 extern CL_API_ENTRY cl_mem CL_API_CALL
