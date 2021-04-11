@@ -314,6 +314,7 @@ clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    catch (Task::DependencyException&) { return ReportError("Context mismatch between command_queue and event_wait_list", CL_INVALID_CONTEXT); }
 
     return CL_SUCCESS;
 }
@@ -369,6 +370,7 @@ clEnqueueBarrierWithWaitList(cl_command_queue  command_queue,
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    catch (Task::DependencyException&) { return ReportError("Context mismatch between command_queue and event_wait_list", CL_INVALID_CONTEXT); }
 
     return CL_SUCCESS;
 }
@@ -494,6 +496,10 @@ void Task::AddDependencies(const cl_event* event_wait_list, cl_uint num_events_i
             for (UINT i = 0; i < num_events_in_wait_list; ++i)
             {
                 Task* task = static_cast<Task*>(event_wait_list[i]);
+                if (&task->m_Parent.get() != &m_Parent.get())
+                {
+                    throw DependencyException {};
+                }
                 auto insertRet = task->m_TasksWaitingOnThis.insert(this);
                 if (insertRet.second)
                 {

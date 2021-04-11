@@ -462,6 +462,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+    catch (Task::DependencyException&) { return ReportError("Context mismatch between command_queue and event_wait_list", CL_INVALID_CONTEXT); }
 
     return CL_SUCCESS;
 }

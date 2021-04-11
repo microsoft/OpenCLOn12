@@ -72,6 +72,7 @@ class Task : public CLChildBase<Task, Context, cl_event>
     };
 
 public:
+    struct DependencyException {};
     friend class Device;
     enum class State
     {
