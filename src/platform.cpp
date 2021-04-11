@@ -35,6 +35,30 @@ clGetPlatformInfo(cl_platform_id   platform,
         }
         return CL_SUCCESS;
     }
+    else if (param_name == CL_PLATFORM_NUMERIC_VERSION)
+    {
+        return CopyOutParameter(
+#ifdef CLON12_SUPPORT_3_0
+            CL_MAKE_VERSION(3, 0, 0),
+#else
+            CL_MAKE_VERSION(1, 2, 0),
+#endif
+            param_value_size, param_value, param_value_size_ret);
+    }
+    else if (param_name == CL_PLATFORM_EXTENSIONS_WITH_VERSION)
+    {
+        constexpr cl_name_version extensions[] =
+        {
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_icd" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_extended_versioning" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_global_int32_base_atomics" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_global_int32_extended_atomics" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_base_atomics" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_extended_atomics" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_byte_addressable_store" },
+        };
+        return CopyOutParameter(extensions, param_value_size, param_value, param_value_size_ret);
+    }
 
     auto pPlatform = Platform::CastFrom(platform);
     auto pString = [pPlatform, param_name]() -> const char*

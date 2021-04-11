@@ -105,7 +105,11 @@ class Platform : public CLBase<Platform, cl_platform_id>
 {
 public:
     static constexpr const char* Profile = "FULL_PROFILE";
+#ifdef CLON12_SUPPORT_3_0
+    static constexpr const char* Version = "OpenCL 3.0 D3D12 Implementation";
+#else
     static constexpr const char* Version = "OpenCL 1.2 D3D12 Implementation";
+#endif
     static constexpr const char* Name = "OpenCLOn12";
     static constexpr const char* Vendor = "Microsoft";
     static constexpr const char* Extensions = "cl_khr_icd "
@@ -347,6 +351,10 @@ inline cl_int CopyOutParameter(const T(&value)[size], size_t param_value_size, v
 inline cl_int CopyOutParameter(const char* value, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
 {
     return CopyOutParameterImpl(value, strlen(value) + 1, param_value_size, param_value, param_value_size_ret);
+}
+inline cl_int CopyOutParameter(nullptr_t, size_t param_value_size, void* param_value, size_t *param_value_size_ret)
+{
+    return CopyOutParameterImpl(nullptr, 0, param_value_size, param_value, param_value_size_ret);
 }
 
 inline bool IsZeroOrPow2(cl_bitfield bits)

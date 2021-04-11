@@ -119,6 +119,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*Typed UAVs*/ return ImageRetValueOrZero((cl_uint)(pDevice->SupportsTypedUAVLoad() ? 64 : 0));
 
         case CL_DEVICE_IL_VERSION: return RetValue("");
+        case CL_DEVICE_ILS_WITH_VERSION: return RetValue(nullptr);
 
         case CL_DEVICE_IMAGE2D_MAX_WIDTH: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
         case CL_DEVICE_IMAGE2D_MAX_HEIGHT: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
@@ -176,13 +177,27 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_MAX_ON_DEVICE_EVENTS: return RetValue((cl_uint)0);
 
         case CL_DEVICE_BUILT_IN_KERNELS: return RetValue("");
+        case CL_DEVICE_BUILT_IN_KERNELS_WITH_VERSION: return RetValue(nullptr);
         case CL_DEVICE_PLATFORM: return RetValue(static_cast<cl_platform_id>(&pDevice->m_Parent.get()));
         case CL_DEVICE_NAME: return RetValue(pDevice->GetDeviceName().c_str());
         case CL_DEVICE_VENDOR: return RetValue(pDevice->m_Parent->Vendor);
-        case CL_DRIVER_VERSION: return RetValue("1.0.0");
+        case CL_DRIVER_VERSION: return RetValue("1.1.0");
         case CL_DEVICE_PROFILE: return RetValue(pDevice->m_Parent->Profile);
         case CL_DEVICE_VERSION: return RetValue(pDevice->m_Parent->Version);
         case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.2 ");
+        case CL_DEVICE_OPENCL_C_ALL_VERSIONS:
+        {
+            constexpr cl_name_version versions[] =
+            {
+                { CL_MAKE_VERSION(1, 0, 0), "OpenCL C" },
+                { CL_MAKE_VERSION(1, 1, 0), "OpenCL C" },
+                { CL_MAKE_VERSION(1, 2, 0), "OpenCL C" },
+#ifdef CLON12_SUPPORT_3_0
+                { CL_MAKE_VERSION(3, 0, 0), "OpenCL C" },
+#endif
+            };
+            return RetValue(versions);
+        }
 
         case CL_DEVICE_EXTENSIONS: return RetValue("cl_khr_global_int32_base_atomics "
                                                    "cl_khr_global_int32_extended_atomics "
@@ -211,6 +226,27 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_SUB_GROUP_INDEPENDENT_FORWARD_PROGRESS: return RetValue((cl_bool)CL_FALSE);
 
         case CL_DEVICE_HOST_UNIFIED_MEMORY: return RetValue((cl_bool)pDevice->IsUMA());
+
+        case CL_DEVICE_MAX_PIPE_ARGS: return RetValue((cl_uint)0);
+        case CL_DEVICE_PIPE_MAX_ACTIVE_RESERVATIONS: return RetValue((cl_uint)0);
+        case CL_DEVICE_PIPE_MAX_PACKET_SIZE: return RetValue((cl_uint)0);
+
+        case CL_DEVICE_ATOMIC_MEMORY_CAPABILITIES: return RetValue((cl_device_atomic_capabilities)(
+            CL_DEVICE_ATOMIC_ORDER_RELAXED | CL_DEVICE_ATOMIC_ORDER_ACQ_REL | CL_DEVICE_ATOMIC_ORDER_SEQ_CST |
+            CL_DEVICE_ATOMIC_SCOPE_WORK_ITEM | CL_DEVICE_ATOMIC_SCOPE_WORK_GROUP | CL_DEVICE_ATOMIC_SCOPE_DEVICE));
+        case CL_DEVICE_ATOMIC_FENCE_CAPABILITIES: return RetValue((cl_device_atomic_capabilities)(
+            CL_DEVICE_ATOMIC_ORDER_RELAXED | CL_DEVICE_ATOMIC_ORDER_ACQ_REL | CL_DEVICE_ATOMIC_ORDER_SEQ_CST |
+            CL_DEVICE_ATOMIC_SCOPE_WORK_ITEM | CL_DEVICE_ATOMIC_SCOPE_WORK_GROUP | CL_DEVICE_ATOMIC_SCOPE_DEVICE));
+
+        case CL_DEVICE_NON_UNIFORM_WORK_GROUP_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+        case CL_DEVICE_WORK_GROUP_COLLECTIVE_FUNCTIONS_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+        case CL_DEVICE_GENERIC_ADDRESS_SPACE_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+        case CL_DEVICE_DEVICE_ENQUEUE_CAPABILITIES: return RetValue((cl_device_device_enqueue_capabilities)0);
+        case CL_DEVICE_PIPE_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+
+        case CL_DEVICE_PREFERRED_WORK_GROUP_SIZE_MULTIPLE: return RetValue((size_t)64);
+
+        case CL_DEVICE_LATEST_CONFORMANCE_VERSION_PASSED: return RetValue("");
         }
 
         return CL_INVALID_VALUE;
