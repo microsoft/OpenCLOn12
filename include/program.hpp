@@ -165,6 +165,7 @@ private:
         std::vector<Device::ref_ptr_int> BinaryBuildDevices;
     };
 
+    void AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices, CommonOptions& optionsStruct);
     cl_int ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions);
     cl_int BuildImpl(BuildArgs const& Args);
     cl_int CompileImpl(CompileArgs const& Args);

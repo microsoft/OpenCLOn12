@@ -5,6 +5,8 @@
 #include "kernel.hpp"
 #include <dxc/dxcapi.h>
 
+#include <algorithm>
+
 struct ProgramBinaryHeader
 {
     static constexpr GUID c_ValidHeaderGuid = { /* 8d46c01e-2977-4234-a5b0-292405fc1d34 */
@@ -575,6 +577,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
 
     // Parse options
     BuildArgs Args = {};
+    AddBuiltinOptions(Devices, Args.Common);
     cl_int ret = ParseOptions(options, Args.Common, true, true);
     if (ret != CL_SUCCESS)
     {
@@ -668,6 +671,7 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
 
     // Parse options
     CompileArgs Args = {};
+    AddBuiltinOptions(Devices, Args.Common);
     cl_int ret = ParseOptions(options, Args.Common, true, false);
     if (ret != CL_SUCCESS)
     {
@@ -887,21 +891,42 @@ void Program::KernelFreed()
     --m_NumLiveKernels;
 }
 
+void Program::AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices, CommonOptions& optionsStruct)
+{
+    optionsStruct.Args.reserve(15);
+#ifdef CLON12_SUPPORT_3_0
+    optionsStruct.Args.push_back("-D__OPENCL_VERSION__=300");
+#else
+    optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
+#endif
+    // Disable extensions promoted to optional core features that we don't support
+    optionsStruct.Args.push_back("-cl-ext=-cl_khr_fp64");
+    optionsStruct.Args.push_back("-cl-ext=-cl_khr_depth_images");
+    optionsStruct.Args.push_back("-cl-ext=-cl_khr_subgroups");
+    // Disable optional core features that we don't support
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_fp64");
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_device_enqueue");
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_generic_address_space");
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_pipes");
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_program_scope_global_variables");
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_subgroups");
+    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_work_group_collective_functions");
+    // Query device caps to determine additional things to enable and/or disable
+    if (std::any_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return d->IsMCDM(); }))
+    {
+        optionsStruct.Args.push_back("-U__IMAGE_SUPPORT__");
+        optionsStruct.Args.push_back("-cl-ext=-__opencl_c_images");
+        optionsStruct.Args.push_back("-cl-ext=-__opencl_c_read_write_images");
+    }
+    else if (!std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return d->SupportsTypedUAVLoad(); }))
+    {
+        optionsStruct.Args.push_back("-cl-ext=-__opencl_c_read_write_images");
+    }
+}
+
 cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions)
 {
     using namespace std::string_view_literals;
-
-    if (SupportCompilerOptions)
-    {
-        optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
-        optionsStruct.Args.push_back("-cl-ext=-cl_khr_fp64");
-        // TODO: Should we do a dual-compile if a context includes MCDM devices?
-        //if (m_Parent->GetDevice().IsMCDM())
-        //{
-        //    // Clang defines this by default for SPIR targets
-        //    optionsStruct.Args.push_back("-U__IMAGE_SUPPORT__");
-        //}
-    }
 
     std::string curOption;
     auto ValidateAndPushArg = [&]()
@@ -1072,6 +1097,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
         clc_compile_args args = {};
 
         std::vector<const char*> raw_args;
+        raw_args.reserve(Args.Common.Args.size());
         for (auto& def : Args.Common.Args)
         {
             raw_args.push_back(def.c_str());
@@ -1159,11 +1185,13 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     clc_compile_args args = {};
 
     std::vector<const char*> raw_args;
+    raw_args.reserve(Args.Common.Args.size());
     for (auto& def : Args.Common.Args)
     {
         raw_args.push_back(def.c_str());
     }
     std::vector<clc_named_value> headers;
+    headers.reserve(Args.Headers.size());
     for (auto& h : Args.Headers)
     {
         headers.push_back(clc_named_value{ h.first.c_str(), h.second->m_Source.c_str() });
