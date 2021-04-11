@@ -400,6 +400,7 @@ clGetProgramInfo(cl_program         program_,
                                     program.m_AssociatedDevices.size() * sizeof(program.m_AssociatedDevices[0]),
                                     param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
+    case CL_PROGRAM_IL: return RetValue(nullptr);
     case CL_PROGRAM_BINARY_SIZES:
     {
         size_t OutSize = sizeof(size_t) * program.m_AssociatedDevices.size();
@@ -509,6 +510,8 @@ clGetProgramInfo(cl_program         program_,
         }
         return CL_INVALID_PROGRAM_EXECUTABLE;
     }
+    case CL_PROGRAM_SCOPE_GLOBAL_CTORS_PRESENT: return RetValue((cl_bool)CL_FALSE);
+    case CL_PROGRAM_SCOPE_GLOBAL_DTORS_PRESENT: return RetValue((cl_bool)CL_FALSE);
     }
 
     return program.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
@@ -547,6 +550,7 @@ clGetProgramBuildInfo(cl_program            program_,
     case CL_PROGRAM_BUILD_OPTIONS: return RetValue(BuildData ? BuildData->m_LastBuildOptions.c_str() : "");
     case CL_PROGRAM_BUILD_LOG: return RetValue(BuildData ? BuildData->m_BuildLog.c_str() : "");
     case CL_PROGRAM_BINARY_TYPE: return RetValue(BuildData ? BuildData->m_BinaryType : CL_PROGRAM_BINARY_TYPE_NONE);
+    case CL_PROGRAM_BUILD_GLOBAL_VARIABLE_TOTAL_SIZE: return RetValue((size_t)0);
     }
 
     return program.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
