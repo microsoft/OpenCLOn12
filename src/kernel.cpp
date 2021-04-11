@@ -292,7 +292,7 @@ Kernel::Kernel(Program& Parent, std::string const& name, clc_dxil_object const* 
             CLAddressingModeFromSpirv(samplerMeta.addressing_mode),
             CLFilterModeFromSpirv(samplerMeta.filter_mode)
         };
-        m_ConstSamplers[i] = new Sampler(m_Parent->GetContext(), desc);
+        m_ConstSamplers[i] = new Sampler(m_Parent->GetContext(), desc, nullptr);
         m_Samplers[samplerMeta.sampler_id] = m_ConstSamplers[i].Get();
     }
 

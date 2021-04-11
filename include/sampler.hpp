@@ -13,11 +13,12 @@ public:
         cl_addressing_mode AddressingMode;
         cl_filter_mode FilterMode;
     };
-    Sampler(Context& Parent, Desc const& desc);
+    Sampler(Context& Parent, Desc const& desc, const cl_sampler_properties *properties);
 
     D3D12TranslationLayer::Sampler& GetUnderlying(Device*);
 
     const Desc m_Desc;
+    const std::vector<cl_sampler_properties> m_Properties;
 private:
     std::mutex m_Lock;
     std::unordered_map<class Device*, D3D12TranslationLayer::Sampler> m_UnderlyingSamplers;
