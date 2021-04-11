@@ -709,6 +709,8 @@ clGetMemObjectInfo(cl_mem           memobj,
     case CL_MEM_CONTEXT: return RetValue(&resource.m_Parent.get());
     case CL_MEM_ASSOCIATED_MEMOBJECT: return RetValue(resource.m_ParentBuffer.Get());
     case CL_MEM_OFFSET: return RetValue(resource.m_Offset);
+    case CL_MEM_USES_SVM_POINTER: return RetValue((bool)CL_FALSE);
+    case CL_MEM_PROPERTIES: return RetValue(nullptr);
     }
     return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
