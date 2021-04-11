@@ -222,34 +222,6 @@ clFinish(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
     return status;
 }
 
-extern CL_API_ENTRY cl_int CL_API_CALL
-clSetDefaultDeviceCommandQueue(cl_context           context_,
-    cl_device_id         device_,
-    cl_command_queue     command_queue) CL_API_SUFFIX__VERSION_2_1
-{
-    if (!context_)
-    {
-        return CL_INVALID_CONTEXT;
-    }
-    Context& context = *static_cast<Context*>(context_);
-    auto ReportError = context.GetErrorReporter();
-    if (!device_)
-    {
-        return ReportError("Device must not be null", CL_INVALID_DEVICE);
-    }
-    Device& device = *static_cast<Device*>(device_);
-    if (!context.ValidDeviceForContext(device))
-    {
-        return ReportError("Device not valid for this context", CL_INVALID_DEVICE);
-    }
-    if (!command_queue)
-    {
-        return ReportError("Queue must not be null", CL_INVALID_COMMAND_QUEUE);
-    }
-    // We don't support creating on-device queues so it's impossible to call this correctly
-    return ReportError("Queue is not an on-device queue", CL_INVALID_COMMAND_QUEUE);
-}
-
 static bool IsOutOfOrder(const cl_queue_properties* properties)
 {
     auto prop = FindProperty<cl_queue_properties>(properties, CL_QUEUE_PROPERTIES);

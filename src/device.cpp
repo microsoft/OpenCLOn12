@@ -596,25 +596,3 @@ clGetHostTimer(cl_device_id device,
     *host_timestamp = QPC.QuadPart;
     return CL_SUCCESS;
 }
-
-extern CL_API_ENTRY cl_int CL_API_CALL
-clCreateSubDevices(cl_device_id                         in_device,
-    const cl_device_partition_property * properties,
-    cl_uint                              num_devices,
-    cl_device_id *                       out_devices,
-    cl_uint *                            num_devices_ret) CL_API_SUFFIX__VERSION_1_2
-{
-    if (!in_device)
-    {
-        return CL_INVALID_DEVICE;
-    }
-    if (properties && properties[0] != 0)
-    {
-        // We don't support any of the partition modes, so the spec says we should return this
-        return CL_INVALID_VALUE;
-    }
-    UNREFERENCED_PARAMETER(num_devices);
-    UNREFERENCED_PARAMETER(out_devices);
-    UNREFERENCED_PARAMETER(num_devices_ret);
-    return CL_INVALID_DEVICE_PARTITION_COUNT;
-}
