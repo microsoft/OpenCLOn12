@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include "context.hpp"
+#include "queue.hpp"
 #include "program.hpp"
+#include "kernel.hpp"
 
 #pragma warning(disable: 4100)
 
@@ -185,14 +187,16 @@ clSetProgramSpecializationConstant(cl_program  program,
     return context.GetErrorReporter()("This platform does not yet support SPIR-V programs", CL_INVALID_OPERATION);
 }
 
-#ifdef CL_VERSION_2_0
-
 extern CL_API_ENTRY cl_int CL_API_CALL
 clSetKernelArgSVMPointer(cl_kernel    kernel,
     cl_uint      arg_index,
     const void * arg_value) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!kernel)
+    {
+        return CL_INVALID_KERNEL;
+    }
+    return static_cast<Kernel*>(kernel)->m_Parent->m_Parent->GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -201,12 +205,12 @@ clSetKernelExecInfo(cl_kernel            kernel,
     size_t               param_value_size,
     const void *         param_value) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!kernel)
+    {
+        return CL_INVALID_KERNEL;
+    }
+    return static_cast<Kernel*>(kernel)->m_Parent->m_Parent->GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
-
-#endif
-
-#ifdef CL_VERSION_2_1
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clGetKernelSubGroupInfo(cl_kernel                   kernel,
@@ -218,10 +222,12 @@ clGetKernelSubGroupInfo(cl_kernel                   kernel,
     void*                       param_value,
     size_t*                     param_value_size_ret) CL_API_SUFFIX__VERSION_2_1
 {
-    return CL_INVALID_PLATFORM;
+    if (!kernel)
+    {
+        return CL_INVALID_KERNEL;
+    }
+    return static_cast<Kernel*>(kernel)->m_Parent->m_Parent->GetErrorReporter()("Platform does not support subgroups", CL_INVALID_OPERATION);
 }
-
-#endif
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueNativeKernel(cl_command_queue  command_queue,
@@ -235,10 +241,12 @@ clEnqueueNativeKernel(cl_command_queue  command_queue,
     const cl_event *  event_wait_list,
     cl_event *        event) CL_API_SUFFIX__VERSION_1_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support native kernels", CL_INVALID_OPERATION);
 }
-
-#ifdef CL_VERSION_2_0
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueSVMFree(cl_command_queue  command_queue,
@@ -253,7 +261,11 @@ clEnqueueSVMFree(cl_command_queue  command_queue,
     const cl_event *  event_wait_list,
     cl_event *        event) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -266,7 +278,11 @@ clEnqueueSVMMemcpy(cl_command_queue  command_queue,
     const cl_event *  event_wait_list,
     cl_event *        event) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -279,7 +295,11 @@ clEnqueueSVMMemFill(cl_command_queue  command_queue,
     const cl_event *  event_wait_list,
     cl_event *        event) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -292,7 +312,11 @@ clEnqueueSVMMap(cl_command_queue  command_queue,
     const cl_event *  event_wait_list,
     cl_event *        event) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -302,12 +326,12 @@ clEnqueueSVMUnmap(cl_command_queue  command_queue,
     const cl_event *  event_wait_list,
     cl_event *        event) CL_API_SUFFIX__VERSION_2_0
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
-
-#endif
-
-#ifdef CL_VERSION_2_1
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueSVMMigrateMem(cl_command_queue         command_queue,
@@ -319,12 +343,12 @@ clEnqueueSVMMigrateMem(cl_command_queue         command_queue,
     const cl_event *         event_wait_list,
     cl_event *               event) CL_API_SUFFIX__VERSION_2_1
 {
-    return CL_INVALID_PLATFORM;
+    if (!command_queue)
+    {
+        return CL_INVALID_COMMAND_QUEUE;
+    }
+    return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
-
-#endif
-
-#ifdef CL_VERSION_1_2
 
 /* Extension function access
  *
@@ -340,13 +364,11 @@ clGetExtensionFunctionAddressForPlatform(cl_platform_id platform,
     return nullptr;
 }
 
-#endif
-
 /* Deprecated OpenCL 1.1 APIs */
 
 extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
 clUnloadCompiler(void) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
 {
-    return CL_INVALID_PLATFORM;
+    return CL_SUCCESS;
 }
 
