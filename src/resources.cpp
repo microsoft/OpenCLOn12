@@ -618,10 +618,14 @@ clGetSupportedImageFormats(cl_context           context_,
                     return false;
                 }
 
-                // OpenCL 1.2 doesn't require a single kernel to be able to read and write images, so we can bind
-                // readable images as SRVs and only require sample support, rather than typed UAV load.
                 if ((flags & (CL_MEM_READ_ONLY | CL_MEM_READ_WRITE)) &&
                     (Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD) == D3D12_FORMAT_SUPPORT1_NONE)
+                {
+                    return false;
+                }
+
+                if ((flags & CL_MEM_KERNEL_READ_AND_WRITE) &&
+                    (Support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) == D3D12_FORMAT_SUPPORT2_NONE)
                 {
                     return false;
                 }
