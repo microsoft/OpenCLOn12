@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 #include "platform.hpp"
 #include "cache.hpp"
-#include "clc_compiler.h"
+#include "compiler.hpp"
 
 CL_API_ENTRY cl_int CL_API_CALL
 clGetPlatformInfo(cl_platform_id   platform,
@@ -240,18 +240,14 @@ void LoadFromNextToSelf(XPlatHelpers::unique_module& mod, const char* name)
 #endif
 }
 
-XPlatHelpers::unique_module const& Platform::GetCompiler()
+Compiler *Platform::GetCompiler()
 {
     std::lock_guard lock(m_ModuleLock);
     if (!m_Compiler)
     {
-        m_Compiler.load("CLGLOn12Compiler.dll");
+        m_Compiler = Compiler::GetV1();
     }
-    if (!m_Compiler)
-    {
-        LoadFromNextToSelf(m_Compiler, "CLGLOn12Compiler.dll");
-    }
-    return m_Compiler;
+    return m_Compiler.get();
 }
 
 XPlatHelpers::unique_module const& Platform::GetDXIL()
@@ -266,56 +262,6 @@ XPlatHelpers::unique_module const& Platform::GetDXIL()
         LoadFromNextToSelf(m_DXIL, "DXIL.dll");
     }
     return m_DXIL;
-}
-
-clc_context* Platform::GetCompilerContext(ShaderCache& cache)
-{
-    std::lock_guard lock(m_ModuleLock);
-    if (!m_CompilerContext)
-    {
-        auto& compiler = GetCompiler();
-        auto freeContext = compiler.proc_address<decltype(&clc_free_context)>("clc_free_context");
-
-        // {1B9DC5F4-545A-4356-98D3-B4C0062E6253}
-        static const GUID ClcContextKey =
-        { 0x1b9dc5f4, 0x545a, 0x4356, { 0x98, 0xd3, 0xb4, 0xc0, 0x6, 0x2e, 0x62, 0x53 } };
-
-        if (auto CachedContext = cache.Find(&ClcContextKey, sizeof(ClcContextKey)); 
-            CachedContext.first)
-        {
-            auto deserializeContext = compiler.proc_address<decltype(&clc_context_deserialize)>("clc_context_deserialize");
-            if (deserializeContext)
-            {
-                m_CompilerContext = decltype(m_CompilerContext)(deserializeContext(CachedContext.first.get(), CachedContext.second), freeContext);
-                return m_CompilerContext.get();
-            }
-        }
-
-        auto createContext = compiler.proc_address<decltype(&clc_context_new)>("clc_context_new");
-        auto serialize = compiler.proc_address<decltype(&clc_context_serialize)>("clc_context_serialize");
-        auto freeSerialized = compiler.proc_address<decltype(&clc_context_free_serialized)>("clc_context_free_serialized");
-        clc_context_options options = {};
-        options.optimize = cache.HasCache() && serialize && freeSerialized;
-        m_CompilerContext = decltype(m_CompilerContext)(createContext(nullptr, &options), freeContext);
-
-        if (options.optimize)
-        {
-            void* serialized = nullptr;
-            size_t serializedSize = 0;
-            serialize(m_CompilerContext.get(), &serialized, &serializedSize);
-
-            if (serialized)
-            {
-                try
-                {
-                    cache.Store(&ClcContextKey, sizeof(ClcContextKey), serialized, serializedSize);
-                }
-                catch (...) {}
-                freeSerialized(serialized);
-            }
-        }
-    }
-    return m_CompilerContext.get();
 }
 
 void Platform::UnloadCompiler()

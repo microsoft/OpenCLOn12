@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include "program.hpp"
-#include "clc_compiler.h"
+#include "compiler.hpp"
 #include "kernel.hpp"
-#include <dxc/dxcapi.h>
 
 #include <algorithm>
 
@@ -16,16 +15,16 @@ struct ProgramBinaryHeader
     uint32_t BinarySize = 0;
 
     ProgramBinaryHeader() = default;
-    ProgramBinaryHeader(const clc_object* obj, cl_program_binary_type type)
+    ProgramBinaryHeader(const ProgramBinary* obj, cl_program_binary_type type)
         : BinaryType(type)
-        , BinarySize((uint32_t)obj->spvbin.size)
+        , BinarySize((uint32_t)obj->GetBinarySize())
     {
     }
     struct CopyBinaryContentsTag {};
-    ProgramBinaryHeader(const clc_object* obj, cl_program_binary_type type, CopyBinaryContentsTag)
+    ProgramBinaryHeader(const ProgramBinary* obj, cl_program_binary_type type, CopyBinaryContentsTag)
         : ProgramBinaryHeader(obj, type)
     {
-        memcpy(GetBinary(), obj->spvbin.data, BinarySize);
+        memcpy(GetBinary(), obj->GetBinary(), BinarySize);
     }
 
     size_t ComputeFullBlobSize() const
@@ -35,47 +34,6 @@ struct ProgramBinaryHeader
     void* GetBinary() { return this + 1; }
     const void* GetBinary() const { return this + 1; }
 };
-
-void SignBlob(void* pBlob, size_t size)
-{
-    auto& DXIL = g_Platform->GetDXIL();
-    auto pfnCreateInstance = DXIL.proc_address<decltype(&DxcCreateInstance)>("DxcCreateInstance");
-    ComPtr<IDxcValidator> spValidator;
-    if (SUCCEEDED(pfnCreateInstance(CLSID_DxcValidator, IID_PPV_ARGS(&spValidator))))
-    {
-        struct Blob : IDxcBlob
-        {
-            void* pBlob;
-            UINT Size;
-            Blob(void* p, UINT s) : pBlob(p), Size(s) { }
-            STDMETHOD(QueryInterface)(REFIID, void** ppv) { *ppv = this; return S_OK; }
-            STDMETHOD_(ULONG, AddRef)() { return 1; }
-            STDMETHOD_(ULONG, Release)() { return 0; }
-            STDMETHOD_(void*, GetBufferPointer)() override { return pBlob; }
-            STDMETHOD_(SIZE_T, GetBufferSize)() override { return Size; }
-        } Blob = { pBlob, (UINT)size };
-        ComPtr<IDxcOperationResult> spResult;
-        (void)spValidator->Validate(&Blob, DxcValidatorFlags_InPlaceEdit, &spResult);
-        HRESULT hr = S_OK;
-        if (spResult)
-        {
-            (void)spResult->GetStatus(&hr);
-        }
-        if (FAILED(hr))
-        {
-            ComPtr<IDxcBlobEncoding> spError;
-            spResult->GetErrorBuffer(&spError);
-            BOOL known = FALSE;
-            UINT32 cp = 0;
-            spError->GetEncoding(&known, &cp);
-            if (cp == CP_UTF8 || cp == CP_ACP)
-                printf("%s", (char*)spError->GetBufferPointer());
-            else
-                printf("%S", (wchar_t*)spError->GetBufferPointer());
-            DebugBreak();
-        }
-    }
-}
 
 extern CL_API_ENTRY cl_program CL_API_CALL
 clCreateProgramWithSource(cl_context        context_,
@@ -196,16 +154,7 @@ clCreateProgramWithBinary(cl_context                     context_,
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[i]);
-            unique_spirv BinaryHolder(new clc_object,
-                [](clc_object* obj)
-            {
-                if (obj->spvbin.data)
-                    delete[] reinterpret_cast<byte*>(obj->spvbin.data);
-                delete obj;
-            });
-            BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[header->BinarySize]);
-            BinaryHolder->spvbin.size = header->BinarySize;
-            memcpy(BinaryHolder->spvbin.data, header->GetBinary(), header->BinarySize);
+            unique_spirv BinaryHolder = g_Platform->GetCompiler()->Load(header->GetBinary(), header->BinarySize);
             NewProgram->StoreBinary(static_cast<Device*>(device_list[i]), std::move(BinaryHolder), header->BinaryType);
 
             if (binary_status) *binary_status = CL_SUCCESS;
@@ -873,7 +822,7 @@ void Program::StoreBinary(Device *Device, unique_spirv OwnedBinary, cl_program_b
     BuildData->m_BuildStatus = CL_BUILD_NONE;
 }
 
-const clc_object* Program::GetSpirV(Device* device) const
+const ProgramBinary *Program::GetSpirV(Device* device) const
 {
     std::lock_guard Lock(m_Lock);
     return m_BuildData.find(device)->second->m_OwnedBinary.get();
@@ -1043,79 +992,35 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
     return ValidateAndPushArg();
 }
 
-struct Loggers
-{
-    Program& m_Program;
-    Program::PerDeviceData& m_BuildData;
-    Loggers(Program& program, Program::PerDeviceData& buildData);
-    void Log(const char* msg);
-    static void Log(void* context, const char* msg);
-    operator clc_logger();
-};
-
-Loggers::Loggers(Program& program, Program::PerDeviceData& buildData)
-    : m_Program(program)
-    , m_BuildData(buildData)
-{
-}
-
-void Loggers::Log(const char* message)
-{
-    std::lock_guard Lock(m_Program.m_Lock);
-    m_BuildData.m_BuildLog += message;
-}
-
-void Loggers::Log(void* context, const char* message)
-{
-    static_cast<Loggers*>(context)->Log(message);
-}
-
-Loggers::operator clc_logger()
-{
-    clc_logger ret;
-    ret.priv = this;
-    ret.error = Log;
-    ret.warning = Log;
-    return ret;
-}
-
 cl_int Program::BuildImpl(BuildArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
-    auto& Compiler = g_Platform->GetCompiler();
-    auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
-    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
+    auto pCompiler = g_Platform->GetCompiler();
     if (!m_Source.empty())
     {
         auto& BuildData = Args.Common.BuildData;
+        pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
 
-        auto Context = g_Platform->GetCompilerContext(BuildData->m_Device->GetShaderCache());
+        Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-        Loggers loggers(*this, *BuildData);
-        clc_logger loggers_impl = loggers;
-        auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
-        clc_compile_args args = {};
-
-        std::vector<const char*> raw_args;
-        raw_args.reserve(Args.Common.Args.size());
+        Compiler::CompileArgs args = {};
+        args.program_source = m_Source.c_str();
+        args.cmdline_args.reserve(Args.Common.Args.size());
         for (auto& def : Args.Common.Args)
         {
-            raw_args.push_back(def.c_str());
+            args.cmdline_args.push_back(def.c_str());
         }
 
-        args.args = raw_args.data();
-        args.num_args = (unsigned)raw_args.size();
-        args.source = { "source.cl", m_Source.c_str() };
+        auto compiledObject = pCompiler->Compile(args, loggers);
 
-        unique_spirv compiledObject(compile(Context, &args, &loggers_impl), free);
-        const clc_object* rawCompiledObject = compiledObject.get();
-
-        clc_linker_args link_args = {};
-        link_args.create_library = Args.Common.CreateLibrary;
-        link_args.in_objs = &rawCompiledObject;
-        link_args.num_in_objs = 1;
-        unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
-        BuildData->m_OwnedBinary = std::move(object);
+        if (compiledObject)
+        {
+            Compiler::LinkerArgs link_args = {};
+            link_args.create_library = Args.Common.CreateLibrary;
+            link_args.objs.push_back(compiledObject.get());
+            auto linkedObject = pCompiler->Link(link_args, loggers);
+            BuildData->m_OwnedBinary = std::move(linkedObject);
+        }
 
         std::lock_guard Lock(m_Lock);
         if (BuildData->m_OwnedBinary)
@@ -1132,25 +1037,19 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     }
     else
     {
+        pCompiler->Initialize(Args.BinaryBuildDevices[0]->GetShaderCache());
+
         std::lock_guard Lock(m_Lock);
-        clc_context* Context = nullptr;
         for (auto& device : Args.BinaryBuildDevices)
         {
             auto& BuildData = m_BuildData[device.Get()];
-            if (!Context)
-            {
-                Context = g_Platform->GetCompilerContext(device->GetShaderCache());
-            }
-            Loggers loggers(*this, *BuildData);
-            clc_logger loggers_impl = loggers;
-            const clc_object* rawCompiledObject = BuildData->m_OwnedBinary.get();
+            Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-            clc_linker_args link_args = {};
+            Compiler::LinkerArgs link_args = {};
             link_args.create_library = Args.Common.CreateLibrary;
-            link_args.in_objs = &rawCompiledObject;
-            link_args.num_in_objs = 1;
-            unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
-            BuildData->m_OwnedBinary = std::move(object);
+            link_args.objs.push_back(BuildData->m_OwnedBinary.get());
+            auto linkedObject = pCompiler->Link(link_args, loggers);
+            BuildData->m_OwnedBinary = std::move(linkedObject);
 
             if (BuildData->m_OwnedBinary)
             {
@@ -1176,34 +1075,24 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
-    auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext(BuildData->m_Device->GetShaderCache());
-    auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
-    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    Loggers loggers(*this, *BuildData);
-    clc_logger loggers_impl = loggers;
-    clc_compile_args args = {};
+    auto pCompiler = g_Platform->GetCompiler();
+    pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
+    Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-    std::vector<const char*> raw_args;
-    raw_args.reserve(Args.Common.Args.size());
+    Compiler::CompileArgs args = {};
+    args.cmdline_args.reserve(Args.Common.Args.size());
     for (auto& def : Args.Common.Args)
     {
-        raw_args.push_back(def.c_str());
+        args.cmdline_args.push_back(def.c_str());
     }
-    std::vector<clc_named_value> headers;
-    headers.reserve(Args.Headers.size());
+    args.headers.reserve(Args.Headers.size());
     for (auto& h : Args.Headers)
     {
-        headers.push_back(clc_named_value{ h.first.c_str(), h.second->m_Source.c_str() });
+        args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
     }
+    args.program_source = m_Source.c_str();
 
-    args.headers = headers.data();
-    args.num_headers = (unsigned)headers.size();
-    args.args = raw_args.data();
-    args.num_args = (unsigned)raw_args.size();
-    args.source = { "source.cl", m_Source.c_str() };
-
-    unique_spirv object(compile(Context, &args, &loggers_impl), free);
+    unique_spirv object = pCompiler->Compile(args, loggers);
 
     {
         std::lock_guard Lock(m_Lock);
@@ -1229,30 +1118,23 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
 cl_int Program::LinkImpl(LinkArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
-    auto& Compiler = g_Platform->GetCompiler();
-    clc_context* Context = nullptr;
-    auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
-    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    std::vector<const clc_object*> objects;
-    objects.reserve(Args.LinkPrograms.size());
+    auto pCompiler = g_Platform->GetCompiler();
 
-    clc_linker_args link_args = {};
+    Compiler::LinkerArgs link_args = {};
+    link_args.objs.reserve(Args.LinkPrograms.size());
     link_args.create_library = Args.Common.CreateLibrary;
 
     for (auto& Device : m_AssociatedDevices)
     {
-        if (!Context)
-        {
-            Context = g_Platform->GetCompilerContext(Device->GetShaderCache());
-        }
+        pCompiler->Initialize(Device->GetShaderCache());
 
-        objects.clear();
+        link_args.objs.clear();
         for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
         {
             std::lock_guard Lock(Args.LinkPrograms[i]->m_Lock);
             auto& BuildData = Args.LinkPrograms[i]->m_BuildData[Device.Get()];
             if (BuildData)
-                objects.push_back(BuildData->m_OwnedBinary.get());
+                link_args.objs.push_back(BuildData->m_OwnedBinary.get());
         }
 
         {
@@ -1260,12 +1142,8 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
             auto& BuildData = m_BuildData[Device.Get()];
             if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
             {
-                Loggers loggers(*this, *BuildData);
-                clc_logger loggers_impl = loggers;
-
-                link_args.in_objs = objects.data();
-                link_args.num_in_objs = (unsigned)objects.size();
-                unique_spirv linkedObject(link(Context, &link_args, &loggers_impl), free);
+                Logger loggers(m_Lock, BuildData->m_BuildLog);
+                unique_spirv linkedObject = pCompiler->Link(link_args, loggers);
 
                 if (linkedObject)
                 {
@@ -1303,19 +1181,17 @@ void Program::PerDeviceData::CreateKernels(Program& program)
     if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         return;
 
-    auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext(m_Device->GetShaderCache());
-    auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
-    auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
+    auto pCompiler = g_Platform->GetCompiler();
+    pCompiler->Initialize(m_Device->GetShaderCache());
 
-    for (auto kernelMeta = m_OwnedBinary->kernels; kernelMeta != m_OwnedBinary->kernels + m_OwnedBinary->num_kernels; ++kernelMeta)
+    auto& kernels = m_OwnedBinary->GetKernelInfo();
+    Logger loggers(program.m_Lock, m_BuildLog);
+    for (auto& kernelMeta : kernels)
     {
-        auto name = kernelMeta->name;
-        auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
-        Loggers loggers(program, *this);
-        clc_logger loggers_impl = loggers;
-        kernel.m_GenericDxil.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, &loggers_impl));
+        auto name = kernelMeta.name;
+        auto& kernel = m_Kernels.emplace(name, unique_dxil{}).first->second;
+        kernel.m_GenericDxil = pCompiler->GetKernel(name, *m_OwnedBinary, nullptr /*configuration*/, &loggers);
         if (kernel.m_GenericDxil)
-            SignBlob(kernel.m_GenericDxil->binary.data, kernel.m_GenericDxil->binary.size);
+            kernel.m_GenericDxil->Sign();
     }
 }

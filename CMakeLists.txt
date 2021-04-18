@@ -9,9 +9,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-file(GLOB SRC CONFIGURE_DEPENDS src/*.cpp src/*.def)
-file(GLOB INC include/*.h include/*.hpp)
-file(GLOB EXTERNAL_INC external/*.h external/*.hpp)
+file(GLOB_RECURSE SRC CONFIGURE_DEPENDS src/*.cpp src/*.def)
+file(GLOB_RECURSE INC include/*.h include/*.hpp)
+file(GLOB_RECURSE EXTERNAL_INC external/*.h external/*.hpp)
 
 FetchContent_Declare(
     d3d12translationlayer

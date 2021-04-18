@@ -4,7 +4,7 @@
 
 #include "platform.hpp"
 #include "cache.hpp"
-#include "clc_compiler.h"
+#include "compiler.hpp"
 #include <numeric>
 
 #pragma warning(disable: 4100)
@@ -21,32 +21,8 @@ ShaderCache::ShaderCache(ID3D12Device* d)
     Desc.Identifier = { 0x17cb474e, 0x4c55, 0x4dbc, { 0xbc, 0x2e, 0xd5, 0x13, 0x21, 0x15, 0xbd, 0xa3 } };
     Desc.Mode = D3D12_SHADER_CACHE_MODE_DISK;
 
-    auto& Compiler = g_Platform->GetCompiler();
-    auto pfnGetVersion = Compiler.proc_address<decltype(&clc_compiler_get_version)>("clc_compiler_get_version");
-    if (pfnGetVersion)
-    {
-        Desc.Version = pfnGetVersion();
-    }
-#if _WIN32
-    else
-    {
-        WCHAR FileName[MAX_PATH];
-        DWORD FileNameLength = GetModuleFileNameW(Compiler.get(), FileName, ARRAYSIZE(FileName));
-
-        if (FileNameLength != 0 && FileNameLength != ARRAYSIZE(FileName))
-        {
-            HANDLE hFile = CreateFileW(FileName, GENERIC_READ, FILE_SHARE_READ,
-                                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-            if (hFile != INVALID_HANDLE_VALUE)
-            {
-                FILETIME Time = {};
-                GetFileTime(hFile, nullptr, nullptr, &Time);
-                CloseHandle(hFile);
-                Desc.Version = reinterpret_cast<UINT64&>(Time);
-            }
-        }
-    }
-#endif
+    auto pCompiler = g_Platform->GetCompiler();
+    Desc.Version = pCompiler->GetVersionForCache();
 
     (void)device9->CreateShaderCacheSession(&Desc, IID_PPV_ARGS(&m_pSession));
 #endif

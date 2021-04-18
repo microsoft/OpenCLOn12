@@ -3,15 +3,12 @@
 #pragma once
 
 #include "context.hpp"
+#include "compiler.hpp"
 #include <variant>
 #undef GetBinaryType
 
-struct clc_object;
-struct clc_dxil_object;
-
-using unique_spirv = std::unique_ptr<clc_object, void(*)(clc_object*)>;
-using unique_dxil = std::unique_ptr<clc_dxil_object, void(*)(clc_dxil_object*)>;
-using unique_app_binary = std::unique_ptr<byte[]>;
+using unique_spirv = std::unique_ptr<ProgramBinary>;
+using unique_dxil = std::unique_ptr<CompiledDxil>;
 
 class Kernel;
 class Program : public CLChildBase<Program, Context, cl_program>
@@ -31,7 +28,7 @@ public:
 
     void StoreBinary(Device* Device, unique_spirv OwnedBinary, cl_program_binary_type Type);
 
-    const clc_object* GetSpirV(Device* device) const;
+    const ProgramBinary* GetSpirV(Device* device) const;
 
     friend cl_int CL_API_CALL clGetProgramInfo(cl_program, cl_program_info, size_t, void*, size_t*);
     friend cl_int CL_API_CALL clGetProgramBuildInfo(cl_program, cl_device_id, cl_program_build_info, size_t, void*, size_t*);
@@ -40,7 +37,6 @@ public:
 
     void KernelCreated();
     void KernelFreed();
-
 
     struct SpecializationKey
     {
@@ -69,9 +65,9 @@ public:
                 unsigned Padding : 27;
             } SamplerArgData;
         } Args[1];
-        static std::unique_ptr<SpecializationKey> Allocate(struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
+        static std::unique_ptr<SpecializationKey> Allocate(CompiledDxil::Configuration const& conf);
     private:
-        SpecializationKey(struct clc_runtime_kernel_conf const& conf, struct clc_kernel_info const& info);
+        SpecializationKey(CompiledDxil::Configuration const& conf);
     };
     struct SpecializationKeyHash
     {
@@ -122,7 +118,7 @@ private:
         Device* m_Device;
         cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
         std::string m_BuildLog;
-        unique_spirv m_OwnedBinary{ nullptr, nullptr };
+        unique_spirv m_OwnedBinary;
         cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
         std::string m_LastBuildOptions;
         std::map<std::string, KernelData> m_Kernels;
