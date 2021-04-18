@@ -219,6 +219,7 @@ public:
     };
 
     static std::unique_ptr<Compiler> GetV1();
+    static std::unique_ptr<Compiler> GetV2();
 
     virtual ~Compiler() = default;
 

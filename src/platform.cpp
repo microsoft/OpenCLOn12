@@ -245,6 +245,10 @@ Compiler *Platform::GetCompiler()
     std::lock_guard lock(m_ModuleLock);
     if (!m_Compiler)
     {
+        m_Compiler = Compiler::GetV2();
+    }
+    if (!m_Compiler)
+    {
         m_Compiler = Compiler::GetV1();
     }
     return m_Compiler.get();
