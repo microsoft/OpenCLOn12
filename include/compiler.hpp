@@ -52,6 +52,7 @@ public:
     };
 
     virtual ~ProgramBinary() = default;
+    virtual bool Parse(Logger const *logger) = 0;
     virtual size_t GetBinarySize() const = 0;
     virtual const void* GetBinary() const = 0;
 

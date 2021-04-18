@@ -81,6 +81,7 @@ public:
 
     // Inherited via ProgramBinary
     virtual ~ProgramBinaryV2() = default;
+    virtual bool Parse(Logger const *logger) final;
     virtual size_t GetBinarySize() const final;
     virtual const void *GetBinary() const final;
 };
@@ -242,7 +243,14 @@ std::unique_ptr<ProgramBinary> CompilerV2::Link(LinkerArgs const& args, Logger c
     if (!LinkImpl(&args_impl, &logger_impl, &linked))
         return nullptr;
 
-    return std::make_unique<ProgramBinaryV2>(std::move(linked));
+    auto ret = std::make_unique<ProgramBinaryV2>(std::move(linked));
+    if (!ret)
+        return nullptr;
+
+    if (!ret->Parse(&logger))
+        return nullptr;
+
+    return ret;
 }
 
 std::unique_ptr<ProgramBinary> CompilerV2::Load(const void *data, size_t size) const
@@ -330,7 +338,20 @@ ProgramBinaryV2::ProgramBinaryV2(unique_obj obj)
     : m_Object(std::move(obj))
     , m_Parsed({}, CompilerV2::Instance()->FreeParsedSpirv)
 {
-    CompilerV2::Instance()->ParseSpirv(&m_Object, nullptr, &m_Parsed);
+}
+
+bool ProgramBinaryV2::Parse(Logger const *logger)
+{
+    if (m_Parsed.num_kernels || m_Parsed.num_spec_constants)
+        return true;
+
+    clc_logger logger_impl;
+    if (logger)
+        logger_impl = ConvertLogger(*logger);
+
+    if (!CompilerV2::Instance()->ParseSpirv(&m_Object, logger ? &logger_impl : nullptr, &m_Parsed))
+        return false;
+
     if (m_Parsed.num_kernels)
     {
         m_KernelInfo.reserve(m_Parsed.num_kernels);
@@ -370,6 +391,8 @@ ProgramBinaryV2::ProgramBinaryV2(unique_obj obj)
             m_KernelInfo.push_back(std::move(info));
         }
     }
+
+    return true;
 }
 
 size_t ProgramBinaryV2::GetBinarySize() const

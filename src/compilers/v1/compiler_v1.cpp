@@ -60,6 +60,7 @@ public:
 
     // Inherited via ProgramBinary
     virtual ~ProgramBinaryV1() = default;
+    virtual bool Parse(Logger const *logger) final;
     virtual size_t GetBinarySize() const final;
     virtual const void *GetBinary() const final;
 };
@@ -214,7 +215,17 @@ std::unique_ptr<ProgramBinary> CompilerV1::Link(LinkerArgs const& args, Logger c
     auto logger_impl = ConvertLogger(logger);
     linked.reset(LinkImpl(GetContext(), &args_impl, &logger_impl));
 
-    return linked ? std::make_unique<ProgramBinaryV1>(std::move(linked)) : nullptr;
+    if (!linked)
+        return nullptr;
+
+    auto ret = std::make_unique<ProgramBinaryV1>(std::move(linked));
+    if (!ret)
+        return nullptr;
+
+    if (!ret->Parse(&logger))
+        return nullptr;
+
+    return ret;
 }
 
 std::unique_ptr<ProgramBinary> CompilerV1::Load(const void *data, size_t size) const
@@ -323,6 +334,13 @@ uint64_t CompilerV1::GetVersionForCache() const
 ProgramBinaryV1::ProgramBinaryV1(unique_ptr obj)
     : m_Object(std::move(obj))
 {
+}
+
+bool ProgramBinaryV1::Parse(Logger const *)
+{
+    if (m_KernelInfo.size())
+        return true;
+
     if (m_Object->num_kernels)
     {
         m_KernelInfo.reserve(m_Object->num_kernels);
@@ -361,7 +379,9 @@ ProgramBinaryV1::ProgramBinaryV1(unique_ptr obj)
 
             m_KernelInfo.push_back(std::move(info));
         }
+        return true;
     }
+    return false;
 }
 
 size_t ProgramBinaryV1::GetBinarySize() const
