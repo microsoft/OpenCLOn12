@@ -32,11 +32,12 @@ bool ValidateQueueProperties(cl_queue_properties const* properties, TReporter&& 
     return true;
 }
 
-extern CL_API_ENTRY cl_command_queue CL_API_CALL
-clCreateCommandQueueWithProperties(cl_context               context_,
+static cl_command_queue
+clCreateCommandQueueWithPropertiesImpl(cl_context               context_,
     cl_device_id             device_,
     const cl_queue_properties *    properties,
-    cl_int *                 errcode_ret) CL_API_SUFFIX__VERSION_2_0
+    cl_int *                 errcode_ret,
+    bool synthesized_properties)
 {
     if (!context_)
     {
@@ -76,11 +77,20 @@ clCreateCommandQueueWithProperties(cl_context               context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return new CommandQueue(device, context, properties);
+        return new CommandQueue(device, context, properties, synthesized_properties);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error &) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+}
+
+extern CL_API_ENTRY cl_command_queue CL_API_CALL
+clCreateCommandQueueWithProperties(cl_context               context,
+    cl_device_id             device,
+    const cl_queue_properties *    properties,
+    cl_int *                 errcode_ret) CL_API_SUFFIX__VERSION_2_0
+{
+    return clCreateCommandQueueWithPropertiesImpl(context, device, properties, errcode_ret, false);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -121,6 +131,7 @@ clGetCommandQueueInfo(cl_command_queue      command_queue,
     {
         return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
     };
+    auto ReportError = queue.GetContext().GetErrorReporter();
 
     switch (param_name)
     {
@@ -129,15 +140,17 @@ clGetCommandQueueInfo(cl_command_queue      command_queue,
     case CL_QUEUE_REFERENCE_COUNT: return RetValue((cl_uint)queue.GetRefCount());
     case CL_QUEUE_PROPERTIES: 
         return RetValue(*FindProperty<cl_queue_properties>(queue.m_Properties.data(), CL_QUEUE_PROPERTIES));
-        /* TODO: OpenCL 3.0
     case CL_QUEUE_PROPERTIES_ARRAY:
+        if (queue.m_bPropertiesSynthesized)
+            return RetValue(nullptr);
         return CopyOutParameterImpl(queue.m_Properties.data(),
             queue.m_Properties.size() * sizeof(queue.m_Properties[0]),
             param_value_size, param_value, param_value_size_ret);
-        */
+    case CL_QUEUE_SIZE: return ReportError("Queue is not a device queue", CL_INVALID_COMMAND_QUEUE);
+    case CL_QUEUE_DEVICE_DEFAULT: return RetValue((cl_command_queue)nullptr);
     }
 
-    return queue.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
+    return ReportError("Unknown param_name", CL_INVALID_VALUE);
 }
 
 /*
@@ -173,7 +186,7 @@ clCreateCommandQueue(cl_context                     context,
     cl_int *                       errcode_ret) CL_EXT_SUFFIX__VERSION_1_2_DEPRECATED
 {
     cl_queue_properties PropArray[3] = { CL_QUEUE_PROPERTIES, properties, 0 };
-    return clCreateCommandQueueWithProperties(context, device, PropArray, errcode_ret);
+    return clCreateCommandQueueWithPropertiesImpl(context, device, PropArray, errcode_ret, true);
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -219,12 +232,13 @@ static bool IsProfile(const cl_queue_properties* properties)
     auto prop = FindProperty<cl_queue_properties>(properties, CL_QUEUE_PROPERTIES);
     return prop != nullptr && ((*prop) & CL_QUEUE_PROFILING_ENABLE) != 0;
 }
-CommandQueue::CommandQueue(Device& device, Context& context, const cl_queue_properties* properties)
+CommandQueue::CommandQueue(Device& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties)
     : CLChildBase(device)
     , m_Context(context)
     , m_Properties(PropertiesToVector(properties))
     , m_bOutOfOrder(IsOutOfOrder(properties))
     , m_bProfile(IsProfile(properties))
+    , m_bPropertiesSynthesized(synthesizedProperties)
 {
 }
 

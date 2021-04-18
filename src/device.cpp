@@ -3,6 +3,8 @@
 #include "device.hpp"
 #include "task.hpp"
 
+#include <wil/resource.h>
+
 extern CL_API_ENTRY cl_int CL_API_CALL
 clGetDeviceIDs(cl_platform_id   platform,
     cl_device_type   device_type,
@@ -115,10 +117,11 @@ clGetDeviceInfo(cl_device_id    device,
 
         case CL_DEVICE_IMAGE_SUPPORT: return ImageRetValue((cl_bool)CL_TRUE, (cl_bool)CL_FALSE);
         case CL_DEVICE_MAX_READ_IMAGE_ARGS: /*SRVs*/ return ImageRetValueOrZero((cl_uint)128);
-        case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: // Fallthrough
-        case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*UAVs*/ return ImageRetValueOrZero((cl_uint)64);
+        case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: /*UAVs*/return ImageRetValueOrZero((cl_uint)64);
+        case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*Typed UAVs*/ return ImageRetValueOrZero((cl_uint)(pDevice->SupportsTypedUAVLoad() ? 64 : 0));
 
         case CL_DEVICE_IL_VERSION: return RetValue("");
+        case CL_DEVICE_ILS_WITH_VERSION: return RetValue(nullptr);
 
         case CL_DEVICE_IMAGE2D_MAX_WIDTH: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
         case CL_DEVICE_IMAGE2D_MAX_HEIGHT: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
@@ -128,8 +131,8 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_IMAGE_MAX_BUFFER_SIZE: return ImageRetValueOrZero((size_t)(2 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP));
         case CL_DEVICE_IMAGE_MAX_ARRAY_SIZE: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION);
         case CL_DEVICE_MAX_SAMPLERS: return ImageRetValueOrZero((cl_uint)D3D12_COMMONSHADER_SAMPLER_SLOT_COUNT);
-        case CL_DEVICE_IMAGE_PITCH_ALIGNMENT: return ImageRetValueOrZero((size_t)D3D12_TEXTURE_DATA_PITCH_ALIGNMENT);
-        case CL_DEVICE_IMAGE_BASE_ADDRESS_ALIGNMENT: return RetValue((cl_uint)D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT);
+        case CL_DEVICE_IMAGE_PITCH_ALIGNMENT: return ImageRetValueOrZero((cl_uint)0);
+        case CL_DEVICE_IMAGE_BASE_ADDRESS_ALIGNMENT: return RetValue((cl_uint)0);
 
         case CL_DEVICE_MAX_PARAMETER_SIZE: return RetValue((size_t)1024);
         case CL_DEVICE_MEM_BASE_ADDR_ALIGN: return RetValue((cl_uint)D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT * 8);
@@ -152,7 +155,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_MAX_CONSTANT_BUFFER_SIZE: return RetValue((cl_ulong)(D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16));
         case CL_DEVICE_MAX_CONSTANT_ARGS: return RetValue((cl_uint)15);
 
-        case CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE: return RetValue((size_t)65536);
+        case CL_DEVICE_MAX_GLOBAL_VARIABLE_SIZE: return RetValue((size_t)0);
         case CL_DEVICE_GLOBAL_VARIABLE_PREFERRED_TOTAL_SIZE: return RetValue((size_t)0);
 
         case CL_DEVICE_LOCAL_MEM_TYPE: return RetValue((cl_device_local_mem_type)CL_LOCAL);
@@ -169,21 +172,34 @@ clGetDeviceInfo(cl_device_id    device,
 
         case CL_DEVICE_QUEUE_ON_HOST_PROPERTIES: return RetValue(
             (cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE));
-        case CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES: return RetValue(
-            (cl_command_queue_properties)(CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE | CL_QUEUE_PROFILING_ENABLE));
-        case CL_DEVICE_QUEUE_ON_DEVICE_PREFERRED_SIZE: return RetValue((cl_uint)(16 * 1024));
-        case CL_DEVICE_QUEUE_ON_DEVICE_MAX_SIZE: return RetValue((cl_uint)(256 * 1024));
-        case CL_DEVICE_MAX_ON_DEVICE_QUEUES: return RetValue((cl_uint)1);
-        case CL_DEVICE_MAX_ON_DEVICE_EVENTS: return RetValue(UINT_MAX);
+        case CL_DEVICE_QUEUE_ON_DEVICE_PROPERTIES: return RetValue((cl_command_queue_properties)0);
+        case CL_DEVICE_QUEUE_ON_DEVICE_PREFERRED_SIZE: return RetValue((cl_uint)0);
+        case CL_DEVICE_QUEUE_ON_DEVICE_MAX_SIZE: return RetValue((cl_uint)0);
+        case CL_DEVICE_MAX_ON_DEVICE_QUEUES: return RetValue((cl_uint)0);
+        case CL_DEVICE_MAX_ON_DEVICE_EVENTS: return RetValue((cl_uint)0);
 
         case CL_DEVICE_BUILT_IN_KERNELS: return RetValue("");
+        case CL_DEVICE_BUILT_IN_KERNELS_WITH_VERSION: return RetValue(nullptr);
         case CL_DEVICE_PLATFORM: return RetValue(static_cast<cl_platform_id>(&pDevice->m_Parent.get()));
         case CL_DEVICE_NAME: return RetValue(pDevice->GetDeviceName().c_str());
         case CL_DEVICE_VENDOR: return RetValue(pDevice->m_Parent->Vendor);
-        case CL_DRIVER_VERSION: return RetValue("1.0.0");
+        case CL_DRIVER_VERSION: return RetValue("1.1.0");
         case CL_DEVICE_PROFILE: return RetValue(pDevice->m_Parent->Profile);
         case CL_DEVICE_VERSION: return RetValue(pDevice->m_Parent->Version);
         case CL_DEVICE_OPENCL_C_VERSION: return RetValue("OpenCL C 1.2 ");
+        case CL_DEVICE_OPENCL_C_ALL_VERSIONS:
+        {
+            constexpr cl_name_version versions[] =
+            {
+                { CL_MAKE_VERSION(1, 0, 0), "OpenCL C" },
+                { CL_MAKE_VERSION(1, 1, 0), "OpenCL C" },
+                { CL_MAKE_VERSION(1, 2, 0), "OpenCL C" },
+#ifdef CLON12_SUPPORT_3_0
+                { CL_MAKE_VERSION(3, 0, 0), "OpenCL C" },
+#endif
+            };
+            return RetValue(versions);
+        }
 
         case CL_DEVICE_EXTENSIONS: return RetValue("cl_khr_global_int32_base_atomics "
                                                    "cl_khr_global_int32_extended_atomics "
@@ -212,6 +228,27 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_SUB_GROUP_INDEPENDENT_FORWARD_PROGRESS: return RetValue((cl_bool)CL_FALSE);
 
         case CL_DEVICE_HOST_UNIFIED_MEMORY: return RetValue((cl_bool)pDevice->IsUMA());
+
+        case CL_DEVICE_MAX_PIPE_ARGS: return RetValue((cl_uint)0);
+        case CL_DEVICE_PIPE_MAX_ACTIVE_RESERVATIONS: return RetValue((cl_uint)0);
+        case CL_DEVICE_PIPE_MAX_PACKET_SIZE: return RetValue((cl_uint)0);
+
+        case CL_DEVICE_ATOMIC_MEMORY_CAPABILITIES: return RetValue((cl_device_atomic_capabilities)(
+            CL_DEVICE_ATOMIC_ORDER_RELAXED | CL_DEVICE_ATOMIC_ORDER_ACQ_REL | CL_DEVICE_ATOMIC_ORDER_SEQ_CST |
+            CL_DEVICE_ATOMIC_SCOPE_WORK_ITEM | CL_DEVICE_ATOMIC_SCOPE_WORK_GROUP | CL_DEVICE_ATOMIC_SCOPE_DEVICE));
+        case CL_DEVICE_ATOMIC_FENCE_CAPABILITIES: return RetValue((cl_device_atomic_capabilities)(
+            CL_DEVICE_ATOMIC_ORDER_RELAXED | CL_DEVICE_ATOMIC_ORDER_ACQ_REL | CL_DEVICE_ATOMIC_ORDER_SEQ_CST |
+            CL_DEVICE_ATOMIC_SCOPE_WORK_ITEM | CL_DEVICE_ATOMIC_SCOPE_WORK_GROUP | CL_DEVICE_ATOMIC_SCOPE_DEVICE));
+
+        case CL_DEVICE_NON_UNIFORM_WORK_GROUP_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+        case CL_DEVICE_WORK_GROUP_COLLECTIVE_FUNCTIONS_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+        case CL_DEVICE_GENERIC_ADDRESS_SPACE_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+        case CL_DEVICE_DEVICE_ENQUEUE_CAPABILITIES: return RetValue((cl_device_device_enqueue_capabilities)0);
+        case CL_DEVICE_PIPE_SUPPORT: return RetValue((cl_bool)CL_FALSE);
+
+        case CL_DEVICE_PREFERRED_WORK_GROUP_SIZE_MULTIPLE: return RetValue((size_t)64);
+
+        case CL_DEVICE_LATEST_CONFORMANCE_VERSION_PASSED: return RetValue("");
         }
 
         return CL_INVALID_VALUE;
@@ -337,6 +374,15 @@ bool Device::SupportsInt16()
         CacheCaps(Lock);
     }
     return m_D3D12Options4.Native16BitShaderOpsSupported;
+}
+
+bool Device::SupportsTypedUAVLoad()
+{
+    {
+        std::lock_guard Lock(m_InitLock);
+        CacheCaps(Lock);
+    }
+    return m_D3D12Options.TypedUAVLoadAdditionalFormats;
 }
 
 ShaderCache& Device::GetShaderCache()
@@ -501,5 +547,52 @@ clReleaseDevice(cl_device_id device) CL_API_SUFFIX__VERSION_1_2
 {
     if (!device)
         return CL_INVALID_DEVICE;
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetDeviceAndHostTimer(cl_device_id device_,
+    cl_ulong*       device_timestamp,
+    cl_ulong*       host_timestamp) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!device_)
+    {
+        return CL_INVALID_DEVICE;
+    }
+    if (!device_timestamp || !host_timestamp)
+    {
+        return CL_INVALID_VALUE;
+    }
+
+    Device& device = *static_cast<Device*>(device_);
+    try
+    {
+        // Should I just return 0 here if they haven't created a context on this device?
+        device.InitD3D();
+        auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(); });
+
+        auto pQueue = device.ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+        D3D12TranslationLayer::ThrowFailure(pQueue->GetClockCalibration(device_timestamp, host_timestamp));
+        return CL_SUCCESS;
+    }
+    catch (_com_error&) { return CL_OUT_OF_RESOURCES; }
+    catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetHostTimer(cl_device_id device,
+    cl_ulong *   host_timestamp) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!device)
+    {
+        return CL_INVALID_DEVICE;
+    }
+    if (!host_timestamp)
+    {
+        return CL_INVALID_VALUE;
+    }
+    LARGE_INTEGER QPC;
+    QueryPerformanceCounter(&QPC);
+    *host_timestamp = QPC.QuadPart;
     return CL_SUCCESS;
 }

@@ -28,10 +28,6 @@ private:
     std::vector<::ref_ptr<Sampler>> m_ConstSamplers;
     std::vector<::ref_ptr<Resource>> m_InlineConsts;
 
-    // TODO: Consider moving this to the program so it can be shared
-    // across multiple kernel instances for the same kernel name,
-    // or clCloneKernel instances when we get there.
-
     friend class ExecuteKernel;
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelInfo(cl_kernel, cl_kernel_info, size_t, void*, size_t*);
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelArgInfo(cl_kernel, cl_uint, cl_kernel_arg_info, size_t, void*, size_t*);
@@ -39,6 +35,7 @@ private:
 
 public:
     Kernel(Program& Parent, std::string const& name, clc_dxil_object const* pDxil);
+    Kernel(Kernel const&);
     ~Kernel();
 
     cl_int SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value);

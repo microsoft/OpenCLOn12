@@ -144,3 +144,8 @@ clSetDefaultDeviceCommandQueue
 ; OpenCL 2.2 API
 clSetProgramReleaseCallback
 clSetProgramSpecializationConstant
+
+; OpenCL 3.0 API
+clCreateBufferWithProperties
+clCreateImageWithProperties
+clSetContextDestructorCallback

@@ -6,6 +6,16 @@
 #define CL_USE_DEPRECATED_OPENCL_1_0_APIS
 #define CL_USE_DEPRECATED_OPENCL_1_1_APIS
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS
+#define CL_USE_DEPRECATED_OPENCL_2_0_APIS
+#define CL_USE_DEPRECATED_OPENCL_2_1_APIS
+#define CL_USE_DEPRECATED_OPENCL_2_2_APIS
+
+#ifdef CLON12_SUPPORT_3_0
+#define CL_TARGET_OPENCL_VERSION 300
+#else
+// Choosing 2.2 since we have stubs for everything currently
+#define CL_TARGET_OPENCL_VERSION 220
+#endif
 
 #include <D3D12TranslationLayerDependencyIncludes.h>
 #include <D3D12TranslationLayerIncludes.h>
@@ -95,10 +105,20 @@ class Platform : public CLBase<Platform, cl_platform_id>
 {
 public:
     static constexpr const char* Profile = "FULL_PROFILE";
+#ifdef CLON12_SUPPORT_3_0
+    static constexpr const char* Version = "OpenCL 3.0 D3D12 Implementation";
+#else
     static constexpr const char* Version = "OpenCL 1.2 D3D12 Implementation";
+#endif
     static constexpr const char* Name = "OpenCLOn12";
     static constexpr const char* Vendor = "Microsoft";
-    static constexpr const char* Extensions = "cl_khr_icd";
+    static constexpr const char* Extensions = "cl_khr_icd "
+                                              "cl_khr_extended_versioning "
+                                              "cl_khr_global_int32_base_atomics "
+                                              "cl_khr_global_int32_extended_atomics "
+                                              "cl_khr_local_int32_base_atomics "
+                                              "cl_khr_local_int32_extended_atomics "
+                                              "cl_khr_byte_addressable_store ";
     static constexpr const char* ICDSuffix = "oclon12";
 
     Platform(cl_icd_dispatch* dispatch);
@@ -331,6 +351,10 @@ inline cl_int CopyOutParameter(const T(&value)[size], size_t param_value_size, v
 inline cl_int CopyOutParameter(const char* value, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
 {
     return CopyOutParameterImpl(value, strlen(value) + 1, param_value_size, param_value, param_value_size_ret);
+}
+inline cl_int CopyOutParameter(nullptr_t, size_t param_value_size, void* param_value, size_t *param_value_size_ret)
+{
+    return CopyOutParameterImpl(nullptr, 0, param_value_size, param_value, param_value_size_ret);
 }
 
 inline bool IsZeroOrPow2(cl_bitfield bits)

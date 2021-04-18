@@ -25,6 +25,7 @@ public:
     bool IsMCDM() const noexcept;
     bool IsUMA();
     bool SupportsInt16();
+    bool SupportsTypedUAVLoad();
     ShaderCache& GetShaderCache();
 
     std::string GetDeviceName() const;
