@@ -114,6 +114,8 @@ CompilerV1::CompilerV1(XPlatHelpers::unique_module compiler)
     GET_FUNC(GetCompilerVersion, clc_compiler_get_version);
 #undef GET_FUNC
 
+    // Older versions of the v1 compiler interface didn't have support for "context" serialization
+    // and didn't have version info exported. These aren't strictly required to work.
     if (!CreateContext ||
         !FreeContext ||
         !CompileImpl ||

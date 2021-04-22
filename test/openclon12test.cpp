@@ -246,6 +246,15 @@ TEST(OpenCLOn12, RecursiveFlush)
 
 TEST(OpenCLOn12, SPIRV)
 {
+    // This is the pre-assembled SPIR-V from the compiler DLL's "spec_constant" test:
+    // https://gitlab.freedesktop.org/mesa/mesa/-/blob/f8517d9f43cc191fc7465db2850c2b813b94f023/src/microsoft/clc/clc_compiler_test.cpp#L2226.
+    // The original source was the "built_ins_global_id_rmw" test, with the hardcoded 1 manually modified in the asm to make it a spec constant:
+    // https://gitlab.freedesktop.org/mesa/mesa/-/blob/f8517d9f43cc191fc7465db2850c2b813b94f023/src/microsoft/clc/clc_compiler_test.cpp#L394
+    /* __kernel void main_test(__global uint *output)
+       {
+           uint id = get_global_id(0);
+           output[id] = output[id] * (id + {spec constant, id 1, default value 1});
+       } */
     static const unsigned char spirv[] = {
 0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x07, 0x00, 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
  0x00, 0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x11, 0x00, 0x02, 0x00, 0x06, 0x00, 0x00, 0x00, 0x11, 0x00, 0x02, 0x00, 0x0b, 0x00,

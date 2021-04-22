@@ -14,6 +14,7 @@ void Logger::Log(const char *msg) const
 static ProgramBinary::Kernel const& FindKernelInfo(std::vector<ProgramBinary::Kernel> const& kernels, const char *name)
 {
     auto iter = std::find_if(kernels.begin(), kernels.end(), [name](ProgramBinary::Kernel const& k) { return strcmp(k.name, name) == 0; });
+    assert(iter != kernels.end()); // We can't get DXIL if there's no data for a kernel with this name
     return *iter;
 }
 

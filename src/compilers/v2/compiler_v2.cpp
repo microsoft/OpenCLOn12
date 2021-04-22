@@ -138,6 +138,9 @@ CompilerV2::CompilerV2(XPlatHelpers::unique_module compiler)
 #undef GET_FUNC
 
     if (!LoadLibclc ||
+        !SerializeLibclc ||
+        !DeserializeLibclc ||
+        !FreeSerializedLibclc ||
         !FreeLibclc ||
         !CompileImpl ||
         !LinkImpl ||
