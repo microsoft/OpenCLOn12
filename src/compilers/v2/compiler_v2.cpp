@@ -49,6 +49,7 @@ public:
     decltype(&clc_free_spirv) FreeSpirv = nullptr;
     decltype(&clc_parse_spirv) ParseSpirv = nullptr;
     decltype(&clc_free_parsed_spirv) FreeParsedSpirv = nullptr;
+    decltype(&clc_specialize_spirv) SpecializeImpl = nullptr;
     decltype(&clc_spirv_to_dxil) GetKernelImpl = nullptr;
     decltype(&clc_free_dxil_object) FreeDxil = nullptr;
     decltype(&clc_compiler_get_version) GetCompilerVersion = nullptr;
@@ -61,6 +62,7 @@ public:
     virtual std::unique_ptr<ProgramBinary> Compile(CompileArgs const& args, Logger const& logger) const final;
     virtual std::unique_ptr<ProgramBinary> Link(LinkerArgs const& args, Logger const& logger) const final;
     virtual std::unique_ptr<ProgramBinary> Load(const void *data, size_t size) const final;
+    virtual std::unique_ptr<ProgramBinary> Specialize(ProgramBinary const& obj, ProgramBinary::SpecConstantValues const& values, Logger const& logger) const final;
     virtual std::unique_ptr<CompiledDxil> GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *, Logger const *logger) const final;
     virtual std::byte * CopyWorkProperties(std::byte *WorkPropertiesBuffer, WorkProperties const& props) const final;
     virtual size_t GetWorkPropertiesChunkSize() const final;
@@ -131,6 +133,7 @@ CompilerV2::CompilerV2(XPlatHelpers::unique_module compiler)
     GET_FUNC(FreeSpirv, clc_free_spirv);
     GET_FUNC(ParseSpirv, clc_parse_spirv);
     GET_FUNC(FreeParsedSpirv, clc_free_parsed_spirv);
+    GET_FUNC(SpecializeImpl, clc_specialize_spirv);
     GET_FUNC(GetKernelImpl, clc_spirv_to_dxil);
     GET_FUNC(FreeDxil, clc_free_dxil_object);
     GET_FUNC(GetCompilerVersion, clc_compiler_get_version);
@@ -149,6 +152,7 @@ CompilerV2::CompilerV2(XPlatHelpers::unique_module compiler)
         !FreeSpirv ||
         !ParseSpirv ||
         !FreeParsedSpirv ||
+        !SpecializeImpl ||
         !GetKernelImpl ||
         !FreeDxil ||
         !GetCompilerVersion)
@@ -328,6 +332,41 @@ static dxil_validator_version GetValidatorVersion(const XPlatHelpers::unique_mod
     return NO_DXIL_VALIDATION;
 }
 
+std::unique_ptr<ProgramBinary> CompilerV2::Specialize(ProgramBinary const& obj, ProgramBinary::SpecConstantValues const& values, Logger const& logger) const
+{
+    std::vector<clc_spirv_specialization> specializations;
+    specializations.reserve(values.size());
+    for (auto& pair : values)
+    {
+        clc_spirv_specialization value;
+        value.id = pair.first;
+        value.defined_on_module = true;
+        static_assert(sizeof(value.value) == sizeof(pair.second.value));
+        memcpy(&value.value, pair.second.value, sizeof(value.value));
+        
+        specializations.push_back(value);
+    }
+
+    struct clc_spirv_specialization_consts args;
+    args.specializations = specializations.data();
+    args.num_specializations = (unsigned)specializations.size();
+
+    ProgramBinaryV2::unique_obj result({}, FreeSpirv);
+    ProgramBinaryV2 const& objv2 = static_cast<ProgramBinaryV2 const&>(obj);
+    if (!SpecializeImpl(&objv2.GetRaw(), &objv2.GetParsedInfo(), &args, &result))
+        return nullptr;
+
+    auto ret = std::make_unique<ProgramBinaryV2>(std::move(result));
+    if (!ret)
+        return nullptr;
+
+    // Re-parse because spec constants can be in places like array sizes, or workgroup sizes/hints
+    if (!ret->Parse(&logger))
+        return nullptr;
+
+    return ret;
+}
+
 std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *conf, Logger const *logger) const
 {
     clc_runtime_kernel_conf conf_impl;
@@ -451,6 +490,42 @@ bool ProgramBinaryV2::Parse(Logger const *logger)
             }
 
             m_KernelInfo.push_back(std::move(info));
+        }
+    }
+
+    if (m_Parsed.num_spec_constants)
+    {
+        for (unsigned i = 0; i < m_Parsed.num_spec_constants; ++i)
+        {
+            auto& spec_constant = m_Parsed.spec_constants[i];
+            unsigned const_size = 4;
+            switch (spec_constant.type)
+            {
+            case CLC_SPEC_CONSTANT_BOOL:
+            case CLC_SPEC_CONSTANT_INT8:
+            case CLC_SPEC_CONSTANT_UINT8:
+                const_size = 1;
+                break;
+            case CLC_SPEC_CONSTANT_INT16:
+            case CLC_SPEC_CONSTANT_UINT16:
+                const_size = 2;
+                break;
+            case CLC_SPEC_CONSTANT_FLOAT:
+            case CLC_SPEC_CONSTANT_INT32:
+            case CLC_SPEC_CONSTANT_UINT32:
+                const_size = 4;
+                break;
+            case CLC_SPEC_CONSTANT_DOUBLE:
+            case CLC_SPEC_CONSTANT_INT64:
+            case CLC_SPEC_CONSTANT_UINT64:
+                const_size = 8;
+                break;
+            default:
+                assert(!"Unexpected spec constant type");
+            }
+            SpecConstantInfo info = { const_size };
+            [[maybe_unused]] auto emplaceRet = m_SpecConstants.emplace(spec_constant.id, info);
+            assert(emplaceRet.second);
         }
     }
 

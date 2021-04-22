@@ -7,6 +7,7 @@
 #include <mutex>
 #include <variant>
 #include <cstddef>
+#include <unordered_map>
 
 #include <directx/d3d12.h>
 
@@ -53,15 +54,28 @@ public:
         VecHintType vec_hint_type;
     };
 
+    struct SpecConstantInfo
+    {
+        unsigned value_size;
+    };
+    struct SpecConstantValue
+    {
+        static constexpr size_t MaxValueSize = 8;
+        char value[MaxValueSize];
+    };
+    using SpecConstantValues = std::unordered_map<uint32_t, SpecConstantValue>;
+
     virtual ~ProgramBinary() = default;
     virtual bool Parse(Logger const *logger) = 0;
     virtual size_t GetBinarySize() const = 0;
     virtual const void* GetBinary() const = 0;
 
     const std::vector<Kernel> &GetKernelInfo() const;
+    const SpecConstantInfo *GetSpecConstantInfo(uint32_t ID) const;
 
 protected:
     std::vector<Kernel> m_KernelInfo;
+    std::unordered_map<uint32_t, SpecConstantInfo> m_SpecConstants;
 };
 
 // An abstraction over DXIL + metadata
@@ -138,7 +152,6 @@ public:
         {
         }
     };
-
 
     struct Configuration
     {
@@ -249,6 +262,9 @@ public:
 
     // Load a SPIR-V binary from a memory blob
     virtual std::unique_ptr<ProgramBinary> Load(const void *data, size_t size) const = 0;
+
+    // Given a SPIR-V binay, return a new SPIR-V binary that has specialization constant default values replaced with the given ones
+    virtual std::unique_ptr<ProgramBinary> Specialize(ProgramBinary const& obj, ProgramBinary::SpecConstantValues const& values, Logger const& logger) const = 0;
 
     // Convert a kernel from SPIR-V into DXIL with configuration properties
     virtual std::unique_ptr<CompiledDxil> GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const*, Logger const* logger) const = 0;

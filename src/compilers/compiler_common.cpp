@@ -79,3 +79,12 @@ std::vector<ProgramBinary::Kernel> const& ProgramBinary::GetKernelInfo() const
 {
     return m_KernelInfo;
 }
+
+const ProgramBinary::SpecConstantInfo *ProgramBinary::GetSpecConstantInfo(uint32_t ID) const
+{
+    auto iter = m_SpecConstants.find(ID);
+    if (iter == m_SpecConstants.end())
+        return nullptr;
+
+    return &iter->second;
+}
