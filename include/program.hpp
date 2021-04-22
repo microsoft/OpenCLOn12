@@ -7,7 +7,6 @@
 #include <variant>
 #undef GetBinaryType
 
-using unique_spirv = std::unique_ptr<ProgramBinary>;
 using unique_dxil = std::unique_ptr<CompiledDxil>;
 
 class Kernel;
@@ -15,12 +14,12 @@ class Program : public CLChildBase<Program, Context, cl_program>
 {
 public:
     const std::string m_Source;
-    const std::vector<std::byte> m_IL;
+    const std::shared_ptr<ProgramBinary> m_ParsedIL;
 
     Context& GetContext() const { return m_Parent.get(); }
 
     Program(Context& Parent, std::string Source);
-    Program(Context& Parent, std::vector<std::byte> IL);
+    Program(Context& Parent, std::shared_ptr<ProgramBinary> ParsedIL);
     Program(Context& Parent, std::vector<D3DDeviceAndRef> Devices);
     using Callback = void(CL_CALLBACK*)(cl_program, void*);
 
@@ -28,7 +27,7 @@ public:
     cl_int Compile(std::vector<D3DDeviceAndRef> Devices, const char* options, cl_uint num_input_headers, const cl_program *input_headers, const char**header_include_names, Callback pfn_notify, void* user_data);
     cl_int Link(const char* options, cl_uint num_input_programs, const cl_program* input_programs, Callback pfn_notify, void* user_data);
 
-    void StoreBinary(Device* Device, unique_spirv OwnedBinary, cl_program_binary_type Type);
+    void StoreBinary(Device* Device, std::shared_ptr<ProgramBinary> OwnedBinary, cl_program_binary_type Type);
 
     const ProgramBinary* GetSpirV(Device* device) const;
 
@@ -122,7 +121,7 @@ private:
         D3DDevice *m_D3DDevice;
         cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
         std::string m_BuildLog;
-        unique_spirv m_OwnedBinary;
+        std::shared_ptr<ProgramBinary> m_OwnedBinary;
         cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
         std::string m_LastBuildOptions;
         std::map<std::string, KernelData> m_Kernels;
