@@ -15,10 +15,12 @@ class Program : public CLChildBase<Program, Context, cl_program>
 {
 public:
     const std::string m_Source;
+    const std::vector<std::byte> m_IL;
 
     Context& GetContext() const { return m_Parent.get(); }
 
     Program(Context& Parent, std::string Source);
+    Program(Context& Parent, std::vector<std::byte> IL);
     Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices);
     using Callback = void(CL_CALLBACK*)(cl_program, void*);
 

@@ -168,6 +168,47 @@ clCreateProgramWithBinary(cl_context                     context_,
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
 }
 
+extern CL_API_ENTRY cl_program CL_API_CALL
+clCreateProgramWithIL(cl_context    context_,
+    const void*    il,
+    size_t         length,
+    cl_int*        errcode_ret) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context& context = *static_cast<Context*>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+    if (!il || !length)
+    {
+        return ReportError("IL must not be null and length must be nonzero", CL_INVALID_VALUE);
+    }
+
+    if (length < 4)
+    {
+        return ReportError("SPIR-V IL must contain greater than 4 bytes", CL_INVALID_VALUE);
+    }
+    uint32_t magic = *static_cast<const uint32_t*>(il);
+    if (magic != 0x07230203)
+    {
+        return ReportError("IL does not represent valid SPIR-V", CL_INVALID_VALUE);
+    }
+
+    try
+    {
+        const std::byte *ilAsBytes = static_cast<const std::byte *>(il);
+        std::vector<std::byte> ILCopy(ilAsBytes, ilAsBytes + length);
+
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        return new Program(context, std::move(ILCopy));
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+}
+
 extern CL_API_ENTRY cl_int CL_API_CALL
 clRetainProgram(cl_program program) CL_API_SUFFIX__VERSION_1_0
 {
@@ -351,7 +392,8 @@ clGetProgramInfo(cl_program         program_,
                                     program.m_AssociatedDevices.size() * sizeof(program.m_AssociatedDevices[0]),
                                     param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
-    case CL_PROGRAM_IL: return RetValue(nullptr);
+    case CL_PROGRAM_IL: return CopyOutParameterImpl(program.m_IL.data(), program.m_IL.size(),
+                                                    param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_BINARY_SIZES:
     {
         size_t OutSize = sizeof(size_t) * program.m_AssociatedDevices.size();
@@ -514,6 +556,13 @@ Program::Program(Context& Parent, std::string Source)
 {
 }
 
+Program::Program(Context& Parent, std::vector<std::byte> IL)
+    : CLChildBase(Parent)
+    , m_IL(std::move(IL))
+    , m_AssociatedDevices(Parent.GetDevices())
+{
+}
+
 Program::Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices)
     : CLChildBase(Parent)
     , m_AssociatedDevices(std::move(Devices))
@@ -545,7 +594,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             auto &BuildData = m_BuildData[device.Get()];
             if (!BuildData)
             {
-                if (m_Source.empty())
+                if (m_Source.empty() && m_IL.empty())
                 {
                     return ReportError("Build requested for binary program, for device with no binary.", CL_INVALID_BINARY);
                 }
@@ -567,7 +616,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             }
         }
 
-        if (!m_Source.empty())
+        if (!m_Source.empty() || !m_IL.empty())
         {
             // Update build status to indicate build is starting so nobody else can start a build
             auto BuildData = std::make_shared<PerDeviceData>();
@@ -613,9 +662,9 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
 cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
-    if (m_Source.empty())
+    if (m_Source.empty() && m_IL.empty())
     {
-        return ReportError("Program does not contain source.", CL_INVALID_OPERATION);
+        return ReportError("Program does not contain source or IL.", CL_INVALID_OPERATION);
     }
 
     // Parse options
@@ -627,18 +676,22 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
         return ReportError("Invalid options.", CL_INVALID_COMPILER_OPTIONS);
     }
 
-    for (cl_uint i = 0; i < num_input_headers; ++i)
+    // "If program was created using clCreateProgramWithIL, then num_input_headers, input_headers, and header_include_names are ignored."
+    if (m_IL.empty())
     {
-        if (!input_headers[i] || !header_include_names[i] || header_include_names[i][0] == '\0')
+        for (cl_uint i = 0; i < num_input_headers; ++i)
         {
-            return ReportError("Invalid header or header name.", CL_INVALID_VALUE);
+            if (!input_headers[i] || !header_include_names[i] || header_include_names[i][0] == '\0')
+            {
+                return ReportError("Invalid header or header name.", CL_INVALID_VALUE);
+            }
+            Program& header = *static_cast<Program*>(input_headers[i]);
+            if (header.m_Source.empty())
+            {
+                return ReportError("Header provided has no source.", CL_INVALID_VALUE);
+            }
+            Args.Headers[header_include_names[i]] = &header;
         }
-        Program& header = *static_cast<Program*>(input_headers[i]);
-        if (header.m_Source.empty())
-        {
-            return ReportError("Header provided has no source.", CL_INVALID_VALUE);
-        }
-        Args.Headers[header_include_names[i]] = &header;
     }
 
     {
@@ -996,22 +1049,30 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto pCompiler = g_Platform->GetCompiler();
-    if (!m_Source.empty())
+    if (!m_Source.empty() || !m_IL.empty())
     {
         auto& BuildData = Args.Common.BuildData;
         pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
 
         Logger loggers(m_Lock, BuildData->m_BuildLog);
+        unique_spirv compiledObject;
 
-        Compiler::CompileArgs args = {};
-        args.program_source = m_Source.c_str();
-        args.cmdline_args.reserve(Args.Common.Args.size());
-        for (auto& def : Args.Common.Args)
+        if (!m_Source.empty())
         {
-            args.cmdline_args.push_back(def.c_str());
-        }
+            Compiler::CompileArgs args = {};
+            args.program_source = m_Source.c_str();
+            args.cmdline_args.reserve(Args.Common.Args.size());
+            for (auto& def : Args.Common.Args)
+            {
+                args.cmdline_args.push_back(def.c_str());
+            }
 
-        auto compiledObject = pCompiler->Compile(args, loggers);
+            compiledObject = pCompiler->Compile(args, loggers);
+        }
+        else
+        {
+            compiledObject = pCompiler->Load(m_IL.data(), m_IL.size());
+        }
 
         if (compiledObject)
         {
@@ -1079,20 +1140,30 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
     Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-    Compiler::CompileArgs args = {};
-    args.cmdline_args.reserve(Args.Common.Args.size());
-    for (auto& def : Args.Common.Args)
-    {
-        args.cmdline_args.push_back(def.c_str());
-    }
-    args.headers.reserve(Args.Headers.size());
-    for (auto& h : Args.Headers)
-    {
-        args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
-    }
-    args.program_source = m_Source.c_str();
+    unique_spirv object;
 
-    unique_spirv object = pCompiler->Compile(args, loggers);
+    if (!m_Source.empty())
+    {
+        Compiler::CompileArgs args = {};
+        args.cmdline_args.reserve(Args.Common.Args.size());
+        for (auto& def : Args.Common.Args)
+        {
+            args.cmdline_args.push_back(def.c_str());
+        }
+        args.headers.reserve(Args.Headers.size());
+        for (auto& h : Args.Headers)
+        {
+            args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
+        }
+        args.program_source = m_Source.c_str();
+
+        object = pCompiler->Compile(args, loggers);
+    }
+    else
+    {
+        assert(!m_IL.empty());
+        object = pCompiler->Load(m_IL.data(), m_IL.size());
+    }
 
     {
         std::lock_guard Lock(m_Lock);
@@ -1108,6 +1179,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
             BuildData->m_BuildStatus = CL_BUILD_ERROR;
         }
     }
+
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);

@@ -56,6 +56,7 @@ clGetPlatformInfo(cl_platform_id   platform,
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_base_atomics" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_extended_atomics" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_byte_addressable_store" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_il_program" },
         };
         return CopyOutParameter(extensions, param_value_size, param_value, param_value_size_ret);
     }
