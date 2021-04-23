@@ -583,6 +583,43 @@ clGetProgramBuildInfo(cl_program            program_,
     return program.GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
+extern CL_API_ENTRY cl_int CL_API_CALL
+clSetProgramSpecializationConstant(cl_program  program_,
+    cl_uint     spec_id,
+    size_t      spec_size,
+    const void* spec_value) CL_API_SUFFIX__VERSION_2_2
+{
+    if (!program_)
+    {
+        return CL_INVALID_PROGRAM;
+    }
+    Program& program = *static_cast<Program*>(program_);
+    auto ReportError = program.m_Parent->GetErrorReporter();
+
+    if (!program.m_ParsedIL)
+    {
+        return ReportError("Program does not have SPIR-V IL", CL_INVALID_PROGRAM);
+    }
+
+    auto specConstInfo = program.m_ParsedIL->GetSpecConstantInfo(spec_id);
+    if (!specConstInfo)
+    {
+        return ReportError("Invalid specialization constant ID", CL_INVALID_SPEC_ID);
+    }
+
+    if (!spec_value)
+    {
+        return ReportError("Specialization constant value is null", CL_INVALID_VALUE);
+    }
+    if (spec_size != specConstInfo->value_size)
+    {
+        return ReportError("Specialization constant size does not match required size", CL_INVALID_VALUE);
+    }
+
+    program.SetSpecConstant(spec_id, spec_size, spec_value);
+    return CL_SUCCESS;
+}
+
 Program::Program(Context& Parent, std::string Source)
     : CLChildBase(Parent)
     , m_Source(std::move(Source))
@@ -1107,7 +1144,15 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
         }
         else
         {
-            compiledObject = m_ParsedIL;
+            std::lock_guard Lock(m_Lock);
+            if (m_SpecConstants.size())
+            {
+                compiledObject = pCompiler->Specialize(*m_ParsedIL, m_SpecConstants, loggers);
+            }
+            else
+            {
+                compiledObject = m_ParsedIL;
+            }
         }
 
         if (compiledObject)
@@ -1198,7 +1243,15 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     }
     else
     {
-        object = m_ParsedIL;
+        std::lock_guard Lock(m_Lock);
+        if (m_SpecConstants.size())
+        {
+            object = pCompiler->Specialize(*m_ParsedIL, m_SpecConstants, loggers);
+        }
+        else
+        {
+            object = m_ParsedIL;
+        }
     }
 
     {
@@ -1302,4 +1355,13 @@ void Program::PerDeviceData::CreateKernels(Program& program)
         if (kernel.m_GenericDxil)
             kernel.m_GenericDxil->Sign();
     }
+}
+
+void Program::SetSpecConstant(cl_uint ID, size_t size, const void *value)
+{
+    std::lock_guard lock(m_Lock);
+
+    auto& rawValue = m_SpecConstants[ID].value;
+    assert(size <= sizeof(rawValue));
+    memcpy(rawValue, value, size);
 }

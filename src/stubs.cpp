@@ -141,20 +141,6 @@ clSetProgramReleaseCallback(cl_program          program,
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
-clSetProgramSpecializationConstant(cl_program  program,
-    cl_uint     spec_id,
-    size_t      spec_size,
-    const void* spec_value) CL_API_SUFFIX__VERSION_2_2
-{
-    if (!program)
-    {
-        return CL_INVALID_PROGRAM;
-    }
-    Context& context = static_cast<Program*>(program)->m_Parent.get();
-    return context.GetErrorReporter()("This platform does not yet support SPIR-V programs", CL_INVALID_OPERATION);
-}
-
-extern CL_API_ENTRY cl_int CL_API_CALL
 clSetKernelArgSVMPointer(cl_kernel    kernel,
     cl_uint      arg_index,
     const void * arg_value) CL_API_SUFFIX__VERSION_2_0
