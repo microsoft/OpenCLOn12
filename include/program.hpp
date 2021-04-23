@@ -136,7 +136,7 @@ private:
 
     friend struct Loggers;
 
-    std::vector<D3DDeviceAndRef> m_AssociatedDevices;
+    const std::vector<D3DDeviceAndRef> m_AssociatedDevices;
 
     struct CommonOptions
     {
