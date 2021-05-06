@@ -205,6 +205,44 @@ TEST(OpenCLOn12, Printf)
     queue.finish();
 }
 
+TEST(OpenCLOn12, RecursiveFlush)
+{
+    auto&& [context, device] = GetWARPContext();
+    cl::CommandQueue queue1(context, device);
+    cl::CommandQueue queue2(context, device);
+
+    cl::UserEvent userEvent(context);
+    cl::Event queue1Task1;
+
+    cl::vector<cl::Event> waitList({ userEvent });
+    queue1.enqueueBarrierWithWaitList(&waitList, &queue1Task1);
+
+    waitList = {{ queue1Task1 }};
+    cl::Event queue2Task1;
+    queue2.enqueueBarrierWithWaitList(&waitList, &queue2Task1);
+
+    waitList = {{ queue2Task1 }};
+    cl::Event queue1Task2;
+    queue1.enqueueBarrierWithWaitList(&waitList, &queue1Task2);
+
+    EXPECT_EQ(queue1Task1.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_QUEUED);
+    EXPECT_EQ(queue2Task1.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_QUEUED);
+    EXPECT_EQ(queue1Task2.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_QUEUED);
+
+    queue1.flush();
+
+    EXPECT_EQ(queue1Task1.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_SUBMITTED);
+    EXPECT_EQ(queue2Task1.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_SUBMITTED);
+    EXPECT_EQ(queue1Task2.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_SUBMITTED);
+
+    userEvent.setStatus(CL_SUCCESS);
+    queue1.finish();
+
+    EXPECT_EQ(queue1Task1.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_COMPLETE);
+    EXPECT_EQ(queue2Task1.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_COMPLETE);
+    EXPECT_EQ(queue1Task2.getInfo<CL_EVENT_COMMAND_EXECUTION_STATUS>(), CL_COMPLETE);
+}
+
 int main(int argc, char** argv)
 {
     ID3D12Debug* pDebug = nullptr;
