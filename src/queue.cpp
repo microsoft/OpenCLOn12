@@ -200,7 +200,7 @@ clFlush(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_0
     auto ReportError = queue.GetContext().GetErrorReporter();
     try
     {
-        queue.Flush(g_Platform->GetTaskPoolLock());
+        queue.Flush(g_Platform->GetTaskPoolLock(), /* flushDevice */ true);
         return CL_SUCCESS;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -242,7 +242,7 @@ CommandQueue::CommandQueue(Device& device, Context& context, const cl_queue_prop
 {
 }
 
-void CommandQueue::Flush(TaskPoolLock const& lock)
+void CommandQueue::Flush(TaskPoolLock const& lock, bool flushDevice)
 {
     while (!m_QueuedTasks.empty())
     {
@@ -250,7 +250,10 @@ void CommandQueue::Flush(TaskPoolLock const& lock)
         m_QueuedTasks.pop_front();
         m_Parent->SubmitTask(m_OutstandingTasks.back().Get(), lock);
     }
-    m_Parent->Flush(lock);
+    if (flushDevice)
+    {
+        m_Parent->Flush(lock);
+    }
 }
 
 void CommandQueue::QueueTask(Task* p, TaskPoolLock const& lock)

@@ -39,7 +39,7 @@ clWaitForEvents(cl_uint             num_events,
                 Task* t = static_cast<Task*>(event_list[i]);
                 if (t->GetState() == Task::State::Queued)
                 {
-                    t->m_CommandQueue->Flush(Lock);
+                    t->m_CommandQueue->Flush(Lock, /* flushDevice */ true);
                 }
             }
         }

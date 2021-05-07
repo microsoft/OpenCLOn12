@@ -1135,7 +1135,7 @@ cl_int clEnqueueReadBufferRectImpl(cl_command_queue    command_queue,
             queue.QueueTask(task.get(), Lock);
             if (blocking_read)
             {
-                queue.Flush(Lock);
+                queue.Flush(Lock, /* flushDevice */ true);
             }
         }
 
@@ -1309,7 +1309,7 @@ clEnqueueReadImage(cl_command_queue     command_queue,
             queue.QueueTask(task.get(), Lock);
             if (blocking_read)
             {
-                queue.Flush(Lock);
+                queue.Flush(Lock, /* flushDevice */ true);
             }
         }
 
@@ -2664,7 +2664,7 @@ clEnqueueMapBuffer(cl_command_queue command_queue,
             queue.QueueTask(task.get(), Lock);
             if (blocking_map)
             {
-                queue.Flush(Lock);
+                queue.Flush(Lock, /* flushDevice */ true);
             }
         }
 
@@ -2793,7 +2793,7 @@ clEnqueueMapImage(cl_command_queue  command_queue,
             queue.QueueTask(task.get(), Lock);
             if (blocking_map)
             {
-                queue.Flush(Lock);
+                queue.Flush(Lock, /* flushDevice */ true);
             }
         }
 

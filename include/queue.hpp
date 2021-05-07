@@ -16,7 +16,7 @@ public:
     Context& GetContext() const { return m_Context.get(); }
     Device& GetDevice() const { return m_Parent.get(); }
 
-    void Flush(TaskPoolLock const&);
+    void Flush(TaskPoolLock const&, bool flushDevice);
     void QueueTask(Task*, TaskPoolLock const&);
     void NotifyTaskCompletion(Task*, TaskPoolLock const&);
     void AddAllTasksAsDependencies(Task*, TaskPoolLock const&);

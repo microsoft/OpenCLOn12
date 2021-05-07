@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 #include "device.hpp"
 #include "task.hpp"
+#include "queue.hpp"
 
 #include <wil/resource.h>
 
@@ -411,6 +412,24 @@ void Device::SubmitTask(Task* task, TaskPoolLock const& lock)
     if (task->m_TasksToWaitOn.empty())
     {
         ReadyTask(task, lock);
+    }
+    else
+    {
+        for (auto& dependency : task->m_TasksToWaitOn)
+        {
+            if (dependency->GetState() == Task::State::Queued)
+            {
+                // It's impossible to have a task with a dependency on a task later on in the same queue.
+                assert(dependency->m_CommandQueue != task->m_CommandQueue);
+
+                // Ensure that any dependencies are also submitted. Notes:
+                // - For recursive flushes, don't flush the overall device, we'll do it when we're done with all queues
+                // - This might recurse back to the same queue... this is safe, because this task has already been removed
+                //   from its own queue and had its state updated, so recursive flushes will pick up where we left off,
+                //   and unwinding back will see that the flush has already been finished.
+                dependency->m_CommandQueue->Flush(lock, /* flushDevice */ false);
+            }
+        }
     }
 }
 
