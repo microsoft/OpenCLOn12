@@ -17,6 +17,8 @@ For more details about OpenCLOn12, see:
 * [Microsoft blog post](https://devblogs.microsoft.com/directx/in-the-works-opencl-and-opengl-mapping-layers-to-directx/)
 * [Collabora blog post](https://www.collabora.com/news-and-blog/news-and-events/introducing-opencl-and-opengl-on-directx.html)
 
+Make sure that you visit the [DirectX Landing Page](https://devblogs.microsoft.com/directx/landing-page/) for more resources for DirectX developers.
+
 ## Current Status
 
 At this point, the OpenCL 1.2 API is fully implemented, with no optional extensions. It has not yet been certified conformant, though it passes every conformance test for OpenCL 1.2, but has not yet passed all tests on a single underlying implementation.
