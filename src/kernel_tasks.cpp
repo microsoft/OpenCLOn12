@@ -6,7 +6,7 @@
 #include "resources.hpp"
 #include "sampler.hpp"
 #include "program.hpp"
-#include "clc_compiler.h"
+#include "compiler.hpp"
 
 #include <wil/resource.h>
 #include <sstream>
@@ -16,38 +16,39 @@ extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 constexpr uint32_t PrintfBufferInitialData[PrintfBufferSize / sizeof(uint32_t)] = { sizeof(uint32_t) * 2, PrintfBufferSize };
 
-auto Program::SpecializationKey::Allocate(clc_runtime_kernel_conf const& conf, ::clc_kernel_info const& info) -> std::unique_ptr<SpecializationKey>
+auto Program::SpecializationKey::Allocate(CompiledDxil::Configuration const& conf) -> std::unique_ptr<SpecializationKey>
 {
-    uint32_t NumAllocatedArgs = info.num_args ? (uint32_t)info.num_args - 1 : 0;
+    uint32_t NumAllocatedArgs = conf.args.size() ? (uint32_t)conf.args.size() - 1 : 0;
     std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(
         sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs)));
-    new (bits.get()) SpecializationKey(conf, info);
+    new (bits.get()) SpecializationKey(conf);
     return bits;
 }
 
-Program::SpecializationKey::SpecializationKey(clc_runtime_kernel_conf const& conf, clc_kernel_info const& info)
+Program::SpecializationKey::SpecializationKey(CompiledDxil::Configuration const& conf)
 {
     ConfigData.Bits.LocalSize[0] = conf.local_size[0];
     ConfigData.Bits.LocalSize[1] = conf.local_size[1];
     ConfigData.Bits.LocalSize[2] = conf.local_size[2];
     ConfigData.Bits.SupportGlobalOffsets = conf.support_global_work_id_offsets;
     ConfigData.Bits.SupportLocalOffsets = conf.support_work_group_id_offsets;
-    ConfigData.Bits.LowerInt64 = (conf.lower_bit_size & 64) != 0;
-    ConfigData.Bits.LowerInt16 = (conf.lower_bit_size & 16) != 0;
+    ConfigData.Bits.LowerInt64 = conf.lower_int64;
+    ConfigData.Bits.LowerInt16 = conf.lower_int64;
     ConfigData.Bits.Padding = 0;
 
-    NumArgs = (uint32_t)info.num_args;
+    NumArgs = (uint32_t)conf.args.size();
     for (uint32_t i = 0; i < NumArgs; ++i)
     {
-        if (info.args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_LOCAL)
+        memset(&Args[i], 0, sizeof(Args[i]));
+        if (auto localConfig = std::get_if<CompiledDxil::Configuration::Arg::Local>(&conf.args[i].config); localConfig)
         {
-            Args[i].LocalArgSize = conf.args[i].localptr.size;
+            Args[i].LocalArgSize = localConfig->size;
         }
-        else if (strcmp(info.args[i].type_name, "sampler_t") == 0)
+        else if (auto samplerConfig = std::get_if<CompiledDxil::Configuration::Arg::Sampler>(&conf.args[i].config); samplerConfig)
         {
-            Args[i].SamplerArgData.AddressingMode = conf.args[i].sampler.addressing_mode;
-            Args[i].SamplerArgData.LinearFiltering = conf.args[i].sampler.linear_filtering;
-            Args[i].SamplerArgData.NormalizedCoords = conf.args[i].sampler.normalized_coords;
+            Args[i].SamplerArgData.AddressingMode = samplerConfig->addressingMode;
+            Args[i].SamplerArgData.LinearFiltering = samplerConfig->linearFiltering;
+            Args[i].SamplerArgData.NormalizedCoords = samplerConfig->normalizedCoords;
             Args[i].SamplerArgData.Padding = 0;
         }
         else
@@ -146,14 +147,14 @@ public:
         , m_KernelArgSRVs(kernel.m_SRVs.begin(), kernel.m_SRVs.end())
         , m_KernelArgSamplers(kernel.m_Samplers.begin(), kernel.m_Samplers.end())
     {
-        cl_uint KernelArgCBIndex = kernel.m_pDxil->metadata.kernel_inputs_cbv_id;
-        cl_uint WorkPropertiesCBIndex = kernel.m_pDxil->metadata.work_properties_cbv_id;
+        cl_uint KernelArgCBIndex = kernel.m_Dxil.GetMetadata().kernel_inputs_cbv_id;
+        cl_uint WorkPropertiesCBIndex = kernel.m_Dxil.GetMetadata().work_properties_cbv_id;
         unsigned num_cbs = max(KernelArgCBIndex + 1,
                                WorkPropertiesCBIndex + 1);
         m_CBs.resize(num_cbs);
         m_CBOffsets.resize(num_cbs);
 
-        clc_work_properties_data work_properties = {};
+        WorkProperties work_properties = {};
         work_properties.global_offset_x = offset[0];
         work_properties.global_offset_y = offset[1];
         work_properties.global_offset_z = offset[2];
@@ -167,14 +168,16 @@ public:
         cl_uint numZIterations = ((dims[2] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
         cl_uint numIterations = numXIterations * numYIterations * numZIterations;
 
-        size_t KernelInputsCbSize = kernel.m_pDxil->metadata.kernel_inputs_buf_size;
+        size_t KernelInputsCbSize = kernel.m_Dxil.GetMetadata().kernel_inputs_buf_size;
         size_t WorkPropertiesOffset = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
         m_CBOffsets[WorkPropertiesCBIndex] = (UINT)WorkPropertiesOffset / 16;
-        static_assert(sizeof(work_properties) < D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
-        KernelInputsCbSize = WorkPropertiesOffset + D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT * numIterations;
+
+        auto pCompiler = g_Platform->GetCompiler();
+        size_t WorkPropertiesSize = pCompiler->GetWorkPropertiesChunkSize() * numIterations;
+        KernelInputsCbSize = WorkPropertiesOffset + WorkPropertiesSize;
 
         kernel.m_KernelArgsCbData.resize(KernelInputsCbSize);
-        byte* workPropertiesData = kernel.m_KernelArgsCbData.data() + WorkPropertiesOffset;
+        std::byte* workPropertiesData = kernel.m_KernelArgsCbData.data() + WorkPropertiesOffset;
         for (cl_uint x = 0; x < numXIterations; ++x)
         {
             for (cl_uint y = 0; y < numYIterations; ++y)
@@ -184,8 +187,7 @@ public:
                     work_properties.group_id_offset_x = x * D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
                     work_properties.group_id_offset_y = y * D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
                     work_properties.group_id_offset_z = z * D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
-                    memcpy(workPropertiesData, &work_properties, sizeof(work_properties));
-                    workPropertiesData += D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+                    workPropertiesData = pCompiler->CopyWorkProperties(workPropertiesData, work_properties);
                 }
             }
         }
@@ -222,48 +224,43 @@ public:
         m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
         m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
 
-        if (kernel.m_pDxil->metadata.printf.uav_id >= 0)
+        if (kernel.m_Dxil.GetMetadata().printf_uav_id >= 0)
         {
             m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
             m_PrintfUAV->EnqueueMigrateResource(&Device, this, 0);
-            m_UAVs[kernel.m_pDxil->metadata.printf.uav_id] = &m_PrintfUAV->GetUAV(&Device);
+            m_UAVs[kernel.m_Dxil.GetMetadata().printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
         }
 
-        clc_runtime_kernel_conf config = {};
-        config.lower_bit_size = 64;
-        config.lower_bit_size |= (m_Device->SupportsInt16() ? 0 : 16);
+        CompiledDxil::Configuration config = {};
+        config.lower_int64 = true;
+        config.lower_int16 = !m_Device->SupportsInt16();
         config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
         config.support_work_group_id_offsets = numIterations != 1;
         std::copy(std::begin(localSize), std::end(localSize), config.local_size);
-        config.args = kernel.m_ArgMetadataToCompiler.data();
-        auto SpecKey = Program::SpecializationKey::Allocate(config, *kernel.m_pDxil->kernel);
+        config.args = kernel.m_ArgMetadataToCompiler;
+        auto SpecKey = Program::SpecializationKey::Allocate(config);
         
         m_Specialized = kernel.m_Parent->FindExistingSpecialization(m_Device.Get(), kernel.m_Name, SpecKey);
 
         if (!m_Specialized)
         {
-            g_Platform->QueueProgramOp([this, &Device, config,
-                                              ArgInfo = kernel.m_ArgMetadataToCompiler,
+            g_Platform->QueueProgramOp([this, &Device,
+                                              config = std::move(config),
                                               SpecKey = std::move(SpecKey),
                                               kernel = this->m_Kernel,
                                               refThis = Task::ref_int(*this)]() mutable
             {
                 try
                 {
-                    auto& Compiler = g_Platform->GetCompiler();
-                    auto Context = g_Platform->GetCompilerContext(Device.GetShaderCache());
-                    auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
-                    auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
-
-                    config.args = ArgInfo.data();
+                    auto pCompiler = g_Platform->GetCompiler();
 
                     auto spirv = kernel->m_Parent->GetSpirV(&m_CommandQueue->GetDevice());
-                    auto name = kernel->m_pDxil->kernel->name;
-                    unique_dxil specialized(get_kernel(Context, spirv, name, &config, nullptr), free);
+                    auto name = kernel->m_Dxil.GetMetadata().program_kernel_info.name;
+                    auto specialized = pCompiler->GetKernel(name, *spirv, &config, nullptr);
+                    if (specialized)
+                        specialized->Sign();
 
-                    SignBlob(specialized->binary.data, specialized->binary.size);
-
-                    auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&Device.ImmCtx(), specialized->binary.data, specialized->binary.size, kernel->m_ShaderDecls);
+                    auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&Device.ImmCtx(), specialized->GetBinary(), specialized->GetBinarySize(), kernel->m_ShaderDecls);
                     D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
                     auto PSO = Device.CreatePSO(Desc);
 
@@ -528,7 +525,7 @@ void ExecuteKernel::RecordImpl()
     std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
     if (m_PrintfUAV.Get())
     {
-        m_UAVs[m_Kernel->m_pDxil->metadata.printf.uav_id] = &m_PrintfUAV->GetUAV(&Device);
+        m_UAVs[m_Kernel->m_Dxil.GetMetadata().printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
     }
 
     auto& ImmCtx = Device.ImmCtx();
@@ -539,13 +536,13 @@ void ExecuteKernel::RecordImpl()
 
     // Fill out offsets that'll be read by the kernel for local arg pointers, based on the offsets
     // returned by the compiler for this specialization
-    for (UINT i = 0; i < m_Specialized->m_Dxil->kernel->num_args; ++i)
+    for (UINT i = 0; i < m_Specialized->m_Dxil->GetMetadata().args.size(); ++i)
     {
-        if (m_Specialized->m_Dxil->kernel->args[i].address_qualifier != CLC_KERNEL_ARG_ADDRESS_LOCAL)
+        if (m_Specialized->m_Dxil->GetMetadata().program_kernel_info.args[i].address_qualifier != ProgramBinary::Kernel::Arg::AddressSpace::Local)
             continue;
 
-        UINT *offsetLocation = reinterpret_cast<UINT*>(&m_Kernel->m_KernelArgsCbData[m_Specialized->m_Dxil->metadata.args[i].offset]);
-        *offsetLocation = m_Specialized->m_Dxil->metadata.args[i].localptr.sharedmem_offset;
+        UINT *offsetLocation = reinterpret_cast<UINT*>(&m_Kernel->m_KernelArgsCbData[m_Specialized->m_Dxil->GetMetadata().args[i].offset]);
+        *offsetLocation = std::get<CompiledDxil::Metadata::Arg::Local>(m_Specialized->m_Dxil->GetMetadata().args[i].properties).sharedmem_offset;
     }
 
     D3D11_SUBRESOURCE_DATA Data = { m_Kernel->m_KernelArgsCbData.data() };
@@ -559,6 +556,8 @@ void ExecuteKernel::RecordImpl()
     cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numZIterations = ((m_DispatchDims[2] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
+    auto pCompiler = g_Platform->GetCompiler();
+    cl_uint WorkPropertiesChunkSize = (cl_uint)pCompiler->GetWorkPropertiesChunkSize();
     for (cl_uint x = 0; x < numXIterations; ++x)
     {
         for (cl_uint y = 0; y < numYIterations; ++y)
@@ -572,7 +571,7 @@ void ExecuteKernel::RecordImpl()
                 ImmCtx.SetConstantBuffers<D3D12TranslationLayer::e_CS>(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
                 ImmCtx.Dispatch(DimsX, DimsY, DimsZ);
 
-                m_CBOffsets[m_Kernel->m_pDxil->metadata.work_properties_cbv_id] += D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT / 16;
+                m_CBOffsets[m_Kernel->m_Dxil.GetMetadata().work_properties_cbv_id] += WorkPropertiesChunkSize / 16;
             }
         }
     }
@@ -607,15 +606,15 @@ void ExecuteKernel::OnComplete()
         uint32_t NumBytesWritten = *reinterpret_cast<uint32_t*>(MapRet.pData);
         uint32_t CurOffset = InitialBufferOffset;
 
-        byte* ByteStream = reinterpret_cast<byte*>(MapRet.pData);
+        std::byte* ByteStream = reinterpret_cast<std::byte*>(MapRet.pData);
         while (CurOffset < NumBytesWritten && CurOffset < PrintfBufferSize)
         {
             uint32_t FormatStringId = *reinterpret_cast<uint32_t*>(ByteStream + CurOffset);
-            assert(FormatStringId <= m_Kernel->m_pDxil->metadata.printf.info_count);
+            assert(FormatStringId <= m_Kernel->m_Dxil.GetMetadata().printfs.size());
             if (FormatStringId == 0)
                 break;
 
-            auto& PrintfData = m_Kernel->m_pDxil->metadata.printf.infos[FormatStringId - 1];
+            auto& PrintfData = m_Kernel->m_Dxil.GetMetadata().printfs[FormatStringId - 1];
             CurOffset += sizeof(FormatStringId);
             auto StructBeginOffset = CurOffset;
             uint32_t OffsetInStruct = 0;
@@ -756,7 +755,7 @@ void ExecuteKernel::OnComplete()
                 uint32_t ArgSize = DataSize * (VectorSize == 3 ? 4 : VectorSize);
                 assert(ArgSize == PrintfData.arg_sizes[ArgIdx]);
                 uint32_t ArgOffset = D3D12TranslationLayer::Align<uint32_t>(OffsetInStruct, 4) + StructBeginOffset;
-                byte* ArgPtr = ByteStream + ArgOffset;
+                std::byte* ArgPtr = ByteStream + ArgOffset;
                 OffsetInStruct += ArgSize;
 
                 std::string StringBuffer;

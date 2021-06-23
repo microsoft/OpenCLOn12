@@ -4,17 +4,18 @@
 
 #include "program.hpp"
 #include "resources.hpp"
+#include <cstddef>
 
 class Sampler;
 class Kernel : public CLChildBase<Kernel, Program, cl_kernel>
 {
 private:
-    clc_dxil_object const* m_pDxil;
+    CompiledDxil const& m_Dxil;
     std::string const m_Name;
     D3D12TranslationLayer::SShaderDecls m_ShaderDecls;
 
-    std::vector<byte> m_KernelArgsCbData;
-    std::vector<struct clc_runtime_arg_info> m_ArgMetadataToCompiler;
+    std::vector<std::byte> m_KernelArgsCbData;
+    std::vector<CompiledDxil::Configuration::Arg> m_ArgMetadataToCompiler;
 
     // These are weak references for the API kernel object, however
     // these will be converted into strong references by an *execution*
@@ -34,7 +35,7 @@ private:
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelWorkGroupInfo(cl_kernel, cl_device_id, cl_kernel_work_group_info, size_t, void*, size_t*);
 
 public:
-    Kernel(Program& Parent, std::string const& name, clc_dxil_object const* pDxil);
+    Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxil);
     Kernel(Kernel const&);
     ~Kernel();
 
