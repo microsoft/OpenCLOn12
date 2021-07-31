@@ -496,7 +496,7 @@ clCreateImage(cl_context              context,
     return clCreateImageWithProperties(context, nullptr, flags, image_format, image_desc, host_ptr, errcode_ret);
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
 clCreateImage2D(cl_context              context,
     cl_mem_flags            flags,
     const cl_image_format * image_format,
@@ -504,7 +504,7 @@ clCreateImage2D(cl_context              context,
     size_t                  image_height,
     size_t                  image_row_pitch,
     void *                  host_ptr,
-    cl_int *                errcode_ret) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+    cl_int *                errcode_ret) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
 {
     cl_image_desc desc = {};
     desc.image_type = CL_MEM_OBJECT_IMAGE2D;
@@ -514,7 +514,7 @@ clCreateImage2D(cl_context              context,
     return clCreateImage(context, flags, image_format, &desc, host_ptr, errcode_ret);
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
 clCreateImage3D(cl_context              context,
     cl_mem_flags            flags,
     const cl_image_format * image_format,
@@ -524,7 +524,7 @@ clCreateImage3D(cl_context              context,
     size_t                  image_row_pitch,
     size_t                  image_slice_pitch,
     void *                  host_ptr,
-    cl_int *                errcode_ret) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+    cl_int *                errcode_ret) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
 {
     cl_image_desc desc = {};
     desc.image_type = CL_MEM_OBJECT_IMAGE3D;

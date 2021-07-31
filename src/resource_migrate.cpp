@@ -181,7 +181,7 @@ public:
             m_Resource.m_ActiveUnderlying->GetFullSubresourceSubset(),
             pData,
             nullptr,
-            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::ImmediateContextInternalOp);
+            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesFlags::ScenarioImmediateContextInternalOp);
         m_Resource.m_InitialData.reset();
     }
 };

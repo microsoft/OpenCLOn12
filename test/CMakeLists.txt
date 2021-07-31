@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 add_subdirectory(googletest)
 
 file(GLOB SRC CONFIGURE_DEPENDS *.cpp)

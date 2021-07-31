@@ -167,7 +167,7 @@ extern CL_API_ENTRY cl_int CL_API_CALL
 clSetCommandQueueProperty(cl_command_queue  command_queue,
     cl_command_queue_properties,
     cl_bool,
-    cl_command_queue_properties*) CL_EXT_SUFFIX__VERSION_1_0_DEPRECATED
+    cl_command_queue_properties*) CL_API_SUFFIX__VERSION_1_0_DEPRECATED
 {
     if (!command_queue)
     {
@@ -179,11 +179,11 @@ clSetCommandQueueProperty(cl_command_queue  command_queue,
     return ReportError("clSetCommandQueueProperty is deprecated", CL_INVALID_OPERATION);
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_2_DEPRECATED cl_command_queue CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_2_DEPRECATED cl_command_queue CL_API_CALL
 clCreateCommandQueue(cl_context                     context,
     cl_device_id                   device,
     cl_command_queue_properties    properties,
-    cl_int *                       errcode_ret) CL_EXT_SUFFIX__VERSION_1_2_DEPRECATED
+    cl_int *                       errcode_ret) CL_API_SUFFIX__VERSION_1_2_DEPRECATED
 {
     cl_queue_properties PropArray[3] = { CL_QUEUE_PROPERTIES, properties, 0 };
     return clCreateCommandQueueWithPropertiesImpl(context, device, PropArray, errcode_ret, true);
