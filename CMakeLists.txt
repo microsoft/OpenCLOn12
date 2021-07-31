@@ -28,13 +28,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(opencl_headers)
 add_library(OpenCL::Headers ALIAS Headers)
 
+set(WIL_BUILD_PACKAGING OFF CACHE BOOL "" FORCE)
+set(WIL_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    wil
+    GIT_REPOSITORY https://github.com/microsoft/wil.git
+    GIT_TAG ed429e64eb3b91848bf19c17e1431c1b0f2c6d2b
+)
+FetchContent_MakeAvailable(wil)
+
 add_library(openclon12 SHARED ${SRC} ${INC} ${EXTERNAL_INC})
 target_include_directories(openclon12
     PRIVATE include
     PRIVATE external
-    PRIVATE wil/include
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(openclon12 d3d12translationlayer OpenCL::Headers)
+target_link_libraries(openclon12 d3d12translationlayer OpenCL::Headers WIL)
 source_group("Header Files\\External" FILES ${EXTERNAL_INC})
 
 option(BUILD_TESTS "Build tests" ON)
