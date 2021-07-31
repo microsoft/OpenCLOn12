@@ -1,7 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-add_subdirectory(googletest)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        2d924d7a971e9667d76ad09727fb2402b4f8a1e3
+)
+FetchContent_MakeAvailable(googletest)
 
 file(GLOB SRC CONFIGURE_DEPENDS *.cpp)
 file(GLOB INC *.h *.hpp)
