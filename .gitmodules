@@ -1,9 +1,0 @@
-[submodule "OpenCL-Headers"]
-	path = OpenCL-Headers
-	url = https://github.com/KhronosGroup/OpenCL-Headers.git
-[submodule "wil"]
-	path = wil
-	url = https://github.com/microsoft/wil.git
-[submodule "test/googletest"]
-	path = test/googletest
-	url = https://github.com/google/googletest.git

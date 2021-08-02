@@ -319,9 +319,9 @@ clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
     return CL_SUCCESS;
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
 clEnqueueMarker(cl_command_queue    command_queue,
-    cl_event* event) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+    cl_event* event) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
 {
     return clEnqueueMarkerWithWaitList(command_queue, 0, nullptr, event);
 }
@@ -375,16 +375,16 @@ clEnqueueBarrierWithWaitList(cl_command_queue  command_queue,
     return CL_SUCCESS;
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
 clEnqueueWaitForEvents(cl_command_queue  command_queue,
     cl_uint          num_events,
-    const cl_event* event_list) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+    const cl_event* event_list) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
 {
     return clEnqueueBarrierWithWaitList(command_queue, num_events, event_list, nullptr);
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
-clEnqueueBarrier(cl_command_queue command_queue) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+clEnqueueBarrier(cl_command_queue command_queue) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
 {
     return clEnqueueBarrierWithWaitList(command_queue, 0, nullptr, nullptr);
 }

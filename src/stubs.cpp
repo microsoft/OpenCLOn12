@@ -159,11 +159,11 @@ clCreateProgramWithIL(cl_context    context_,
     return ReportError("Platform does not yet support IL programs", CL_INVALID_OPERATION);
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_2_2_DEPRECATED cl_int CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_2_2_DEPRECATED cl_int CL_API_CALL
 clSetProgramReleaseCallback(cl_program          program,
     void (CL_CALLBACK * pfn_notify)(cl_program program,
         void * user_data),
-    void *              user_data) CL_EXT_SUFFIX__VERSION_2_2_DEPRECATED
+    void *              user_data) CL_API_SUFFIX__VERSION_2_2_DEPRECATED
 {
     if (!program)
     {
@@ -366,8 +366,8 @@ clGetExtensionFunctionAddressForPlatform(cl_platform_id platform,
 
 /* Deprecated OpenCL 1.1 APIs */
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
-clUnloadCompiler(void) CL_EXT_SUFFIX__VERSION_1_1_DEPRECATED
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
+clUnloadCompiler(void) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
 {
     return CL_SUCCESS;
 }

@@ -25,17 +25,22 @@ At this point, the OpenCL 1.2 API is fully implemented, with no optional extensi
 
 ## Building
 
-This project is expected to be included in a CMake build environment where the D3D12TranslationLayer project is also included.
+The D3D12TranslationLayer project will be fetched from GitHub when building with CMake if D3D12TranslationLayer isn't already declared as a FetchContent source, such as by a parent CMakeLists.txt. Assuming there was a top level `CMakeLists.txt` in a directory that included both OpenCLOn12 and D3D12TranslationLayer, you could achieve that like this:
 
-At the time of publishing, OpenCLOn12 and the D3D12TranslationLayer require the latest released version of the SDK (19041).
+```CMake
+cmake_minimum_required(VERSION 3.14)
+include(FetchContent)
 
-An example CMakeLists.txt for building OpenCLOn12 would be:
+FetchContent_Declare(
+    d3d12translationlayer
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/D3D12TranslationLayer
+)
+FetchContent_MakeAvailable(d3d12translationlayer)
 
-```
-cmake_minimum_required(VERSION 3.13)
-add_subdirectory(D3D12TranslationLayer)
 add_subdirectory(OpenCLOn12)
 ```
+
+At the time of publishing, OpenCLOn12 and the D3D12TranslationLayer require the latest released version of the SDK (19041).
 
 OpenCLOn12 requires C++17, and only supports building with MSVC at the moment.
 

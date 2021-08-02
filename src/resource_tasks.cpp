@@ -8,7 +8,7 @@
 #include <wil/resource.h>
 
 using D3D12TranslationLayer::ImmediateContext;
-using UpdateSubresourcesScenario = ImmediateContext::UpdateSubresourcesScenario;
+using UpdateSubresourcesFlags = ImmediateContext::UpdateSubresourcesFlags;
 using CPrepareUpdateSubresourcesHelper = ImmediateContext::CPrepareUpdateSubresourcesHelper;
 
 template <typename ReportErrorT>
@@ -139,7 +139,7 @@ private:
     Resource::ref_ptr_int m_Target;
     const Args m_Args;
 
-    void CopyFromHostPtr(UpdateSubresourcesScenario);
+    void CopyFromHostPtr(UpdateSubresourcesFlags);
     std::vector<CPrepareUpdateSubresourcesHelper> m_Helpers;
 
     void MigrateResources() final
@@ -162,11 +162,11 @@ MemWriteFillTask::MemWriteFillTask(Context &Parent, Resource &Target,
 {
     if (!DeferCopy)
     {
-        CopyFromHostPtr(UpdateSubresourcesScenario::BatchedContext);
+        CopyFromHostPtr(UpdateSubresourcesFlags::ScenarioBatchedContext);
     }
 }
 
-void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
+void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesFlags flags)
 {
     // For buffer rects, have to use row-by-row copies if the pitches don't align to
     // D3D12_TEXTURE_DATA_PITCH_ALIGNMENT.
@@ -235,7 +235,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesScenario scenario)
                     subresources,
                     pData,
                     &DstBox,
-                    scenario,
+                    flags,
                     pPattern,
                     PatternSize,
                     m_CommandQueue->GetDevice().ImmCtx());
@@ -249,7 +249,7 @@ void MemWriteFillTask::RecordImpl()
 {
     if (m_Helpers.empty())
     {
-        CopyFromHostPtr(UpdateSubresourcesScenario::ImmediateContext);
+        CopyFromHostPtr(UpdateSubresourcesFlags::ScenarioImmediateContext);
     }
 
     for (auto& Helper : m_Helpers)
@@ -732,7 +732,7 @@ void FillImageTask::RecordImpl()
         ImmCtx.UpdateSubresources(
             m_Target->GetActiveUnderlyingResource(),
             Subset, nullptr, &Box,
-            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::ImmediateContext,
+            D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesFlags::ScenarioImmediateContext,
             m_Args.Pattern);
     }
 }

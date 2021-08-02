@@ -153,12 +153,12 @@ clCreateSamplerWithProperties(cl_context                     context_,
     return clCreateSamplerWithPropertiesImpl(context_, sampler_properties, desc, errcode_ret);
 }
 
-CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_2_DEPRECATED cl_sampler CL_API_CALL
+CL_API_ENTRY CL_API_PREFIX__VERSION_1_2_DEPRECATED cl_sampler CL_API_CALL
 clCreateSampler(cl_context          context,
     cl_bool             normalized_coords,
     cl_addressing_mode  addressing_mode,
     cl_filter_mode      filter_mode,
-    cl_int *            errcode_ret) CL_EXT_SUFFIX__VERSION_1_2_DEPRECATED
+    cl_int *            errcode_ret) CL_API_SUFFIX__VERSION_1_2_DEPRECATED
 {
     Sampler::Desc desc = { normalized_coords, addressing_mode, filter_mode };
     return clCreateSamplerWithPropertiesImpl(context, nullptr, desc, errcode_ret);

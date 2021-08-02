@@ -467,12 +467,12 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     return CL_SUCCESS;
 }
 
-extern CL_API_ENTRY CL_EXT_PREFIX__VERSION_1_2_DEPRECATED cl_int CL_API_CALL
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_2_DEPRECATED cl_int CL_API_CALL
 clEnqueueTask(cl_command_queue  command_queue,
     cl_kernel         kernel,
     cl_uint           num_events_in_wait_list,
     const cl_event* event_wait_list,
-    cl_event* event) CL_EXT_SUFFIX__VERSION_1_2_DEPRECATED
+    cl_event* event) CL_API_SUFFIX__VERSION_1_2_DEPRECATED
 {
     size_t global_work_size = 1, local_work_size = 1;
     return clEnqueueNDRangeKernel(
@@ -554,7 +554,7 @@ void ExecuteKernel::RecordImpl()
         m_KernelArgsCb->GetFullSubresourceSubset(),
         &Data,
         nullptr,
-        D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesScenario::InitialData);
+        D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesFlags::ScenarioInitialData);
 
     cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
