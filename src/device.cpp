@@ -5,6 +5,7 @@
 #include "queue.hpp"
 
 #include <wil/resource.h>
+#include <directx/d3d12compatibility.h>
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clGetDeviceIDs(cl_platform_id   platform,
@@ -288,6 +289,7 @@ void Device::InitD3D()
     Args.RenamingIsMultithreaded = true;
     Args.UseResidencyManagement = true;
     Args.UseThreadpoolForPSOCreates = true;
+    Args.CreatorID = __uuidof(OpenCLOn12CreatorID);
     m_ImmCtx.emplace(0, m_D3D12Options, m_spDevice.Get(), nullptr, m_Callbacks, 0, Args);
 
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };

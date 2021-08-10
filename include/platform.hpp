@@ -36,10 +36,6 @@
 using std::min;
 using std::max;
 
-#include <initguid.h>
-#include <d3d12.h>
-#include <dxcore.h>
-
 #include <wrl.h>
 using Microsoft::WRL::ComPtr;
 
