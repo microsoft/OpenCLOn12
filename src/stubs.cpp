@@ -139,26 +139,6 @@ clCreateProgramWithBuiltInKernels(cl_context            context_,
     return ReportError("No builtin kernels are supported by this platform", CL_INVALID_VALUE);
 }
 
-extern CL_API_ENTRY cl_program CL_API_CALL
-clCreateProgramWithIL(cl_context    context_,
-    const void*    il,
-    size_t         length,
-    cl_int*        errcode_ret) CL_API_SUFFIX__VERSION_2_1
-{
-    if (!context_)
-    {
-        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
-        return nullptr;
-    }
-    Context& context = *static_cast<Context*>(context_);
-    auto ReportError = context.GetErrorReporter(errcode_ret);
-    if (!il || !length)
-    {
-        return ReportError("IL must not be null and length must be nonzero", CL_INVALID_VALUE);
-    }
-    return ReportError("Platform does not yet support IL programs", CL_INVALID_OPERATION);
-}
-
 extern CL_API_ENTRY CL_API_PREFIX__VERSION_2_2_DEPRECATED cl_int CL_API_CALL
 clSetProgramReleaseCallback(cl_program          program,
     void (CL_CALLBACK * pfn_notify)(cl_program program,

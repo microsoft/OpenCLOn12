@@ -84,7 +84,7 @@ public:
 };
 
 struct adopt_ref {};
-struct clc_context;
+class Compiler;
 
 struct TaskPoolLock
 {
@@ -109,7 +109,8 @@ public:
                                               "cl_khr_global_int32_extended_atomics "
                                               "cl_khr_local_int32_base_atomics "
                                               "cl_khr_local_int32_extended_atomics "
-                                              "cl_khr_byte_addressable_store ";
+                                              "cl_khr_byte_addressable_store "
+                                              "cl_khr_il_program ";
     static constexpr const char* ICDSuffix = "oclon12";
 
     Platform(cl_icd_dispatch* dispatch);
@@ -117,9 +118,8 @@ public:
 
     cl_uint GetNumDevices() const noexcept;
     cl_device_id GetDevice(cl_uint i) const noexcept;
-    XPlatHelpers::unique_module const& GetCompiler();
+    Compiler *GetCompiler();
     XPlatHelpers::unique_module const& GetDXIL();
-    clc_context* GetCompilerContext(class ShaderCache&);
     void UnloadCompiler();
 
     TaskPoolLock GetTaskPoolLock();
@@ -176,8 +176,8 @@ protected:
     std::vector<std::unique_ptr<Device>> m_Devices;
 
     std::recursive_mutex m_ModuleLock;
-    XPlatHelpers::unique_module m_Compiler, m_DXIL;
-    std::unique_ptr<clc_context, void(*)(clc_context*)> m_CompilerContext = { nullptr, nullptr };
+    std::unique_ptr<Compiler> m_Compiler;
+    XPlatHelpers::unique_module m_DXIL;
     unsigned m_ActiveDeviceCount = 0;
 
     std::recursive_mutex m_TaskLock;
@@ -356,3 +356,5 @@ inline bool IsPow2(cl_bitfield bits)
 {
     return bits && !(bits & (bits - 1));
 }
+
+void LoadFromNextToSelf(XPlatHelpers::unique_module& mod, const char* name);

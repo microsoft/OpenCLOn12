@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include "program.hpp"
-#include "clc_compiler.h"
+#include "compiler.hpp"
 #include "kernel.hpp"
-#include <dxc/dxcapi.h>
 
 #include <algorithm>
 
@@ -16,16 +15,16 @@ struct ProgramBinaryHeader
     uint32_t BinarySize = 0;
 
     ProgramBinaryHeader() = default;
-    ProgramBinaryHeader(const clc_object* obj, cl_program_binary_type type)
+    ProgramBinaryHeader(const ProgramBinary* obj, cl_program_binary_type type)
         : BinaryType(type)
-        , BinarySize((uint32_t)obj->spvbin.size)
+        , BinarySize((uint32_t)obj->GetBinarySize())
     {
     }
     struct CopyBinaryContentsTag {};
-    ProgramBinaryHeader(const clc_object* obj, cl_program_binary_type type, CopyBinaryContentsTag)
+    ProgramBinaryHeader(const ProgramBinary* obj, cl_program_binary_type type, CopyBinaryContentsTag)
         : ProgramBinaryHeader(obj, type)
     {
-        memcpy(GetBinary(), obj->spvbin.data, BinarySize);
+        memcpy(GetBinary(), obj->GetBinary(), BinarySize);
     }
 
     size_t ComputeFullBlobSize() const
@@ -35,47 +34,6 @@ struct ProgramBinaryHeader
     void* GetBinary() { return this + 1; }
     const void* GetBinary() const { return this + 1; }
 };
-
-void SignBlob(void* pBlob, size_t size)
-{
-    auto& DXIL = g_Platform->GetDXIL();
-    auto pfnCreateInstance = DXIL.proc_address<decltype(&DxcCreateInstance)>("DxcCreateInstance");
-    ComPtr<IDxcValidator> spValidator;
-    if (SUCCEEDED(pfnCreateInstance(CLSID_DxcValidator, IID_PPV_ARGS(&spValidator))))
-    {
-        struct Blob : IDxcBlob
-        {
-            void* pBlob;
-            UINT Size;
-            Blob(void* p, UINT s) : pBlob(p), Size(s) { }
-            STDMETHOD(QueryInterface)(REFIID, void** ppv) { *ppv = this; return S_OK; }
-            STDMETHOD_(ULONG, AddRef)() { return 1; }
-            STDMETHOD_(ULONG, Release)() { return 0; }
-            STDMETHOD_(void*, GetBufferPointer)() override { return pBlob; }
-            STDMETHOD_(SIZE_T, GetBufferSize)() override { return Size; }
-        } Blob = { pBlob, (UINT)size };
-        ComPtr<IDxcOperationResult> spResult;
-        (void)spValidator->Validate(&Blob, DxcValidatorFlags_InPlaceEdit, &spResult);
-        HRESULT hr = S_OK;
-        if (spResult)
-        {
-            (void)spResult->GetStatus(&hr);
-        }
-        if (FAILED(hr))
-        {
-            ComPtr<IDxcBlobEncoding> spError;
-            spResult->GetErrorBuffer(&spError);
-            BOOL known = FALSE;
-            UINT32 cp = 0;
-            spError->GetEncoding(&known, &cp);
-            if (cp == CP_UTF8 || cp == CP_ACP)
-                printf("%s", (char*)spError->GetBufferPointer());
-            else
-                printf("%S", (wchar_t*)spError->GetBufferPointer());
-            DebugBreak();
-        }
-    }
-}
 
 extern CL_API_ENTRY cl_program CL_API_CALL
 clCreateProgramWithSource(cl_context        context_,
@@ -196,16 +154,7 @@ clCreateProgramWithBinary(cl_context                     context_,
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[i]);
-            unique_spirv BinaryHolder(new clc_object,
-                [](clc_object* obj)
-            {
-                if (obj->spvbin.data)
-                    delete[] reinterpret_cast<byte*>(obj->spvbin.data);
-                delete obj;
-            });
-            BinaryHolder->spvbin.data = reinterpret_cast<uint32_t*>(new byte[header->BinarySize]);
-            BinaryHolder->spvbin.size = header->BinarySize;
-            memcpy(BinaryHolder->spvbin.data, header->GetBinary(), header->BinarySize);
+            unique_spirv BinaryHolder = g_Platform->GetCompiler()->Load(header->GetBinary(), header->BinarySize);
             NewProgram->StoreBinary(static_cast<Device*>(device_list[i]), std::move(BinaryHolder), header->BinaryType);
 
             if (binary_status) *binary_status = CL_SUCCESS;
@@ -213,6 +162,47 @@ clCreateProgramWithBinary(cl_context                     context_,
 
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
         return NewProgram.release();
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
+}
+
+extern CL_API_ENTRY cl_program CL_API_CALL
+clCreateProgramWithIL(cl_context    context_,
+    const void*    il,
+    size_t         length,
+    cl_int*        errcode_ret) CL_API_SUFFIX__VERSION_2_1
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context& context = *static_cast<Context*>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+    if (!il || !length)
+    {
+        return ReportError("IL must not be null and length must be nonzero", CL_INVALID_VALUE);
+    }
+
+    if (length < 4)
+    {
+        return ReportError("SPIR-V IL must contain greater than 4 bytes", CL_INVALID_VALUE);
+    }
+    uint32_t magic = *static_cast<const uint32_t*>(il);
+    if (magic != 0x07230203)
+    {
+        return ReportError("IL does not represent valid SPIR-V", CL_INVALID_VALUE);
+    }
+
+    try
+    {
+        const std::byte *ilAsBytes = static_cast<const std::byte *>(il);
+        std::vector<std::byte> ILCopy(ilAsBytes, ilAsBytes + length);
+
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        return new Program(context, std::move(ILCopy));
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -402,7 +392,8 @@ clGetProgramInfo(cl_program         program_,
                                     program.m_AssociatedDevices.size() * sizeof(program.m_AssociatedDevices[0]),
                                     param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
-    case CL_PROGRAM_IL: return RetValue(nullptr);
+    case CL_PROGRAM_IL: return CopyOutParameterImpl(program.m_IL.data(), program.m_IL.size(),
+                                                    param_value_size, param_value, param_value_size_ret);
     case CL_PROGRAM_BINARY_SIZES:
     {
         size_t OutSize = sizeof(size_t) * program.m_AssociatedDevices.size();
@@ -565,6 +556,13 @@ Program::Program(Context& Parent, std::string Source)
 {
 }
 
+Program::Program(Context& Parent, std::vector<std::byte> IL)
+    : CLChildBase(Parent)
+    , m_IL(std::move(IL))
+    , m_AssociatedDevices(Parent.GetDevices())
+{
+}
+
 Program::Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices)
     : CLChildBase(Parent)
     , m_AssociatedDevices(std::move(Devices))
@@ -596,7 +594,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             auto &BuildData = m_BuildData[device.Get()];
             if (!BuildData)
             {
-                if (m_Source.empty())
+                if (m_Source.empty() && m_IL.empty())
                 {
                     return ReportError("Build requested for binary program, for device with no binary.", CL_INVALID_BINARY);
                 }
@@ -618,7 +616,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             }
         }
 
-        if (!m_Source.empty())
+        if (!m_Source.empty() || !m_IL.empty())
         {
             // Update build status to indicate build is starting so nobody else can start a build
             auto BuildData = std::make_shared<PerDeviceData>();
@@ -664,9 +662,9 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
 cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
-    if (m_Source.empty())
+    if (m_Source.empty() && m_IL.empty())
     {
-        return ReportError("Program does not contain source.", CL_INVALID_OPERATION);
+        return ReportError("Program does not contain source or IL.", CL_INVALID_OPERATION);
     }
 
     // Parse options
@@ -678,18 +676,22 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
         return ReportError("Invalid options.", CL_INVALID_COMPILER_OPTIONS);
     }
 
-    for (cl_uint i = 0; i < num_input_headers; ++i)
+    // "If program was created using clCreateProgramWithIL, then num_input_headers, input_headers, and header_include_names are ignored."
+    if (m_IL.empty())
     {
-        if (!input_headers[i] || !header_include_names[i] || header_include_names[i][0] == '\0')
+        for (cl_uint i = 0; i < num_input_headers; ++i)
         {
-            return ReportError("Invalid header or header name.", CL_INVALID_VALUE);
+            if (!input_headers[i] || !header_include_names[i] || header_include_names[i][0] == '\0')
+            {
+                return ReportError("Invalid header or header name.", CL_INVALID_VALUE);
+            }
+            Program& header = *static_cast<Program*>(input_headers[i]);
+            if (header.m_Source.empty())
+            {
+                return ReportError("Header provided has no source.", CL_INVALID_VALUE);
+            }
+            Args.Headers[header_include_names[i]] = &header;
         }
-        Program& header = *static_cast<Program*>(input_headers[i]);
-        if (header.m_Source.empty())
-        {
-            return ReportError("Header provided has no source.", CL_INVALID_VALUE);
-        }
-        Args.Headers[header_include_names[i]] = &header;
     }
 
     {
@@ -873,7 +875,7 @@ void Program::StoreBinary(Device *Device, unique_spirv OwnedBinary, cl_program_b
     BuildData->m_BuildStatus = CL_BUILD_NONE;
 }
 
-const clc_object* Program::GetSpirV(Device* device) const
+const ProgramBinary *Program::GetSpirV(Device* device) const
 {
     std::lock_guard Lock(m_Lock);
     return m_BuildData.find(device)->second->m_OwnedBinary.get();
@@ -1043,79 +1045,43 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
     return ValidateAndPushArg();
 }
 
-struct Loggers
-{
-    Program& m_Program;
-    Program::PerDeviceData& m_BuildData;
-    Loggers(Program& program, Program::PerDeviceData& buildData);
-    void Log(const char* msg);
-    static void Log(void* context, const char* msg);
-    operator clc_logger();
-};
-
-Loggers::Loggers(Program& program, Program::PerDeviceData& buildData)
-    : m_Program(program)
-    , m_BuildData(buildData)
-{
-}
-
-void Loggers::Log(const char* message)
-{
-    std::lock_guard Lock(m_Program.m_Lock);
-    m_BuildData.m_BuildLog += message;
-}
-
-void Loggers::Log(void* context, const char* message)
-{
-    static_cast<Loggers*>(context)->Log(message);
-}
-
-Loggers::operator clc_logger()
-{
-    clc_logger ret;
-    ret.priv = this;
-    ret.error = Log;
-    ret.warning = Log;
-    return ret;
-}
-
 cl_int Program::BuildImpl(BuildArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
-    auto& Compiler = g_Platform->GetCompiler();
-    auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
-    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    if (!m_Source.empty())
+    auto pCompiler = g_Platform->GetCompiler();
+    if (!m_Source.empty() || !m_IL.empty())
     {
         auto& BuildData = Args.Common.BuildData;
+        pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
 
-        auto Context = g_Platform->GetCompilerContext(BuildData->m_Device->GetShaderCache());
+        Logger loggers(m_Lock, BuildData->m_BuildLog);
+        unique_spirv compiledObject;
 
-        Loggers loggers(*this, *BuildData);
-        clc_logger loggers_impl = loggers;
-        auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
-        clc_compile_args args = {};
-
-        std::vector<const char*> raw_args;
-        raw_args.reserve(Args.Common.Args.size());
-        for (auto& def : Args.Common.Args)
+        if (!m_Source.empty())
         {
-            raw_args.push_back(def.c_str());
+            Compiler::CompileArgs args = {};
+            args.program_source = m_Source.c_str();
+            args.cmdline_args.reserve(Args.Common.Args.size());
+            for (auto& def : Args.Common.Args)
+            {
+                args.cmdline_args.push_back(def.c_str());
+            }
+
+            compiledObject = pCompiler->Compile(args, loggers);
+        }
+        else
+        {
+            compiledObject = pCompiler->Load(m_IL.data(), m_IL.size());
         }
 
-        args.args = raw_args.data();
-        args.num_args = (unsigned)raw_args.size();
-        args.source = { "source.cl", m_Source.c_str() };
-
-        unique_spirv compiledObject(compile(Context, &args, &loggers_impl), free);
-        const clc_object* rawCompiledObject = compiledObject.get();
-
-        clc_linker_args link_args = {};
-        link_args.create_library = Args.Common.CreateLibrary;
-        link_args.in_objs = &rawCompiledObject;
-        link_args.num_in_objs = 1;
-        unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
-        BuildData->m_OwnedBinary = std::move(object);
+        if (compiledObject)
+        {
+            Compiler::LinkerArgs link_args = {};
+            link_args.create_library = Args.Common.CreateLibrary;
+            link_args.objs.push_back(compiledObject.get());
+            auto linkedObject = pCompiler->Link(link_args, loggers);
+            BuildData->m_OwnedBinary = std::move(linkedObject);
+        }
 
         std::lock_guard Lock(m_Lock);
         if (BuildData->m_OwnedBinary)
@@ -1132,25 +1098,19 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     }
     else
     {
+        pCompiler->Initialize(Args.BinaryBuildDevices[0]->GetShaderCache());
+
         std::lock_guard Lock(m_Lock);
-        clc_context* Context = nullptr;
         for (auto& device : Args.BinaryBuildDevices)
         {
             auto& BuildData = m_BuildData[device.Get()];
-            if (!Context)
-            {
-                Context = g_Platform->GetCompilerContext(device->GetShaderCache());
-            }
-            Loggers loggers(*this, *BuildData);
-            clc_logger loggers_impl = loggers;
-            const clc_object* rawCompiledObject = BuildData->m_OwnedBinary.get();
+            Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-            clc_linker_args link_args = {};
+            Compiler::LinkerArgs link_args = {};
             link_args.create_library = Args.Common.CreateLibrary;
-            link_args.in_objs = &rawCompiledObject;
-            link_args.num_in_objs = 1;
-            unique_spirv object(rawCompiledObject ? link(Context, &link_args, &loggers_impl) : nullptr, free);
-            BuildData->m_OwnedBinary = std::move(object);
+            link_args.objs.push_back(BuildData->m_OwnedBinary.get());
+            auto linkedObject = pCompiler->Link(link_args, loggers);
+            BuildData->m_OwnedBinary = std::move(linkedObject);
 
             if (BuildData->m_OwnedBinary)
             {
@@ -1176,34 +1136,34 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
-    auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext(BuildData->m_Device->GetShaderCache());
-    auto compile = Compiler.proc_address<decltype(&clc_compile)>("clc_compile");
-    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    Loggers loggers(*this, *BuildData);
-    clc_logger loggers_impl = loggers;
-    clc_compile_args args = {};
+    auto pCompiler = g_Platform->GetCompiler();
+    pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
+    Logger loggers(m_Lock, BuildData->m_BuildLog);
 
-    std::vector<const char*> raw_args;
-    raw_args.reserve(Args.Common.Args.size());
-    for (auto& def : Args.Common.Args)
+    unique_spirv object;
+
+    if (!m_Source.empty())
     {
-        raw_args.push_back(def.c_str());
+        Compiler::CompileArgs args = {};
+        args.cmdline_args.reserve(Args.Common.Args.size());
+        for (auto& def : Args.Common.Args)
+        {
+            args.cmdline_args.push_back(def.c_str());
+        }
+        args.headers.reserve(Args.Headers.size());
+        for (auto& h : Args.Headers)
+        {
+            args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
+        }
+        args.program_source = m_Source.c_str();
+
+        object = pCompiler->Compile(args, loggers);
     }
-    std::vector<clc_named_value> headers;
-    headers.reserve(Args.Headers.size());
-    for (auto& h : Args.Headers)
+    else
     {
-        headers.push_back(clc_named_value{ h.first.c_str(), h.second->m_Source.c_str() });
+        assert(!m_IL.empty());
+        object = pCompiler->Load(m_IL.data(), m_IL.size());
     }
-
-    args.headers = headers.data();
-    args.num_headers = (unsigned)headers.size();
-    args.args = raw_args.data();
-    args.num_args = (unsigned)raw_args.size();
-    args.source = { "source.cl", m_Source.c_str() };
-
-    unique_spirv object(compile(Context, &args, &loggers_impl), free);
 
     {
         std::lock_guard Lock(m_Lock);
@@ -1219,6 +1179,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
             BuildData->m_BuildStatus = CL_BUILD_ERROR;
         }
     }
+
     if (Args.Common.pfn_notify)
     {
         Args.Common.pfn_notify(this, Args.Common.CallbackUserData);
@@ -1229,30 +1190,23 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
 cl_int Program::LinkImpl(LinkArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
-    auto& Compiler = g_Platform->GetCompiler();
-    clc_context* Context = nullptr;
-    auto link = Compiler.proc_address<decltype(&clc_link)>("clc_link");
-    auto free = Compiler.proc_address<decltype(&clc_free_object)>("clc_free_object");
-    std::vector<const clc_object*> objects;
-    objects.reserve(Args.LinkPrograms.size());
+    auto pCompiler = g_Platform->GetCompiler();
 
-    clc_linker_args link_args = {};
+    Compiler::LinkerArgs link_args = {};
+    link_args.objs.reserve(Args.LinkPrograms.size());
     link_args.create_library = Args.Common.CreateLibrary;
 
     for (auto& Device : m_AssociatedDevices)
     {
-        if (!Context)
-        {
-            Context = g_Platform->GetCompilerContext(Device->GetShaderCache());
-        }
+        pCompiler->Initialize(Device->GetShaderCache());
 
-        objects.clear();
+        link_args.objs.clear();
         for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
         {
             std::lock_guard Lock(Args.LinkPrograms[i]->m_Lock);
             auto& BuildData = Args.LinkPrograms[i]->m_BuildData[Device.Get()];
             if (BuildData)
-                objects.push_back(BuildData->m_OwnedBinary.get());
+                link_args.objs.push_back(BuildData->m_OwnedBinary.get());
         }
 
         {
@@ -1260,12 +1214,8 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
             auto& BuildData = m_BuildData[Device.Get()];
             if (BuildData->m_BuildStatus == CL_BUILD_IN_PROGRESS)
             {
-                Loggers loggers(*this, *BuildData);
-                clc_logger loggers_impl = loggers;
-
-                link_args.in_objs = objects.data();
-                link_args.num_in_objs = (unsigned)objects.size();
-                unique_spirv linkedObject(link(Context, &link_args, &loggers_impl), free);
+                Logger loggers(m_Lock, BuildData->m_BuildLog);
+                unique_spirv linkedObject = pCompiler->Link(link_args, loggers);
 
                 if (linkedObject)
                 {
@@ -1303,19 +1253,17 @@ void Program::PerDeviceData::CreateKernels(Program& program)
     if (m_BinaryType != CL_PROGRAM_BINARY_TYPE_EXECUTABLE)
         return;
 
-    auto& Compiler = g_Platform->GetCompiler();
-    auto Context = g_Platform->GetCompilerContext(m_Device->GetShaderCache());
-    auto get_kernel = Compiler.proc_address<decltype(&clc_to_dxil)>("clc_to_dxil");
-    auto free = Compiler.proc_address<decltype(&clc_free_dxil_object)>("clc_free_dxil_object");
+    auto pCompiler = g_Platform->GetCompiler();
+    pCompiler->Initialize(m_Device->GetShaderCache());
 
-    for (auto kernelMeta = m_OwnedBinary->kernels; kernelMeta != m_OwnedBinary->kernels + m_OwnedBinary->num_kernels; ++kernelMeta)
+    auto& kernels = m_OwnedBinary->GetKernelInfo();
+    Logger loggers(program.m_Lock, m_BuildLog);
+    for (auto& kernelMeta : kernels)
     {
-        auto name = kernelMeta->name;
-        auto& kernel = m_Kernels.emplace(name, unique_dxil(nullptr, free)).first->second;
-        Loggers loggers(program, *this);
-        clc_logger loggers_impl = loggers;
-        kernel.m_GenericDxil.reset(get_kernel(Context, m_OwnedBinary.get(), name, nullptr /*configuration*/, &loggers_impl));
+        auto name = kernelMeta.name;
+        auto& kernel = m_Kernels.emplace(name, unique_dxil{}).first->second;
+        kernel.m_GenericDxil = pCompiler->GetKernel(name, *m_OwnedBinary, nullptr /*configuration*/, &loggers);
         if (kernel.m_GenericDxil)
-            SignBlob(kernel.m_GenericDxil->binary.data, kernel.m_GenericDxil->binary.size);
+            kernel.m_GenericDxil->Sign();
     }
 }

@@ -122,7 +122,7 @@ clGetDeviceInfo(cl_device_id    device,
         case CL_DEVICE_MAX_WRITE_IMAGE_ARGS: /*UAVs*/return ImageRetValueOrZero((cl_uint)64);
         case CL_DEVICE_MAX_READ_WRITE_IMAGE_ARGS: /*Typed UAVs*/ return ImageRetValueOrZero((cl_uint)(pDevice->SupportsTypedUAVLoad() ? 64 : 0));
 
-        case CL_DEVICE_IL_VERSION: return RetValue("");
+        case CL_DEVICE_IL_VERSION: return RetValue("SPIR-V_1.0");
         case CL_DEVICE_ILS_WITH_VERSION: return RetValue(nullptr);
 
         case CL_DEVICE_IMAGE2D_MAX_WIDTH: return ImageRetValueOrZero((size_t)D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION);
@@ -208,6 +208,7 @@ clGetDeviceInfo(cl_device_id    device,
                                                    "cl_khr_local_int32_base_atomics "
                                                    "cl_khr_local_int32_extended_atomics "
                                                    "cl_khr_byte_addressable_store "
+                                                   "cl_khr_il_program "
         );
 
         case CL_DEVICE_PRINTF_BUFFER_SIZE: return RetValue((size_t)1024 * 1024);

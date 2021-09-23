@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 #include "kernel.hpp"
 #include "sampler.hpp"
-#include "clc_compiler.h"
+#include "compiler.hpp"
 
 extern CL_API_ENTRY cl_kernel CL_API_CALL
 clCreateKernel(cl_program      program_,
@@ -17,7 +17,7 @@ clCreateKernel(cl_program      program_,
 
     Program& program = *static_cast<Program*>(program_);
     auto ReportError = program.GetContext().GetErrorReporter(errcode_ret);
-    const clc_dxil_object* kernel = nullptr;
+    const CompiledDxil* kernel = nullptr;
 
     {
         std::lock_guard Lock(program.m_Lock);
@@ -42,19 +42,24 @@ clCreateKernel(cl_program      program_,
             ++DeviceCountWithKernel;
             if (kernel)
             {
-                if (kernel->kernel->num_args != iter->second.m_GenericDxil->kernel->num_args)
+                auto& first_info = kernel->GetMetadata().program_kernel_info;
+                auto& second_info = iter->second.m_GenericDxil->GetMetadata().program_kernel_info;
+                if (first_info.args.size() != second_info.args.size())
                 {
                     return ReportError("Kernel argument count differs between devices.", CL_INVALID_KERNEL_DEFINITION);
                 }
-                for (unsigned i = 0; i < kernel->kernel->num_args; ++i)
+                for (unsigned i = 0; i < first_info.args.size(); ++i)
                 {
-                    auto& a = kernel->kernel->args[i];
-                    auto& b = iter->second.m_GenericDxil->kernel->args[i];
+                    auto& a = first_info.args[i];
+                    auto& b = second_info.args[i];
                     if (strcmp(a.type_name, b.type_name) != 0 ||
                         strcmp(a.name, b.name) != 0 ||
                         a.address_qualifier != b.address_qualifier ||
-                        a.access_qualifier != b.access_qualifier ||
-                        a.type_qualifier != b.type_qualifier)
+                        a.readable != b.readable ||
+                        a.writable != b.writable ||
+                        a.is_const != b.is_const ||
+                        a.is_restrict != b.is_restrict ||
+                        a.is_volatile != b.is_volatile)
                     {
                         return ReportError("Kernel argument differs between devices.", CL_INVALID_KERNEL_DEFINITION);
                     }
@@ -79,7 +84,7 @@ clCreateKernel(cl_program      program_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return new Kernel(program, kernel_name, kernel);
+        return new Kernel(program, kernel_name, *kernel);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -219,9 +224,8 @@ static D3D12TranslationLayer::RESOURCE_DIMENSION ResourceDimensionFromMemObjectT
     return D3D12TranslationLayer::RESOURCE_DIMENSION::UNKNOWN;
 }
 
-static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object const* pDxil)
+static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(CompiledDxil::Metadata const& metadata)
 {
-    auto& metadata = pDxil->metadata;
     D3D12TranslationLayer::SShaderDecls decls = {};
     cl_uint KernelArgCBIndex = metadata.kernel_inputs_cbv_id;
     cl_uint WorkPropertiesCBIndex = metadata.work_properties_cbv_id;
@@ -230,25 +234,27 @@ static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(clc_dxil_object con
     decls.m_ResourceDecls.resize(metadata.num_srvs);
     decls.m_UAVDecls.resize(metadata.num_uavs);
 
-    for (cl_uint i = 0; i < pDxil->kernel->num_args; ++i)
+    for (cl_uint i = 0; i < metadata.args.size(); ++i)
     {
-        auto& arg = pDxil->kernel->args[i];
-        if (arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_GLOBAL ||
-            arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_CONSTANT)
+        auto& arg_info = metadata.program_kernel_info.args[i];
+        auto& arg_meta = metadata.args[i];
+        if (arg_info.address_qualifier == ProgramBinary::Kernel::Arg::AddressSpace::Global ||
+            arg_info.address_qualifier == ProgramBinary::Kernel::Arg::AddressSpace::Constant)
         {
-            cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
+            cl_mem_object_type imageType = MemObjectTypeFromName(arg_info.type_name);
             if (imageType != 0)
             {
                 auto dim = ResourceDimensionFromMemObjectType(imageType);
-                bool uav = (arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_WRITE) != 0;
+                bool uav = arg_info.writable;
                 auto& declVector = uav ? decls.m_UAVDecls : decls.m_ResourceDecls;
-                for (cl_uint j = 0; j < metadata.args[i].image.num_buf_ids; ++j)
-                    declVector[metadata.args[i].image.buf_ids[j]] = dim;
+                auto& image_meta = std::get<CompiledDxil::Metadata::Arg::Image>(arg_meta.properties);
+                for (cl_uint j = 0; j < image_meta.num_buffer_ids; ++j)
+                    declVector[image_meta.buffer_ids[j]] = dim;
             }
             else
             {
-                decls.m_UAVDecls[metadata.args[i].globconstptr.buf_id] =
-                    D3D12TranslationLayer::RESOURCE_DIMENSION::BUFFER;
+                auto& mem_meta = std::get<CompiledDxil::Metadata::Arg::Memory>(arg_meta.properties);
+                decls.m_UAVDecls[mem_meta.buffer_id] = D3D12TranslationLayer::RESOURCE_DIMENSION::BUFFER;
             }
         }
     }
@@ -270,36 +276,43 @@ static cl_filter_mode CLFilterModeFromSpirv(unsigned filter_mode)
     return filter_mode + CL_FILTER_NEAREST;
 }
 
-Kernel::Kernel(Program& Parent, std::string const& name, clc_dxil_object const* pDxil)
+Kernel::Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxil)
     : CLChildBase(Parent)
-    , m_pDxil(pDxil)
+    , m_Dxil(Dxil)
     , m_Name(name)
-    , m_ShaderDecls(DeclsFromMetadata(pDxil))
+    , m_ShaderDecls(DeclsFromMetadata(Dxil.GetMetadata()))
 {
-    m_UAVs.resize(m_pDxil->metadata.num_uavs);
-    m_SRVs.resize(m_pDxil->metadata.num_srvs);
-    m_Samplers.resize(m_pDxil->metadata.num_samplers);
-    m_ArgMetadataToCompiler.resize(m_pDxil->kernel->num_args);
-    size_t KernelInputsCbSize = m_pDxil->metadata.kernel_inputs_buf_size;
+    m_UAVs.resize(m_ShaderDecls.m_UAVDecls.size());
+    m_SRVs.resize(m_ShaderDecls.m_ResourceDecls.size());
+    m_Samplers.resize(m_ShaderDecls.m_NumSamplers);
+    m_ArgMetadataToCompiler.resize(Dxil.GetMetadata().args.size());
+    for (cl_uint i = 0; i < Dxil.GetMetadata().args.size(); ++i)
+    {
+        auto& meta = Dxil.GetMetadata().args[i];
+        auto& config = m_ArgMetadataToCompiler[i].config;
+        if (std::holds_alternative<CompiledDxil::Metadata::Arg::Local>(meta.properties))
+            config = CompiledDxil::Configuration::Arg::Local{ 0 };
+        else if (std::holds_alternative<CompiledDxil::Metadata::Arg::Sampler>(meta.properties))
+            config = CompiledDxil::Configuration::Arg::Sampler{};
+    }
+    size_t KernelInputsCbSize = Dxil.GetMetadata().kernel_inputs_buf_size;
     m_KernelArgsCbData.resize(KernelInputsCbSize);
 
-    m_ConstSamplers.resize(m_pDxil->metadata.num_const_samplers);
-    for (cl_uint i = 0; i < m_pDxil->metadata.num_const_samplers; ++i)
+    m_ConstSamplers.reserve(Dxil.GetMetadata().constSamplers.size());
+    for (auto& samplerMeta : Dxil.GetMetadata().constSamplers)
     {
-        auto& samplerMeta = m_pDxil->metadata.const_samplers[i];
         Sampler::Desc desc =
         {
             samplerMeta.normalized_coords,
             CLAddressingModeFromSpirv(samplerMeta.addressing_mode),
             CLFilterModeFromSpirv(samplerMeta.filter_mode)
         };
-        m_ConstSamplers[i] = new Sampler(m_Parent->GetContext(), desc, nullptr);
-        m_Samplers[samplerMeta.sampler_id] = m_ConstSamplers[i].Get();
+        m_ConstSamplers.emplace_back(new Sampler(m_Parent->GetContext(), desc, nullptr));
+        m_Samplers[samplerMeta.sampler_id] = m_ConstSamplers.back().Get();
     }
 
-    for (cl_uint i = 0; i < m_pDxil->metadata.num_consts; ++i)
+    for (auto& constMeta : Dxil.GetMetadata().consts)
     {
-        auto& constMeta = m_pDxil->metadata.consts[i];
         auto resource = static_cast<Resource*>(clCreateBuffer(&Parent.GetContext(),
                                                               CL_MEM_COPY_HOST_PTR | CL_MEM_READ_ONLY | CL_MEM_HOST_NO_ACCESS,
                                                               constMeta.size, constMeta.data,
@@ -313,7 +326,7 @@ Kernel::Kernel(Program& Parent, std::string const& name, clc_dxil_object const* 
 
 Kernel::Kernel(Kernel const& other)
     : CLChildBase(other.m_Parent.get())
-    , m_pDxil(other.m_pDxil)
+    , m_Dxil(other.m_Dxil)
     , m_Name(other.m_Name)
     , m_ShaderDecls(other.m_ShaderDecls)
     , m_UAVs(other.m_UAVs)
@@ -335,27 +348,29 @@ Kernel::~Kernel()
 cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
 {
     auto ReportError = m_Parent->GetContext().GetErrorReporter();
-    if (arg_index > m_pDxil->kernel->num_args)
+    if (arg_index > m_Dxil.GetMetadata().args.size())
     {
         return ReportError("Argument index out of bounds", CL_INVALID_ARG_INDEX);
     }
 
-    auto& arg = m_pDxil->kernel->args[arg_index];
-    switch (arg.address_qualifier)
+    auto& arg_meta = m_Dxil.GetMetadata().args[arg_index];
+    auto& arg_info = m_Dxil.GetMetadata().program_kernel_info.args[arg_index];
+    switch (arg_info.address_qualifier)
     {
-    case CLC_KERNEL_ARG_ADDRESS_GLOBAL:
-    case CLC_KERNEL_ARG_ADDRESS_CONSTANT:
+    case ProgramBinary::Kernel::Arg::AddressSpace::Global:
+    case ProgramBinary::Kernel::Arg::AddressSpace::Constant:
     {
         if (arg_size != sizeof(cl_mem))
         {
             return ReportError("Invalid argument size, must be sizeof(cl_mem) for global and constant arguments", CL_INVALID_ARG_SIZE);
         }
 
-        cl_mem_object_type imageType = MemObjectTypeFromName(arg.type_name);
+        cl_mem_object_type imageType = MemObjectTypeFromName(arg_info.type_name);
         cl_mem mem = arg_value ? *reinterpret_cast<cl_mem const*>(arg_value) : nullptr;
         Resource* resource = static_cast<Resource*>(mem);
         if (imageType != 0)
         {
+            auto& imageMeta = std::get<CompiledDxil::Metadata::Arg::Image>(arg_meta.properties);
             bool validImageType = true;
             if (resource)
             {
@@ -367,20 +382,20 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 return ReportError("Invalid image type.", CL_INVALID_ARG_VALUE);
             }
 
-            if (arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_WRITE)
+            if (arg_info.writable)
             {
                 if (resource && (resource->m_Flags & CL_MEM_READ_ONLY))
                 {
                     return ReportError("Invalid mem object flags, binding read-only image to writable image argument.", CL_INVALID_ARG_VALUE);
                 }
-                if ((arg.access_qualifier & CLC_KERNEL_ARG_ACCESS_READ) != 0 &&
+                if (arg_info.readable &&
                     resource && (resource->m_Flags & CL_MEM_WRITE_ONLY))
                 {
                     return ReportError("Invalid mem object flags, binding write-only image to read-write image argument.", CL_INVALID_ARG_VALUE);
                 }
-                for (cl_uint i = 0; i < m_pDxil->metadata.args[arg_index].image.num_buf_ids; ++i)
+                for (cl_uint i = 0; i < imageMeta.num_buffer_ids; ++i)
                 {
-                    m_UAVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = resource;
+                    m_UAVs[imageMeta.buffer_ids[i]] = resource;
                 }
             }
             else
@@ -389,15 +404,15 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
                 {
                     return ReportError("Invalid mem object flags, binding write-only image to read-only image argument.", CL_INVALID_ARG_VALUE);
                 }
-                for (cl_uint i = 0; i < m_pDxil->metadata.args[arg_index].image.num_buf_ids; ++i)
+                for (cl_uint i = 0; i < imageMeta.num_buffer_ids; ++i)
                 {
-                    m_SRVs[m_pDxil->metadata.args[arg_index].image.buf_ids[i]] = resource;
+                    m_SRVs[imageMeta.buffer_ids[i]] = resource;
                 }
             }
 
             // Store image format in the kernel args
             cl_image_format* ImageFormatInKernelArgs = reinterpret_cast<cl_image_format*>(
-                m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset);
+                m_KernelArgsCbData.data() + arg_meta.offset);
             *ImageFormatInKernelArgs = {};
             if (resource)
             {
@@ -414,12 +429,12 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             {
                 return ReportError("Invalid mem object type, must be buffer.", CL_INVALID_ARG_VALUE);
             }
-            uint64_t *buffer_val = reinterpret_cast<uint64_t*>(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset);
-            auto buf_id = m_pDxil->metadata.args[arg_index].globconstptr.buf_id;
-            m_UAVs[buf_id] = resource;
+            auto& memMeta = std::get<CompiledDxil::Metadata::Arg::Memory>(arg_meta.properties);
+            uint64_t *buffer_val = reinterpret_cast<uint64_t*>(m_KernelArgsCbData.data() + arg_meta.offset);
+            m_UAVs[memMeta.buffer_id] = resource;
             if (resource)
             {
-                *buffer_val = (uint64_t)buf_id << 32ull;
+                *buffer_val = (uint64_t)memMeta.buffer_id << 32ull;
             }
             else
             {
@@ -430,8 +445,8 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         break;
     }
 
-    case CLC_KERNEL_ARG_ADDRESS_PRIVATE:
-        if (strcmp(arg.type_name, "sampler_t") == 0)
+    case ProgramBinary::Kernel::Arg::AddressSpace::Private:
+        if (strcmp(arg_info.type_name, "sampler_t") == 0)
         {
             if (arg_size != sizeof(cl_sampler))
             {
@@ -439,22 +454,24 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
             }
             cl_sampler samp = arg_value ? *reinterpret_cast<cl_sampler const*>(arg_value) : nullptr;
             Sampler* sampler = static_cast<Sampler*>(samp);
-            m_Samplers[m_pDxil->metadata.args[arg_index].sampler.sampler_id] = sampler;
-            m_ArgMetadataToCompiler[arg_index].sampler.normalized_coords = sampler ? sampler->m_Desc.NormalizedCoords : 1u;
-            m_ArgMetadataToCompiler[arg_index].sampler.addressing_mode = sampler ? SpirvAddressingModeFromCL(sampler->m_Desc.AddressingMode) : 0u;
-            m_ArgMetadataToCompiler[arg_index].sampler.linear_filtering = sampler ? (sampler->m_Desc.FilterMode == CL_FILTER_LINEAR) : 0u;
+            auto& samplerMeta = std::get<CompiledDxil::Metadata::Arg::Sampler>(arg_meta.properties);
+            auto& samplerConfig = std::get<CompiledDxil::Configuration::Arg::Sampler>(m_ArgMetadataToCompiler[arg_index].config);
+            m_Samplers[samplerMeta.sampler_id] = sampler;
+            samplerConfig.normalizedCoords = sampler ? sampler->m_Desc.NormalizedCoords : 1u;
+            samplerConfig.addressingMode = sampler ? SpirvAddressingModeFromCL(sampler->m_Desc.AddressingMode) : 0u;
+            samplerConfig.linearFiltering = sampler ? (sampler->m_Desc.FilterMode == CL_FILTER_LINEAR) : 0u;
         }
         else
         {
-            if (arg_size != m_pDxil->metadata.args[arg_index].size)
+            if (arg_size != arg_meta.size)
             {
                 return ReportError("Invalid argument size", CL_INVALID_ARG_SIZE);
             }
-            memcpy(m_KernelArgsCbData.data() + m_pDxil->metadata.args[arg_index].offset, arg_value, arg_size);
+            memcpy(m_KernelArgsCbData.data() + arg_meta.offset, arg_value, arg_size);
         }
         break;
 
-    case CLC_KERNEL_ARG_ADDRESS_LOCAL:
+    case ProgramBinary::Kernel::Arg::AddressSpace::Local:
         if (arg_size == 0)
         {
             return ReportError("Argument size must be nonzero for local arguments", CL_INVALID_ARG_SIZE);
@@ -463,7 +480,8 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         {
             return ReportError("Argument value must be null for local arguments", CL_INVALID_ARG_VALUE);
         }
-        m_ArgMetadataToCompiler[arg_index].localptr.size = (cl_uint)arg_size;
+        auto& localConfig = std::get<CompiledDxil::Configuration::Arg::Local>(m_ArgMetadataToCompiler[arg_index].config);
+        localConfig.size = (cl_uint)arg_size;
         break;
     }
 
@@ -472,15 +490,15 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
 
 uint16_t const* Kernel::GetRequiredLocalDims() const
 {
-    if (m_pDxil->metadata.local_size[0] != 0)
-        return m_pDxil->metadata.local_size;
+    if (m_Dxil.GetMetadata().local_size[0] != 0)
+        return m_Dxil.GetMetadata().local_size;
     return nullptr;
 }
 
 uint16_t const* Kernel::GetLocalDimsHint() const
 {
-    if (m_pDxil->metadata.local_size_hint[0] != 0)
-        return m_pDxil->metadata.local_size_hint;
+    if (m_Dxil.GetMetadata().local_size_hint[0] != 0)
+        return m_Dxil.GetMetadata().local_size_hint;
     return nullptr;
 }
 
@@ -503,8 +521,8 @@ clGetKernelInfo(cl_kernel       kernel_,
     auto& kernel = *static_cast<Kernel*>(kernel_);
     switch (param_name)
     {
-    case CL_KERNEL_FUNCTION_NAME: return RetValue(kernel.m_pDxil->kernel->name);
-    case CL_KERNEL_NUM_ARGS: return RetValue((cl_uint)kernel.m_pDxil->kernel->num_args);
+    case CL_KERNEL_FUNCTION_NAME: return RetValue(kernel.m_Dxil.GetMetadata().program_kernel_info.name);
+    case CL_KERNEL_NUM_ARGS: return RetValue((cl_uint)kernel.m_Dxil.GetMetadata().args.size());
     case CL_KERNEL_REFERENCE_COUNT: return RetValue(kernel.GetRefCount());
     case CL_KERNEL_CONTEXT: return RetValue((cl_context)&kernel.m_Parent->m_Parent.get());
     case CL_KERNEL_PROGRAM: return RetValue((cl_program)&kernel.m_Parent.get());
@@ -533,44 +551,45 @@ clGetKernelArgInfo(cl_kernel       kernel_,
     };
     auto& kernel = *static_cast<Kernel*>(kernel_);
     
-    if (arg_indx > kernel.m_pDxil->kernel->num_args)
+    if (arg_indx > kernel.m_Dxil.GetMetadata().args.size())
     {
         return CL_INVALID_ARG_INDEX;
     }
 
-    auto& arg = kernel.m_pDxil->kernel->args[arg_indx];
+    auto& arg_info = kernel.m_Dxil.GetMetadata().program_kernel_info.args[arg_indx];
     switch (param_name)
     {
     case CL_KERNEL_ARG_ADDRESS_QUALIFIER:
-        switch (arg.address_qualifier)
+        switch (arg_info.address_qualifier)
         {
         default:
-        case CLC_KERNEL_ARG_ADDRESS_PRIVATE: return RetValue(CL_KERNEL_ARG_ADDRESS_PRIVATE);
-        case CLC_KERNEL_ARG_ADDRESS_CONSTANT: return RetValue(CL_KERNEL_ARG_ADDRESS_CONSTANT);
-        case CLC_KERNEL_ARG_ADDRESS_LOCAL: return RetValue(CL_KERNEL_ARG_ADDRESS_LOCAL);
-        case CLC_KERNEL_ARG_ADDRESS_GLOBAL: return RetValue(CL_KERNEL_ARG_ADDRESS_GLOBAL);
+        case ProgramBinary::Kernel::Arg::AddressSpace::Private: return RetValue(CL_KERNEL_ARG_ADDRESS_PRIVATE);
+        case ProgramBinary::Kernel::Arg::AddressSpace::Constant: return RetValue(CL_KERNEL_ARG_ADDRESS_CONSTANT);
+        case ProgramBinary::Kernel::Arg::AddressSpace::Local: return RetValue(CL_KERNEL_ARG_ADDRESS_LOCAL);
+        case ProgramBinary::Kernel::Arg::AddressSpace::Global: return RetValue(CL_KERNEL_ARG_ADDRESS_GLOBAL);
         }
         break;
     case CL_KERNEL_ARG_ACCESS_QUALIFIER:
-        switch (arg.access_qualifier)
-        {
-        default: return RetValue(CL_KERNEL_ARG_ACCESS_NONE);
-        case CLC_KERNEL_ARG_ACCESS_READ: return RetValue(CL_KERNEL_ARG_ACCESS_READ_ONLY);
-        case CLC_KERNEL_ARG_ACCESS_WRITE: return RetValue(CL_KERNEL_ARG_ACCESS_WRITE_ONLY);
-        case CLC_KERNEL_ARG_ACCESS_READ | CLC_KERNEL_ARG_ACCESS_WRITE: return RetValue(CL_KERNEL_ARG_ACCESS_READ_WRITE);
-        }
-    case CL_KERNEL_ARG_TYPE_NAME: return RetValue(arg.type_name);
+        if (arg_info.writable && arg_info.readable)
+            return RetValue(CL_KERNEL_ARG_ACCESS_READ_WRITE);
+        else if (arg_info.writable)
+            return RetValue(CL_KERNEL_ARG_ACCESS_WRITE_ONLY);
+        else if (arg_info.readable)
+            return RetValue(CL_KERNEL_ARG_ACCESS_READ_ONLY);
+        else
+            return RetValue(CL_KERNEL_ARG_ACCESS_NONE);
+    case CL_KERNEL_ARG_TYPE_NAME: return RetValue(arg_info.type_name);
     case CL_KERNEL_ARG_TYPE_QUALIFIER:
     {
         cl_kernel_arg_type_qualifier qualifier = CL_KERNEL_ARG_TYPE_NONE;
-        if ((arg.type_qualifier & CLC_KERNEL_ARG_TYPE_CONST) ||
-            arg.address_qualifier == CLC_KERNEL_ARG_ADDRESS_CONSTANT) qualifier |= CL_KERNEL_ARG_TYPE_CONST;
-        if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_RESTRICT) qualifier |= CL_KERNEL_ARG_TYPE_RESTRICT;
-        if (arg.type_qualifier & CLC_KERNEL_ARG_TYPE_VOLATILE) qualifier |= CL_KERNEL_ARG_TYPE_VOLATILE;
+        if (arg_info.is_const ||
+            arg_info.address_qualifier == ProgramBinary::Kernel::Arg::AddressSpace::Constant) qualifier |= CL_KERNEL_ARG_TYPE_CONST;
+        if (arg_info.is_restrict) qualifier |= CL_KERNEL_ARG_TYPE_RESTRICT;
+        if (arg_info.is_volatile) qualifier |= CL_KERNEL_ARG_TYPE_VOLATILE;
         return RetValue(qualifier);
     }
     case CL_KERNEL_ARG_NAME:
-        if (arg.name) return RetValue(arg.name);
+        if (arg_info.name) return RetValue(arg_info.name);
         return CL_KERNEL_ARG_INFO_NOT_AVAILABLE;
     }
 
@@ -610,19 +629,19 @@ clGetKernelWorkGroupInfo(cl_kernel                  kernel_,
     }
     case CL_KERNEL_LOCAL_MEM_SIZE:
     {
-        size_t size = kernel.m_pDxil->metadata.local_mem_size;
-        for (cl_uint i = 0; i < kernel.m_pDxil->kernel->num_args; ++i)
+        size_t size = kernel.m_Dxil.GetMetadata().local_mem_size;
+        for (cl_uint i = 0; i < kernel.m_Dxil.GetMetadata().args.size(); ++i)
         {
-            if (kernel.m_pDxil->kernel->args[i].address_qualifier == CLC_KERNEL_ARG_ADDRESS_LOCAL)
+            if (kernel.m_Dxil.GetMetadata().program_kernel_info.args[i].address_qualifier == ProgramBinary::Kernel::Arg::AddressSpace::Local)
             {
                 size -= 4;
-                size += kernel.m_ArgMetadataToCompiler[i].localptr.size;
+                size += std::get<CompiledDxil::Configuration::Arg::Local>(kernel.m_ArgMetadataToCompiler[i].config).size;
             }
         }
         return RetValue(size);
     }
     case CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE: return RetValue((size_t)64);
-    case CL_KERNEL_PRIVATE_MEM_SIZE: return RetValue(kernel.m_pDxil->metadata.priv_mem_size);
+    case CL_KERNEL_PRIVATE_MEM_SIZE: return RetValue(kernel.m_Dxil.GetMetadata().priv_mem_size);
     }
 
     return CL_INVALID_VALUE;
