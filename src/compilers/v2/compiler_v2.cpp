@@ -37,7 +37,7 @@ public:
     static CompilerV2 *Instance();
 
     // Compiler functions
-    decltype(&clc_libclc_new) LoadLibclc = nullptr;
+    decltype(&clc_libclc_new_dxil) LoadLibclc = nullptr;
     decltype(&clc_libclc_serialize) SerializeLibclc = nullptr;
     decltype(&clc_libclc_deserialize) DeserializeLibclc = nullptr;
     decltype(&clc_libclc_free_serialized) FreeSerializedLibclc = nullptr;
@@ -115,14 +115,11 @@ static clc_logger ConvertLogger(Logger const& logger)
     return ret;
 }
 
-#if 0
-#endif
-
 CompilerV2::CompilerV2(XPlatHelpers::unique_module compiler)
     : m_Compiler(std::move(compiler))
 {
 #define GET_FUNC(Member, api) Member = m_Compiler.proc_address<decltype(&api)>(#api)
-    GET_FUNC(LoadLibclc, clc_libclc_new);
+    GET_FUNC(LoadLibclc, clc_libclc_new_dxil);
     GET_FUNC(SerializeLibclc, clc_libclc_serialize);
     GET_FUNC(DeserializeLibclc, clc_libclc_deserialize);
     GET_FUNC(FreeSerializedLibclc, clc_libclc_free_serialized);
@@ -136,6 +133,9 @@ CompilerV2::CompilerV2(XPlatHelpers::unique_module compiler)
     GET_FUNC(FreeDxil, clc_free_dxil_object);
     GET_FUNC(GetCompilerVersion, clc_compiler_get_version);
 #undef GET_FUNC
+
+    if (!LoadLibclc)
+        LoadLibclc = m_Compiler.proc_address<decltype(&clc_libclc_new_dxil)>("clc_libclc_new");
 
     if (!LoadLibclc ||
         !SerializeLibclc ||
@@ -183,7 +183,7 @@ bool CompilerV2::Initialize(ShaderCache &cache)
         }
     }
 
-    clc_libclc_options options = {};
+    clc_libclc_dxil_options options = {};
     options.optimize = cache.HasCache() && SerializeLibclc && FreeSerializedLibclc;
     m_Libclc.reset(LoadLibclc(nullptr, &options));
 
@@ -220,6 +220,9 @@ std::unique_ptr<ProgramBinary> CompilerV2::Compile(CompileArgs const& args, Logg
     static_assert(offsetof(clc_named_value, value) == offsetof(CompileArgs::Header, contents));
     args_impl.headers = (clc_named_value*)args.headers.data();
     args_impl.num_headers = (unsigned)args.headers.size();
+
+    args_impl.spirv_version = CLC_SPIRV_VERSION_MAX;
+    args_impl.allowed_spirv_extensions = nullptr;
 
     auto logger_impl = ConvertLogger(logger);
     if (!CompileImpl(&args_impl, &logger_impl, &obj))
@@ -283,7 +286,7 @@ std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBin
         std::copy(conf->local_size, std::end(conf->local_size), conf_impl.local_size);
         conf_impl.lower_bit_size = (conf->lower_int16 ? 16 : 0) | (conf->lower_int64 ? 64 : 0);
         conf_impl.support_global_work_id_offsets = conf->support_global_work_id_offsets;
-        conf_impl.support_work_group_id_offsets = conf->support_work_group_id_offsets;
+        conf_impl.support_workgroup_id_offsets = conf->support_work_group_id_offsets;
 
         conf_args.resize(conf->args.size());
         for (auto& arg : conf->args)
