@@ -210,6 +210,17 @@ public:
         };
         std::vector<Header> headers;
         const char *program_source;
+        struct Features
+        {
+            bool fp16;
+            bool fp64;
+            bool int64;
+            bool images;
+            bool images_read_write;
+            bool images_write_3d;
+            bool intel_subgroups;
+            bool subgroups;
+        } features;
         std::vector<const char*> cmdline_args;
     };
 

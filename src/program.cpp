@@ -901,28 +901,15 @@ void Program::AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices,
 #else
     optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
 #endif
-    // Disable extensions promoted to optional core features that we don't support
-    optionsStruct.Args.push_back("-cl-ext=-cl_khr_fp64");
-    optionsStruct.Args.push_back("-cl-ext=-cl_khr_depth_images");
-    optionsStruct.Args.push_back("-cl-ext=-cl_khr_subgroups");
-    // Disable optional core features that we don't support
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_fp64");
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_device_enqueue");
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_generic_address_space");
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_pipes");
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_program_scope_global_variables");
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_subgroups");
-    optionsStruct.Args.push_back("-cl-ext=-__opencl_c_work_group_collective_functions");
+    optionsStruct.Features.int64 = true;
     // Query device caps to determine additional things to enable and/or disable
-    if (std::any_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return d->IsMCDM(); }))
+    if (std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return !d->IsMCDM(); }))
     {
-        optionsStruct.Args.push_back("-U__IMAGE_SUPPORT__");
-        optionsStruct.Args.push_back("-cl-ext=-__opencl_c_images");
-        optionsStruct.Args.push_back("-cl-ext=-__opencl_c_read_write_images");
-    }
-    else if (!std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return d->SupportsTypedUAVLoad(); }))
-    {
-        optionsStruct.Args.push_back("-cl-ext=-__opencl_c_read_write_images");
+        optionsStruct.Features.images = true;
+        if (!std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const &d) { return d->SupportsTypedUAVLoad(); }))
+        {
+            optionsStruct.Features.images_read_write = true;
+        }
     }
 }
 

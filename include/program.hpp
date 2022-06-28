@@ -141,6 +141,7 @@ private:
     {
         std::shared_ptr<PerDeviceData> BuildData;
 
+        Compiler::CompileArgs::Features Features;
         std::vector<std::string> Args;
         bool CreateLibrary;
         bool EnableLinkOptions; // Does nothing, validation only

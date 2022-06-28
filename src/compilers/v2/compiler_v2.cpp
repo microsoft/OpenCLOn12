@@ -210,7 +210,7 @@ bool CompilerV2::Initialize(ShaderCache &cache)
 std::unique_ptr<ProgramBinary> CompilerV2::Compile(CompileArgs const& args, Logger const& logger) const
 {
     ProgramBinaryV2::unique_obj obj({}, FreeSpirv);
-    clc_compile_args args_impl;
+    clc_compile_args args_impl = {};
     args_impl.args = args.cmdline_args.data();
     args_impl.num_args = (unsigned)args.cmdline_args.size();
     args_impl.source = { "source.cl", args.program_source };
@@ -220,6 +220,15 @@ std::unique_ptr<ProgramBinary> CompilerV2::Compile(CompileArgs const& args, Logg
     static_assert(offsetof(clc_named_value, value) == offsetof(CompileArgs::Header, contents));
     args_impl.headers = (clc_named_value*)args.headers.data();
     args_impl.num_headers = (unsigned)args.headers.size();
+
+    args_impl.features.fp16 = args.features.fp16;
+    args_impl.features.fp64 = args.features.fp64;
+    args_impl.features.int64 = args.features.int64;
+    args_impl.features.images = args.features.images;
+    args_impl.features.images_read_write = args.features.images_read_write;
+    args_impl.features.images_write_3d = args.features.images_write_3d;
+    args_impl.features.intel_subgroups = args.features.intel_subgroups;
+    args_impl.features.subgroups = args.features.subgroups;
 
     args_impl.spirv_version = CLC_SPIRV_VERSION_MAX;
     args_impl.allowed_spirv_extensions = nullptr;
