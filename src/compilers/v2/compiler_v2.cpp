@@ -297,7 +297,7 @@ std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBin
         conf_impl.support_global_work_id_offsets = conf->support_global_work_id_offsets;
         conf_impl.support_workgroup_id_offsets = conf->support_work_group_id_offsets;
 
-        conf_args.resize(conf->args.size());
+        conf_args.reserve(conf->args.size());
         for (auto& arg : conf->args)
         {
             clc_runtime_arg_info arg_impl;
