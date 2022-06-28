@@ -748,6 +748,17 @@ void ExecuteKernel::OnComplete()
                         // Pointers are 64bit
                         DataSize = 8;
                         break;
+                    case 'f':
+                    case 'F':
+                    case 'e':
+                    case 'E':
+                    case 'g':
+                    case 'G':
+                    case 'a':
+                    case 'A':
+                        // Give 8 bytes in the data stream for floats
+                        DataSize = 8;
+                        break;
                     }
                 }
 
@@ -790,7 +801,7 @@ void ExecuteKernel::OnComplete()
                     case 'a':
                     case 'A':
                     {
-                        if (DataSize != 4)
+                        if (ExplicitDataSize && DataSize != 4)
                         {
                             printf("Invalid format string, floats other than 4 bytes are not supported.\n");
                             return;
