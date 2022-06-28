@@ -870,6 +870,7 @@ void Program::StoreBinary(Device *Device, unique_spirv OwnedBinary, cl_program_b
     auto& BuildData = m_BuildData[Device];
     assert(!BuildData);
     BuildData = std::make_shared<PerDeviceData>();
+    BuildData->m_Device = Device;
     BuildData->m_OwnedBinary = std::move(OwnedBinary);
     BuildData->m_BinaryType = Type;
     BuildData->m_BuildStatus = CL_BUILD_NONE;
