@@ -4,8 +4,8 @@
 
 #include "clc_compiler.h"
 #include "compiler.hpp"
-#include "cache.hpp"
 #include "platform.hpp"
+#include "cache.hpp"
 
 template <typename T>
 struct unique_object : public T
