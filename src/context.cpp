@@ -19,13 +19,6 @@ public:
     static std::unique_ptr<GLInteropManager> Create(GLProperties const &glProps);
     virtual ~GLInteropManager() = default;
     virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) = 0;
-    d3d12_interop_device_info GetDeviceData()
-    {
-        d3d12_interop_device_info ret = {};
-        [[maybe_unused]] bool success = GetDeviceData(ret);
-        assert(success);
-        return ret;
-    }
 protected:
     void PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevInfo,
                              d3d12_interop_device_info &d3d12DevInfo)
@@ -473,7 +466,12 @@ Context::Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices,
 {
     for (auto& [device, d3ddevice] : m_AssociatedDevices)
     {
-        d3ddevice = &device->InitD3D();
+        d3d12_interop_device_info glInfo = {};
+        if (m_GLInteropManager)
+        {
+            m_GLInteropManager->GetDeviceData(glInfo);
+        }
+        d3ddevice = &device->InitD3D(glInfo.device, glInfo.queue);
     }
 }
 
