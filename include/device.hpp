@@ -4,7 +4,7 @@
 #include "platform.hpp"
 #include "cache.hpp"
 #include <string>
-#include <optional>
+#include <vector>
 #include <mutex>
 
 using ImmCtx = D3D12TranslationLayer::ImmediateContext;
@@ -17,9 +17,6 @@ using Submission = std::vector<::ref_ptr_int<Task>>;
 class D3DDevice
 {
 public:
-    D3DDevice(Device &parent,  ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options);
-    ~D3DDevice() = default;
-
     ID3D12Device* GetDevice() const noexcept { return m_spDevice.Get(); }
     ShaderCache &GetShaderCache() const noexcept { return m_ShaderCache; }
 
@@ -35,7 +32,15 @@ public:
     Device &GetParent() const noexcept { return m_Parent; }
 
 protected:
+    D3DDevice(Device &parent, ID3D12Device *pDevice, ID3D12CommandQueue *pQueue,
+              D3D12_FEATURE_DATA_D3D12_OPTIONS &options, bool IsImportedDevice);
+    ~D3DDevice() = default;
+
+    friend class Device;
+
     void ExecuteTasks(Submission& tasks);
+    unsigned m_ContextCount = 0;
+    const bool m_IsImportedDevice;
 
     Device &m_Parent;
     const ComPtr<ID3D12Device> m_spDevice;
@@ -72,10 +77,10 @@ public:
     std::string GetDeviceName() const;
     LUID GetAdapterLuid() const;
 
-    D3DDevice &InitD3D();
-    void ReleaseD3D();
+    D3DDevice &InitD3D(ID3D12Device *device = nullptr, ID3D12CommandQueue *queue = nullptr);
+    void ReleaseD3D(D3DDevice &device);
 
-    bool HasD3DDevice() const noexcept { return m_D3DDevice.has_value(); }
+    bool HasD3DDevice() const noexcept { return !m_D3DDevices.empty(); }
     void CloseCaches();
 
 protected:
@@ -83,7 +88,7 @@ protected:
 
     ComPtr<IDXCoreAdapter> m_spAdapter;
     DXCoreHardwareID m_HWIDs;
-    std::optional<::D3DDevice> m_D3DDevice;
+    std::vector<::D3DDevice *> m_D3DDevices;
 
     // Lazy-initialized
     std::mutex m_InitLock;
@@ -91,7 +96,6 @@ protected:
     D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS4 m_D3D12Options4 = {};
     D3D12_FEATURE_DATA_ARCHITECTURE m_Architecture = {};
-    unsigned m_ContextCount = 0;
 };
 
 using D3DDeviceAndRef = std::pair<Device::ref_ptr_int, D3DDevice *>;

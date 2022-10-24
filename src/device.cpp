@@ -287,11 +287,13 @@ static D3D12TranslationLayer::TranslationLayerCallbacks GetImmCtxCallbacks()
     return Callbacks;
 }
 
-D3DDevice::D3DDevice(Device &parent,ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options)
-    : m_Parent(parent)
+D3DDevice::D3DDevice(Device &parent, ID3D12Device *pDevice, ID3D12CommandQueue *pQueue,
+                     D3D12_FEATURE_DATA_D3D12_OPTIONS &options, bool IsImportedDevice)
+    : m_IsImportedDevice(IsImportedDevice)
+    , m_Parent(parent)
     , m_spDevice(pDevice)
     , m_Callbacks(GetImmCtxCallbacks())
-    , m_ImmCtx(0, options, pDevice, nullptr, m_Callbacks, 0, GetImmCtxCreationArgs())
+    , m_ImmCtx(0, options, pDevice, pQueue, m_Callbacks, 0, GetImmCtxCreationArgs())
     , m_RecordingSubmission(new Submission)
     , m_ShaderCache(pDevice)
 {
@@ -310,33 +312,53 @@ D3DDevice::D3DDevice(Device &parent,ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3
         (INT64)Task::TimestampToNanoseconds(GPUTimestamp, m_TimestampFrequency);
 }
 
-D3DDevice &Device::InitD3D()
+D3DDevice &Device::InitD3D(ID3D12Device *pDevice, ID3D12CommandQueue *pQueue)
 {
     std::lock_guard Lock(m_InitLock);
-    ++m_ContextCount;
-    if (m_D3DDevice)
+    for (auto &dev : m_D3DDevices)
     {
-        return *m_D3DDevice;
+        bool deviceAndQueueMatches = pDevice == dev->GetDevice() &&
+            (!pQueue || pQueue == dev->ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS));
+        if ((pDevice && deviceAndQueueMatches) ||
+            (!pDevice && !dev->m_IsImportedDevice))
+        {
+            ++dev->m_ContextCount;
+            return *dev;
+        }
     }
+
+    ComPtr<ID3D12Device> spD3D12Device = pDevice;
+    if (!pDevice)
+    {
+        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spD3D12Device)));
+    }
+    CacheCaps(Lock, spD3D12Device);
+    m_D3DDevices.emplace_back(nullptr);
+    try
+    {
+        m_D3DDevices.back() = new D3DDevice(*this, spD3D12Device.Get(),
+                                            pQueue, m_D3D12Options, pDevice != nullptr);
+    }
+    catch (...) { m_D3DDevices.pop_back(); }
 
     g_Platform->DeviceInit();
 
-    ComPtr<ID3D12Device> spD3D12Device;
-    THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spD3D12Device)));
-    CacheCaps(Lock, spD3D12Device);
-    m_D3DDevice.emplace(*this, spD3D12Device.Get(), m_D3D12Options);
-    return *m_D3DDevice;
+    return *m_D3DDevices.back();
 }
 
-void Device::ReleaseD3D()
+void Device::ReleaseD3D(D3DDevice &device)
 {
     std::lock_guard Lock(m_InitLock);
-    if (--m_ContextCount != 0)
+    if (--device.m_ContextCount != 0)
         return;
 
     g_Platform->DeviceUninit();
 
-    m_D3DDevice.reset();
+    auto newEnd = std::remove_if(m_D3DDevices.begin(), m_D3DDevices.end(),
+                                 [&device](D3DDevice *found) { return found == &device; });
+    assert(std::distance(newEnd, m_D3DDevices.end()) == 1);
+    delete m_D3DDevices.back();
+    m_D3DDevices.pop_back();
 }
 
 cl_bool Device::IsAvailable() const noexcept
@@ -572,9 +594,9 @@ void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> 
 
 void Device::CloseCaches()
 {
-    if (m_D3DDevice)
+    for (auto &dev : m_D3DDevices)
     {
-        m_D3DDevice->GetShaderCache().Close();
+        dev->GetShaderCache().Close();
     }
 }
 
@@ -613,7 +635,7 @@ clGetDeviceAndHostTimer(cl_device_id device_,
     {
         // Should I just return 0 here if they haven't created a context on this device?
         auto& d3dDevice = device.InitD3D();
-        auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(); });
+        auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(d3dDevice); });
 
         auto pQueue = d3dDevice.ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
         D3D12TranslationLayer::ThrowFailure(pQueue->GetClockCalibration(device_timestamp, host_timestamp));

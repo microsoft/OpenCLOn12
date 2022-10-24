@@ -50,6 +50,7 @@ public:
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
+    ~WGLInteropManager() = default;
 
 private:
     const HDC m_Display;
@@ -88,6 +89,7 @@ public:
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
+    ~EGLInteropManager() = default;
 
 private:
     const EGLDisplay m_Display;
@@ -116,11 +118,11 @@ std::unique_ptr<GLInteropManager> GLInteropManager::Create(GLProperties const &g
 {
     if (glProps.eglContext)
     {
-        return std::make_unique<EGLInteropManager>(glProps);
+        return std::unique_ptr<GLInteropManager>(new EGLInteropManager(glProps));
     }
     else if (glProps.wglContext)
     {
-        return std::make_unique<WGLInteropManager>(glProps);
+        return std::unique_ptr<GLInteropManager>(new WGLInteropManager(glProps));
     }
     return nullptr;
 }
@@ -483,9 +485,9 @@ Context::~Context()
         callback.m_pfn(this, callback.m_userData);
     }
 
-    for (auto& [device, _] : m_AssociatedDevices)
+    for (auto& [device, d3dDevice] : m_AssociatedDevices)
     {
-        device->ReleaseD3D();
+        device->ReleaseD3D(*d3dDevice);
     }
 }
 
