@@ -177,9 +177,9 @@ void Platform::FlushAllDevices(TaskPoolLock const& Lock)
 {
     for (auto& device : m_Devices)
     {
-        if (device->GetDevice())
+        if (auto &d3dDevice = device->D3DDevice())
         {
-            device->Flush(Lock);
+            d3dDevice->Flush(Lock);
         }
     }
 }
@@ -276,16 +276,17 @@ void Platform::UnloadCompiler()
 
 bool Platform::AnyD3DDevicesExist() const noexcept
 {
-    return std::any_of(m_Devices.begin(), m_Devices.end(), [](auto& dev) { return dev->GetDevice(); });
+    return std::any_of(m_Devices.begin(), m_Devices.end(), 
+                       [](std::unique_ptr<Device> const& dev) { return dev->D3DDevice().has_value(); });
 }
 
 void Platform::CloseCaches()
 {
     for (auto& device : m_Devices)
     {
-        if (device->GetDevice())
+        if (auto &d3dDevice = device->D3DDevice())
         {
-            device->GetShaderCache().Close();
+            d3dDevice->GetShaderCache().Close();
         }
     }
 }

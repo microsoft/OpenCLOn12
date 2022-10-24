@@ -37,7 +37,7 @@ Sampler::Sampler(Context& Parent, Desc const& desc, const cl_sampler_properties 
 {
 }
 
-D3D12TranslationLayer::Sampler& Sampler::GetUnderlying(Device* device)
+D3D12TranslationLayer::Sampler& Sampler::GetUnderlying(D3DDevice* device)
 {
     std::lock_guard Lock(m_Lock);
     auto iter = m_UnderlyingSamplers.find(device);

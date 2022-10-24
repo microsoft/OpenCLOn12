@@ -235,6 +235,7 @@ static bool IsProfile(const cl_queue_properties* properties)
 CommandQueue::CommandQueue(Device& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties)
     : CLChildBase(device)
     , m_Context(context)
+    , m_D3DDevice(*device.D3DDevice())
     , m_Properties(PropertiesToVector(properties))
     , m_bOutOfOrder(IsOutOfOrder(properties))
     , m_bProfile(IsProfile(properties))
@@ -248,11 +249,11 @@ void CommandQueue::Flush(TaskPoolLock const& lock, bool flushDevice)
     {
         m_OutstandingTasks.emplace_back(m_QueuedTasks.front().Get());
         m_QueuedTasks.pop_front();
-        m_Parent->SubmitTask(m_OutstandingTasks.back().Get(), lock);
+        m_D3DDevice.SubmitTask(m_OutstandingTasks.back().Get(), lock);
     }
     if (flushDevice)
     {
-        m_Parent->Flush(lock);
+        m_D3DDevice.Flush(lock);
     }
 }
 

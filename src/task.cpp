@@ -180,7 +180,11 @@ clSetUserEventStatus(cl_event   event,
         e.Complete(execution_status, Lock);
         for (cl_uint i = 0; i < context.GetDeviceCount(); ++i)
         {
-            context.GetDevice(i).Flush(Lock);
+            auto &d3dDeviceOpt = context.GetDevice(i).D3DDevice();
+            if (d3dDeviceOpt)
+            {
+                d3dDeviceOpt->Flush(Lock);
+            }
         }
     }
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -394,7 +398,7 @@ void Task::Record()
     ImmCtx *pImmCtx = nullptr;
     if (m_CommandQueue.Get())
     {
-        pImmCtx = &m_CommandQueue->GetDevice().ImmCtx();
+        pImmCtx = &m_CommandQueue->GetD3DDevice().ImmCtx();
     }
     if (GetTimestamp(CL_PROFILING_COMMAND_QUEUED))
     {
@@ -596,19 +600,19 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
     if (m_StartTimestamp || m_StopTimestamp)
     {
         assert(m_CommandQueue.Get());
-        UINT64 Frequency = m_CommandQueue->GetDevice().GetTimestampFrequency();
+        UINT64 Frequency = m_CommandQueue->GetD3DDevice().GetTimestampFrequency();
         UINT64 GPUTimestamp;
         if (m_StartTimestamp &&
             m_StartTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
         {
             GetTimestamp(CL_PROFILING_COMMAND_START) =
-                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->GPUToQPCTimestampOffset();
+                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->D3DDevice()->GPUToQPCTimestampOffset();
         }
         if (m_StopTimestamp &&
             m_StopTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
         {
             GetTimestamp(CL_PROFILING_COMMAND_END) =
-                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->GPUToQPCTimestampOffset();
+                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->D3DDevice()->GPUToQPCTimestampOffset();
         }
     }
 
@@ -641,7 +645,7 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
             if (task->m_TasksToWaitOn.empty() &&
                 task->m_State == State::Submitted)
             {
-                task->m_Device->ReadyTask(task.Get(), lock);
+                task->m_Device->D3DDevice()->ReadyTask(task.Get(), lock);
             }
         }
     }

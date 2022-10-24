@@ -1049,7 +1049,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     if (!m_Source.empty() || !m_IL.empty())
     {
         auto& BuildData = Args.Common.BuildData;
-        pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
+        pCompiler->Initialize(BuildData->m_Device->D3DDevice()->GetShaderCache());
 
         Logger loggers(m_Lock, BuildData->m_BuildLog);
         unique_spirv compiledObject;
@@ -1095,7 +1095,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     }
     else
     {
-        pCompiler->Initialize(Args.BinaryBuildDevices[0]->GetShaderCache());
+        pCompiler->Initialize(Args.BinaryBuildDevices[0]->D3DDevice()->GetShaderCache());
 
         std::lock_guard Lock(m_Lock);
         for (auto& device : Args.BinaryBuildDevices)
@@ -1134,7 +1134,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
     auto pCompiler = g_Platform->GetCompiler();
-    pCompiler->Initialize(BuildData->m_Device->GetShaderCache());
+    pCompiler->Initialize(BuildData->m_Device->D3DDevice()->GetShaderCache());
     Logger loggers(m_Lock, BuildData->m_BuildLog);
 
     unique_spirv object;
@@ -1195,7 +1195,7 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
 
     for (auto& Device : m_AssociatedDevices)
     {
-        pCompiler->Initialize(Device->GetShaderCache());
+        pCompiler->Initialize(Device->D3DDevice()->GetShaderCache());
 
         link_args.objs.clear();
         for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
@@ -1251,7 +1251,7 @@ void Program::PerDeviceData::CreateKernels(Program& program)
         return;
 
     auto pCompiler = g_Platform->GetCompiler();
-    pCompiler->Initialize(m_Device->GetShaderCache());
+    pCompiler->Initialize(m_Device->D3DDevice()->GetShaderCache());
 
     auto& kernels = m_OwnedBinary->GetKernelInfo();
     Logger loggers(program.m_Lock, m_BuildLog);

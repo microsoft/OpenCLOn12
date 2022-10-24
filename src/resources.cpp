@@ -606,7 +606,7 @@ clGetSupportedImageFormats(cl_context           context_,
             for (cl_uint device = 0; device < context.GetDeviceCount(); ++device)
             {
                 D3D12_FEATURE_DATA_FORMAT_SUPPORT Support = { (DXGI_FORMAT)i };
-                if (FAILED(context.GetDevice(device).GetDevice()->CheckFeatureSupport(
+                if (FAILED(context.GetDevice(device).D3DDevice()->GetDevice()->CheckFeatureSupport(
                     D3D12_FEATURE_FORMAT_SUPPORT, &Support, sizeof(Support))))
                 {
                     return false;
@@ -704,7 +704,7 @@ clGetMemObjectInfo(cl_mem           memobj,
             return RetValue(resource.m_Desc.image_width);
         auto Underlying = resource.GetActiveUnderlyingResource();
         if (!Underlying)
-            Underlying = resource.GetUnderlyingResource(&resource.m_Parent->GetDevice(0));
+            Underlying = resource.GetUnderlyingResource(&*resource.m_Parent->GetDevice(0).D3DDevice());
         return RetValue((size_t)Underlying->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
     }
     case CL_MEM_HOST_PTR: return RetValue(resource.m_pHostPointer);
@@ -758,7 +758,7 @@ clGetImageInfo(cl_mem           image,
     return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
-auto Resource::GetUnderlyingResource(Device* device) -> UnderlyingResource*
+auto Resource::GetUnderlyingResource(D3DDevice* device) -> UnderlyingResource*
 {
     std::lock_guard Lock(m_MultiDeviceLock);
     auto& Entry = m_UnderlyingMap[device];
@@ -791,18 +791,18 @@ auto Resource::GetUnderlyingResource(Device* device) -> UnderlyingResource*
 void Resource::SetActiveDevice(Device* device)
 {
     std::lock_guard Lock(m_MultiDeviceLock);
-    m_ActiveUnderlying = GetUnderlyingResource(device);
+    m_ActiveUnderlying = GetUnderlyingResource(&*device->D3DDevice());
     m_CurrentActiveDevice = device;
 }
 
-D3D12TranslationLayer::SRV& Resource::GetSRV(Device* device)
+D3D12TranslationLayer::SRV& Resource::GetSRV(D3DDevice* device)
 {
     auto iter = m_SRVs.find(device);
     assert(iter != m_SRVs.end());
     return iter->second;
 }
 
-D3D12TranslationLayer::UAV& Resource::GetUAV(Device* device)
+D3D12TranslationLayer::UAV& Resource::GetUAV(D3DDevice* device)
 {
     auto iter = m_UAVs.find(device);
     assert(iter != m_UAVs.end());

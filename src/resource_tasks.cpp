@@ -177,7 +177,7 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesFlags flags)
     UINT NumSliceCopies = bIsRowByRowCopy ? m_Args.Depth : 1;
 
     D3D12TranslationLayer::CSubresourceSubset subresources =
-        m_Target->GetUnderlyingResource(&m_CommandQueue->GetDevice())->GetFullSubresourceSubset();
+        m_Target->GetUnderlyingResource(&m_CommandQueue->GetD3DDevice())->GetFullSubresourceSubset();
     const cl_uint FormatBytes = GetFormatSizeBytes(m_Target->m_Format);
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
@@ -231,14 +231,14 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesFlags flags)
                     DstBox.right = DstBox.left + m_Args.Width;
                 }
                 m_Helpers.emplace_back(
-                    *m_Target->GetUnderlyingResource(&m_CommandQueue->GetDevice()),
+                    *m_Target->GetUnderlyingResource(&m_CommandQueue->GetD3DDevice()),
                     subresources,
                     pData,
                     &DstBox,
                     flags,
                     pPattern,
                     PatternSize,
-                    m_CommandQueue->GetDevice().ImmCtx());
+                    m_CommandQueue->GetD3DDevice().ImmCtx());
             }
         }
 
@@ -256,7 +256,7 @@ void MemWriteFillTask::RecordImpl()
     {
         if (Helper.FinalizeNeeded)
         {
-            m_CommandQueue->GetDevice().ImmCtx().FinalizeUpdateSubresources(
+            m_CommandQueue->GetD3DDevice().ImmCtx().FinalizeUpdateSubresources(
                 &Helper.Dst, Helper.PreparedStorage.Base, Helper.PreparedStorage.LocalPlacementDescs);
         }
     }
@@ -716,7 +716,7 @@ FillImageTask::FillImageTask(Context &Parent, Resource &Target, cl_command_queue
 
 void FillImageTask::RecordImpl()
 {
-    auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
+    auto& ImmCtx = m_CommandQueue->GetD3DDevice().ImmCtx();
     for (cl_uint i = 0; i < m_Args.NumArraySlices; ++i)
     {
         D3D12TranslationLayer::CSubresourceSubset Subset(1, 1, 1, 0, (UINT16)(m_Args.FirstArraySlice + i), 0);
@@ -946,7 +946,7 @@ void MemReadTask::RecordImpl()
         return;
     }
 
-    auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
+    auto& ImmCtx = m_CommandQueue->GetD3DDevice().ImmCtx();
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
         D3D12TranslationLayer::MappedSubresource MapRet = {};
@@ -1385,7 +1385,7 @@ private:
     }
     void RecordImpl() final
     {
-        auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
+        auto& ImmCtx = m_CommandQueue->GetD3DDevice().ImmCtx();
         if (ImageTypesCopyCompatible(m_Source->m_Desc.image_type, m_Dest->m_Desc.image_type))
         {
             for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
@@ -1765,7 +1765,7 @@ void CopyBufferRectTask::RecordImpl()
                     (z + m_Args.DstZ) * m_Args.DstBufferSlicePitch +
                     (y + m_Args.DstY) * m_Args.DstBufferRowPitch +
                     m_Args.DstX);
-                m_CommandQueue->GetDevice().ImmCtx().ResourceCopyRegion(
+                m_CommandQueue->GetD3DDevice().ImmCtx().ResourceCopyRegion(
                     m_Dest->GetActiveUnderlyingResource(),
                     0, //SubresourceIndex
                     DstOffset,
@@ -2017,8 +2017,8 @@ public:
         ImageDesc.MipLevels = 1;
         ImageDesc.Format = image.m_CreationArgs.m_appDesc.Format();
         UINT64 RowPitch, TotalSize;
-        m_CommandQueue->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, m_Args.FirstImageArraySlice, m_Args.NumArraySlices, 0, nullptr, nullptr, &RowPitch, &TotalSize);
-        m_CommandQueue->GetDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, 0, 1, 0, &m_BufferFootprint, nullptr, nullptr, nullptr);
+        m_CommandQueue->GetD3DDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, m_Args.FirstImageArraySlice, m_Args.NumArraySlices, 0, nullptr, nullptr, &RowPitch, &TotalSize);
+        m_CommandQueue->GetD3DDevice().GetDevice()->GetCopyableFootprints(&ImageDesc, 0, 1, 0, &m_BufferFootprint, nullptr, nullptr, nullptr);
         assert(m_Args.BufferPitch == RowPitch);
         if (m_Args.BufferPitch != m_BufferFootprint.Footprint.RowPitch ||
             (m_Args.NumArraySlices > 1 &&
@@ -2123,7 +2123,7 @@ private:
             DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(D3D12TranslationLayer::CBufferView{});
         }
 
-        auto& ImmCtx = m_CommandQueue->GetDevice().ImmCtx();
+        auto& ImmCtx = m_CommandQueue->GetD3DDevice().ImmCtx();
         ImmCtx.GetResourceStateManager().TransitionSubresources(UnderlyingSrc, SrcSubresources, D3D12_RESOURCE_STATE_COPY_SOURCE);
         ImmCtx.GetResourceStateManager().TransitionSubresources(UnderlyingDest, DestSubresources, D3D12_RESOURCE_STATE_COPY_DEST);
         ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
@@ -2432,7 +2432,7 @@ public:
         : MapTask(Parent, command_queue, resource, flags, command, args)
     {
         void* basePointer = nullptr;
-        auto& Device = m_CommandQueue->GetDevice();
+        auto& Device = m_CommandQueue->GetD3DDevice();
         D3D12TranslationLayer::ThrowFailure(resource.GetUnderlyingResource(&Device)->GetUnderlyingResource()->Map(0, &EmptyRange, &basePointer));
         auto& Placement = resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(args.FirstArraySlice);
         m_RowPitch = Placement.Footprint.RowPitch;

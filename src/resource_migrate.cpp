@@ -12,7 +12,7 @@ class CopyCrossAdapter : public Task
 {
     Resource& m_Resource;
     unique_comptr<ID3D12Resource> m_CrossAdapterBuffer;
-    Device& m_Device;
+    D3DDevice& m_Device;
     ImmCtx& m_ImmCtx;
     bool m_ToCrossAdapter;
 public:
@@ -20,8 +20,8 @@ public:
         : Task(Context, Device)
         , m_Resource(Resource)
         , m_CrossAdapterBuffer(std::move(CrossAdapterBuffer))
-        , m_Device(Device)
-        , m_ImmCtx(Device.ImmCtx())
+        , m_Device(*Device.D3DDevice())
+        , m_ImmCtx(m_Device.ImmCtx())
         , m_ToCrossAdapter(ToCrossAdapter)
     {
     }
@@ -31,7 +31,7 @@ public:
     {
         if (!m_ToCrossAdapter)
         {
-            m_Resource.SetActiveDevice(&m_Device);
+            m_Resource.SetActiveDevice(Task::m_Device.Get());
         }
 
         m_ImmCtx.GetResourceStateManager().TransitionResource(
@@ -72,6 +72,7 @@ public:
 
 void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, cl_mem_migration_flags flags)
 {
+    auto &newD3DDevice = *newDevice->D3DDevice();
     if (m_ParentBuffer.Get())
     {
         m_ParentBuffer->EnqueueMigrateResource(newDevice, triggeringTask, flags);
@@ -97,9 +98,9 @@ void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, c
     unique_comptr<ID3D12Heap> CrossAdapterHeap;
     D3D12_HEAP_DESC HeapDesc = CD3DX12_HEAP_DESC(GetActiveUnderlyingResource()->GetResourceSize(), D3D12_HEAP_TYPE_DEFAULT, 0,
                                                  D3D12_HEAP_FLAG_SHARED | D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER);
-    D3D12TranslationLayer::ThrowFailure(m_CurrentActiveDevice->GetDevice()->CreateHeap(&HeapDesc, IID_PPV_ARGS(&CrossAdapterHeap)));
+    D3D12TranslationLayer::ThrowFailure(m_CurrentActiveDevice->D3DDevice()->GetDevice()->CreateHeap(&HeapDesc, IID_PPV_ARGS(&CrossAdapterHeap)));
     HANDLE SharedHandle = nullptr;
-    D3D12TranslationLayer::ThrowFailure(m_CurrentActiveDevice->GetDevice()->CreateSharedHandle(
+    D3D12TranslationLayer::ThrowFailure(m_CurrentActiveDevice->D3DDevice()->GetDevice()->CreateSharedHandle(
         CrossAdapterHeap.get(), nullptr, GENERIC_ALL, nullptr, &SharedHandle
     ));
     auto cleanup = wil::scope_exit([SharedHandle]()
@@ -110,7 +111,7 @@ void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, c
     unique_comptr<ID3D12Resource> CrossAdapterResource;
     D3D12_RESOURCE_DESC ResDesc = CD3DX12_RESOURCE_DESC::Buffer(GetActiveUnderlyingResource()->GetResourceSize(),
                                                                 D3D12_RESOURCE_FLAG_ALLOW_CROSS_ADAPTER);
-    D3D12TranslationLayer::ThrowFailure(m_CurrentActiveDevice->GetDevice()->CreatePlacedResource(
+    D3D12TranslationLayer::ThrowFailure(m_CurrentActiveDevice->D3DDevice()->GetDevice()->CreatePlacedResource(
         CrossAdapterHeap.get(), 0, &ResDesc,
         D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&CrossAdapterResource)
     ));
@@ -119,8 +120,8 @@ void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, c
         triggeringTask->m_Parent.get(), *this, std::move(CrossAdapterResource), *m_CurrentActiveDevice, true));
 
     CrossAdapterHeap.reset();
-    D3D12TranslationLayer::ThrowFailure(newDevice->GetDevice()->OpenSharedHandle(SharedHandle, IID_PPV_ARGS(&CrossAdapterHeap)));
-    D3D12TranslationLayer::ThrowFailure(newDevice->GetDevice()->CreatePlacedResource(
+    D3D12TranslationLayer::ThrowFailure(newD3DDevice.GetDevice()->OpenSharedHandle(SharedHandle, IID_PPV_ARGS(&CrossAdapterHeap)));
+    D3D12TranslationLayer::ThrowFailure(newD3DDevice.GetDevice()->CreatePlacedResource(
         CrossAdapterHeap.get(), 0, &ResDesc,
         D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&CrossAdapterResource)
     ));
@@ -131,15 +132,15 @@ void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, c
 
     cl_event e = CopyToCrossAdapter.get();
     CopyFromCrossAdapter->AddDependencies(&e, 1, Lock);
-    m_CurrentActiveDevice->SubmitTask(CopyToCrossAdapter.get(), Lock);
+    m_CurrentActiveDevice->D3DDevice()->SubmitTask(CopyToCrossAdapter.get(), Lock);
     CopyToCrossAdapter.release();
 
     e = CopyFromCrossAdapter.get();
     triggeringTask->AddDependencies(&e, 1, Lock);
-    newDevice->SubmitTask(CopyFromCrossAdapter.get(), Lock);
+    newD3DDevice.SubmitTask(CopyFromCrossAdapter.get(), Lock);
     CopyFromCrossAdapter.release();
 
-    m_CurrentActiveDevice->Flush(Lock);
+    m_CurrentActiveDevice->D3DDevice()->Flush(Lock);
 }
 
 class UploadInitialData : public Task
@@ -176,7 +177,7 @@ public:
             pData[i].SysMemSlicePitch = (UINT)m_Resource.m_Desc.image_slice_pitch;
             pSubresourceData += m_Resource.m_Desc.image_slice_pitch;
         }
-        m_Resource.m_CurrentActiveDevice->ImmCtx().UpdateSubresources(
+        m_Resource.m_CurrentActiveDevice->D3DDevice()->ImmCtx().UpdateSubresources(
             m_Resource.m_ActiveUnderlying,
             m_Resource.m_ActiveUnderlying->GetFullSubresourceSubset(),
             pData,
@@ -198,10 +199,10 @@ void Resource::UploadInitialData(Task* triggeringTask)
 
     cl_event e = UploadTask.get();
     triggeringTask->AddDependencies(&e, 1, Lock);
-    m_CurrentActiveDevice->SubmitTask(UploadTask.get(), Lock);
+    m_CurrentActiveDevice->D3DDevice()->SubmitTask(UploadTask.get(), Lock);
     UploadTask.release();
 
-    m_CurrentActiveDevice->Flush(Lock);
+    m_CurrentActiveDevice->D3DDevice()->Flush(Lock);
 }
 
 class MigrateMemObjects : public Task

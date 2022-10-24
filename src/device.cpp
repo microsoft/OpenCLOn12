@@ -269,35 +269,35 @@ Device::Device(Platform& parent, IDXCoreAdapter* pAdapter)
 
 Device::~Device() = default;
 
-void Device::InitD3D()
+static ImmCtx::CreationArgs GetImmCtxCreationArgs()
 {
-    std::lock_guard Lock(m_InitLock);
-    ++m_ContextCount;
-    if (m_ImmCtx)
-    {
-        return;
-    }
-
-    g_Platform->DeviceInit();
-
-    THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_spDevice)));
-    //THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&m_spDevice)));
-    CacheCaps(Lock);
-
-    m_Callbacks.m_pfnPostSubmit = []() {};
-
     ImmCtx::CreationArgs Args = {};
     Args.CreatesAndDestroysAreMultithreaded = true;
     Args.RenamingIsMultithreaded = true;
     Args.UseResidencyManagement = true;
     Args.UseThreadpoolForPSOCreates = true;
     Args.CreatorID = __uuidof(OpenCLOn12CreatorID);
-    m_ImmCtx.emplace(0, m_D3D12Options, m_spDevice.Get(), nullptr, m_Callbacks, 0, Args);
+    return Args;
+}
 
+static D3D12TranslationLayer::TranslationLayerCallbacks GetImmCtxCallbacks()
+{
+    D3D12TranslationLayer::TranslationLayerCallbacks Callbacks = {};
+    Callbacks.m_pfnPostSubmit = []() {};
+    return Callbacks;
+}
+
+D3DDevice::D3DDevice(ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options)
+    : m_spDevice(pDevice)
+    , m_Callbacks(GetImmCtxCallbacks())
+    , m_ImmCtx(0, options, pDevice, nullptr, m_Callbacks, 0, GetImmCtxCreationArgs())
+    , m_RecordingSubmission(new Submission)
+    , m_ShaderCache(pDevice)
+{
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
     m_CompletionScheduler.SetSchedulingMode(mode);
 
-    auto commandQueue = m_ImmCtx->GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+    auto commandQueue = m_ImmCtx.GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
     (void)commandQueue->GetTimestampFrequency(&m_TimestampFrequency);
 
     UINT64 CPUTimestamp = 0, GPUTimestamp = 0;
@@ -307,9 +307,23 @@ void Device::InitD3D()
     m_GPUToQPCTimestampOffset =
         (INT64)Task::TimestampToNanoseconds(CPUTimestamp, QPCFrequency.QuadPart) -
         (INT64)Task::TimestampToNanoseconds(GPUTimestamp, m_TimestampFrequency);
+}
 
-    m_RecordingSubmission.reset(new Submission);
-    m_ShaderCache.emplace(GetDevice());
+void Device::InitD3D()
+{
+    std::lock_guard Lock(m_InitLock);
+    ++m_ContextCount;
+    if (m_D3DDevice)
+    {
+        return;
+    }
+
+    g_Platform->DeviceInit();
+
+    ComPtr<ID3D12Device> spD3D12Device;
+    THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spD3D12Device)));
+    CacheCaps(Lock, spD3D12Device);
+    m_D3DDevice.emplace(spD3D12Device.Get(), m_D3D12Options);
 }
 
 void Device::ReleaseD3D()
@@ -320,12 +334,7 @@ void Device::ReleaseD3D()
 
     g_Platform->DeviceUninit();
 
-    m_ImmCtx.reset();
-    BackgroundTaskScheduler::SchedulingMode mode{ 0u, BackgroundTaskScheduler::Priority::Normal };
-    m_CompletionScheduler.SetSchedulingMode(mode);
-    m_RecordingSubmission.reset();
-    m_spDevice.Reset();
-    m_ShaderCache.reset();
+    m_D3DDevice.reset();
 }
 
 cl_bool Device::IsAvailable() const noexcept
@@ -390,11 +399,6 @@ bool Device::SupportsTypedUAVLoad()
     return m_D3D12Options.TypedUAVLoadAdditionalFormats;
 }
 
-ShaderCache& Device::GetShaderCache()
-{
-    return *m_ShaderCache;
-}
-
 std::string Device::GetDeviceName() const
 {
     std::string name;
@@ -407,7 +411,7 @@ std::string Device::GetDeviceName() const
     return name;
 }
 
-void Device::SubmitTask(Task* task, TaskPoolLock const& lock)
+void D3DDevice::SubmitTask(Task* task, TaskPoolLock const& lock)
 {
     assert(task->m_CommandType != CL_COMMAND_USER);
     // User commands are treated as 'submitted' when they're created
@@ -437,7 +441,7 @@ void Device::SubmitTask(Task* task, TaskPoolLock const& lock)
     }
 }
 
-void Device::ReadyTask(Task* task, TaskPoolLock const& lock)
+void D3DDevice::ReadyTask(Task* task, TaskPoolLock const& lock)
 {
     assert(task->m_TasksToWaitOn.empty());
 
@@ -453,7 +457,7 @@ void Device::ReadyTask(Task* task, TaskPoolLock const& lock)
     task->Ready(lock);
 }
 
-void Device::Flush(TaskPoolLock const&)
+void D3DDevice::Flush(TaskPoolLock const&)
 {
     if (m_RecordingSubmission->empty())
     {
@@ -462,7 +466,7 @@ void Device::Flush(TaskPoolLock const&)
 
     struct ExecutionHandler
     {
-        Device& m_Device;
+        D3DDevice& m_Device;
         std::unique_ptr<Submission> m_Tasks;
     };
     std::unique_ptr<ExecutionHandler> spHandler(new ExecutionHandler{ *this, std::move(m_RecordingSubmission) });
@@ -484,13 +488,13 @@ void Device::Flush(TaskPoolLock const&)
     m_RecordingSubmission.reset(new Submission);
 }
 
-std::unique_ptr<D3D12TranslationLayer::PipelineState> Device::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
+std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
 {
     std::lock_guard PSOCreateLock(m_PSOCreateLock);
     return std::make_unique<D3D12TranslationLayer::PipelineState>(&ImmCtx(), Desc);
 }
 
-void Device::ExecuteTasks(Submission& tasks)
+void D3DDevice::ExecuteTasks(Submission& tasks)
 {
     {
         for (cl_uint i = 0; i < tasks.size(); ++i)
@@ -535,24 +539,18 @@ void Device::ExecuteTasks(Submission& tasks)
     }
 }
 
-void Device::CacheCaps(std::lock_guard<std::mutex> const&)
+void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> spDevice)
 {
     if (m_CapsValid)
         return;
 
-    bool bTempDevice = false;
-    if (!m_spDevice)
+    if (!spDevice)
     {
-        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_spDevice)));
-        bTempDevice = true;
+        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spDevice)));
     }
-    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_Architecture, sizeof(m_Architecture));
-    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
-    GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &m_D3D12Options4, sizeof(m_D3D12Options4));
-    if (bTempDevice)
-    {
-        m_spDevice.Reset();
-    }
+    spDevice->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_Architecture, sizeof(m_Architecture));
+    spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
+    spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &m_D3D12Options4, sizeof(m_D3D12Options4));
 
     m_CapsValid = true;
 }
@@ -594,7 +592,7 @@ clGetDeviceAndHostTimer(cl_device_id device_,
         device.InitD3D();
         auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(); });
 
-        auto pQueue = device.ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+        auto pQueue = device.D3DDevice()->ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
         D3D12TranslationLayer::ThrowFailure(pQueue->GetClockCalibration(device_timestamp, host_timestamp));
         return CL_SUCCESS;
     }

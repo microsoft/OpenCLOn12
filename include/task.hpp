@@ -73,7 +73,7 @@ class Task : public CLChildBase<Task, Context, cl_event>
 
 public:
     struct DependencyException {};
-    friend class Device;
+    friend class D3DDevice;
     enum class State
     {
         // API-visible states (sorted in reverse order so CL_COMPLETE == CL_SUCCESS == 0)

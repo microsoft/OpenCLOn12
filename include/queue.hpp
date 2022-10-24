@@ -15,6 +15,7 @@ public:
 
     Context& GetContext() const { return m_Context.get(); }
     Device& GetDevice() const { return m_Parent.get(); }
+    D3DDevice &GetD3DDevice() const { return m_D3DDevice; }
 
     void Flush(TaskPoolLock const&, bool flushDevice);
     void QueueTask(Task*, TaskPoolLock const&);
@@ -28,6 +29,7 @@ public:
 
 protected:
     Context::ref_int m_Context;
+    D3DDevice &m_D3DDevice;
 
     std::deque<Task::ref_ptr> m_QueuedTasks;
     std::vector<Task::ref_ptr_int> m_OutstandingTasks;
