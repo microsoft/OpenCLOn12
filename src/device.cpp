@@ -413,6 +413,13 @@ std::string Device::GetDeviceName() const
     return name;
 }
 
+LUID Device::GetAdapterLuid() const
+{
+    LUID ret = {};
+    m_spAdapter->GetProperty(DXCoreAdapterProperty::InstanceLuid, &ret);
+    return ret;
+}
+
 void D3DDevice::SubmitTask(Task* task, TaskPoolLock const& lock)
 {
     assert(task->m_CommandType != CL_COMMAND_USER);

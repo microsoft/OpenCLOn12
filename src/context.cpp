@@ -2,8 +2,135 @@
 // Licensed under the MIT License.
 #include "context.hpp"
 
+#include <mesa_glinterop.h>
+#include <d3d12_interop_public.h>
+
+struct GLProperties
+{
+    EGLDisplay eglDisplay;
+    EGLContext eglContext;
+    HDC wglDisplay;
+    HGLRC wglContext;
+};
+
+class GLInteropManager
+{
+public:
+    static std::unique_ptr<GLInteropManager> Create(GLProperties const &glProps);
+    virtual ~GLInteropManager() = default;
+    virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) = 0;
+    d3d12_interop_device_info GetDeviceData()
+    {
+        d3d12_interop_device_info ret = {};
+        [[maybe_unused]] bool success = GetDeviceData(ret);
+        assert(success);
+        return ret;
+    }
+protected:
+    void PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevInfo,
+                             d3d12_interop_device_info &d3d12DevInfo)
+    {
+        mesaDevInfo.version = 2;
+        mesaDevInfo.driver_data_size = sizeof(d3d12DevInfo);
+        mesaDevInfo.driver_data = &d3d12DevInfo;
+    }
+    GLInteropManager(XPlatHelpers::unique_module mod)
+        : m_hMod(std::move(mod))
+    {
+    }
+    XPlatHelpers::unique_module m_hMod;
+};
+
+class WGLInteropManager : public GLInteropManager
+{
+public:
+    virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) final
+    {
+        mesa_glinterop_device_info mesaDevInfo = {};
+        PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
+        return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
+    }
+
+private:
+    const HDC m_Display;
+    const HGLRC m_Context;
+    decltype(&MesaGLInteropWGLQueryDeviceInfo) m_QueryDeviceInfo;
+    decltype(&MesaGLInteropWGLExportObject) m_ExportObject;
+    decltype(&MesaGLInteropWGLFlushObjects) m_FlushObjects;
+
+    friend class GLInteropManager;
+    WGLInteropManager(GLProperties const &glProps)
+        : GLInteropManager(XPlatHelpers::unique_module("opengl32.dll"))
+        , m_Display(glProps.wglDisplay)
+        , m_Context(glProps.wglContext)
+    {
+        auto getProcAddress = m_hMod.proc_address<decltype(&wglGetProcAddress)>("wglGetProcAddress");
+        if (!getProcAddress)
+        {
+            throw std::runtime_error("Failed to get wglGetProcAddress");
+        }
+        m_QueryDeviceInfo = reinterpret_cast<decltype(m_QueryDeviceInfo)>(getProcAddress("wglMesaGLInteropQueryDeviceInfo"));
+        m_ExportObject = reinterpret_cast<decltype(m_ExportObject)>(getProcAddress("wglMesaGLInteropExportObject"));
+        m_FlushObjects = reinterpret_cast<decltype(m_FlushObjects)>(getProcAddress("wglMesaGLInteropFlushObjects"));
+        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects)
+        {
+            throw std::runtime_error("Failed to get Mesa interop functions for WGL");
+        }
+    }
+};
+
+class EGLInteropManager : public GLInteropManager
+{
+public:
+    virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) final
+    {
+        mesa_glinterop_device_info mesaDevInfo = {};
+        PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
+        return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
+    }
+
+private:
+    const EGLDisplay m_Display;
+    const EGLContext m_Context;
+    decltype(&MesaGLInteropEGLQueryDeviceInfo) m_QueryDeviceInfo;
+    decltype(&MesaGLInteropEGLExportObject) m_ExportObject;
+    decltype(&MesaGLInteropEGLFlushObjects) m_FlushObjects;
+
+    friend class GLInteropManager;
+    EGLInteropManager(GLProperties const &glProps)
+        : GLInteropManager(XPlatHelpers::unique_module("libEGL.dll"))
+        , m_Display(glProps.eglDisplay)
+        , m_Context(glProps.eglContext)
+    {
+        m_QueryDeviceInfo = m_hMod.proc_address<decltype(m_QueryDeviceInfo)>("wglMesaGLInteropQueryDeviceInfo");
+        m_ExportObject = m_hMod.proc_address<decltype(m_ExportObject)>("wglMesaGLInteropExportObject");
+        m_FlushObjects = m_hMod.proc_address<decltype(m_FlushObjects)>("wglMesaGLInteropFlushObjects");
+        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects)
+        {
+            throw std::runtime_error("Failed to get Mesa interop functions for EGL");
+        }
+    }
+};
+
+std::unique_ptr<GLInteropManager> GLInteropManager::Create(GLProperties const &glProps) try
+{
+    if (glProps.eglContext)
+    {
+        return std::make_unique<EGLInteropManager>(glProps);
+    }
+    else if (glProps.wglContext)
+    {
+        return std::make_unique<WGLInteropManager>(glProps);
+    }
+    return nullptr;
+}
+catch (...)
+{
+    return nullptr;
+}
+
 template <typename TReporter>
-bool ValidateContextProperties(cl_context_properties const* properties, TReporter&& ReportError)
+bool ValidateContextProperties(cl_context_properties const* properties, TReporter&& ReportError, GLProperties &glProps)
 {
     constexpr cl_context_properties KnownProperties[] =
     {
@@ -12,7 +139,7 @@ bool ValidateContextProperties(cl_context_properties const* properties, TReporte
         CL_WGL_HDC_KHR, CL_CGL_SHAREGROUP_KHR,
     };
     bool SeenProperties[std::extent_v<decltype(KnownProperties)>] = {};
-    bool glContext = false, eglDisplay = false, wglDisplay = false;
+    cl_context_properties glContext = 0;
     for (auto CurProp = properties; properties && *CurProp; CurProp += 2)
     {
         auto KnownPropIter = std::find(KnownProperties, std::end(KnownProperties), *CurProp);
@@ -32,13 +159,13 @@ bool ValidateContextProperties(cl_context_properties const* properties, TReporte
         switch (*CurProp)
         {
         case CL_GL_CONTEXT_KHR:
-            glContext = *(CurProp + 1) != 0;
+            glContext = *(CurProp + 1);
             break;
         case CL_EGL_DISPLAY_KHR:
-            eglDisplay = *(CurProp + 1) != 0;
+            glProps.eglDisplay = reinterpret_cast<EGLDisplay>(*(CurProp + 1));
             break;
         case CL_WGL_HDC_KHR:
-            wglDisplay = *(CurProp + 1) != 0;
+            glProps.wglDisplay = reinterpret_cast<HDC>(*(CurProp + 1));
             break;
         case CL_CGL_SHAREGROUP_KHR:
             return !ReportError("CGL unsupported.", CL_INVALID_OPERATION);
@@ -47,17 +174,25 @@ bool ValidateContextProperties(cl_context_properties const* properties, TReporte
         }
     }
 
-    if (glContext && !(eglDisplay || wglDisplay))
+    if (glContext && !(glProps.eglDisplay || glProps.wglDisplay))
     {
         return !ReportError("A GL context was provided, but no WGL or EGL display.", CL_INVALID_OPERATION);
     }
-    if (!glContext && (eglDisplay || wglDisplay))
+    if (!glContext && (glProps.eglDisplay || glProps.wglDisplay))
     {
         return !ReportError("A GL context was not provided, but a WGL or EGL display was.", CL_INVALID_OPERATION);
     }
-    if (eglDisplay && wglDisplay)
+    if (glProps.eglDisplay && glProps.wglDisplay)
     {
         return ReportError("If a GL context is provided, only one of WGL or EGL displays should be present.", CL_INVALID_OPERATION);
+    }
+    if (glProps.eglDisplay)
+    {
+        glProps.eglContext = reinterpret_cast<EGLContext>(glContext);
+    }
+    else if (glProps.wglDisplay)
+    {
+        glProps.wglContext = reinterpret_cast<HGLRC>(glContext);
     }
 
     return true;
@@ -93,7 +228,8 @@ clCreateContext(const cl_context_properties * properties,
     {
         return ReportError("user_data must be NULL if pfn_notify is NULL.", CL_INVALID_VALUE);
     }
-    if (!ValidateContextProperties(properties, ReportError))
+    GLProperties glProps = {};
+    if (!ValidateContextProperties(properties, ReportError, glProps))
     {
         return nullptr;
     }
@@ -106,6 +242,17 @@ clCreateContext(const cl_context_properties * properties,
         if (!platform)
         {
             return ReportError("Platform specified but null.", CL_INVALID_PLATFORM);
+        }
+    }
+
+    std::unique_ptr<GLInteropManager> glManager;
+    d3d12_interop_device_info d3d12DevInfo = {};
+    if (glProps.eglContext || glProps.wglContext)
+    {
+        glManager = GLInteropManager::Create(glProps);
+        if (!glManager || !glManager->GetDeviceData(d3d12DevInfo))
+        {
+            return ReportError("Failed to retrieve GL interop data for provided GL context.", CL_INVALID_OPERATION);
         }
     }
 
@@ -127,6 +274,15 @@ clCreateContext(const cl_context_properties * properties,
         {
             return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
         }
+
+        if (glManager)
+        {
+            LUID luid = device->GetAdapterLuid();
+            if (memcmp(&luid, &d3d12DevInfo.adapter_luid, sizeof(luid)) != 0)
+            {
+                return ReportError("Device does not support interop with requested GL context.", CL_INVALID_OPERATION);
+            }
+        }
         device_refs.emplace_back(std::make_pair(device, nullptr));
     }
 
@@ -134,7 +290,7 @@ clCreateContext(const cl_context_properties * properties,
     {
         if (errcode_ret)
             *errcode_ret = CL_SUCCESS;
-        return new Context(*platform, std::move(device_refs), properties, pfn_notify, user_data);
+        return new Context(*platform, std::move(device_refs), properties, std::move(glManager), pfn_notify, user_data);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -161,7 +317,8 @@ clCreateContextFromType(const cl_context_properties * properties,
     {
         return ReportError("user_data must be NULL if pfn_notify is NULL.", CL_INVALID_VALUE);
     }
-    if (!ValidateContextProperties(properties, ReportError))
+    GLProperties glProps = {};
+    if (!ValidateContextProperties(properties, ReportError, glProps))
     {
         return nullptr;
     }
@@ -169,6 +326,17 @@ clCreateContextFromType(const cl_context_properties * properties,
         device_type != CL_DEVICE_TYPE_DEFAULT)
     {
         return ReportError("This platform only supports GPUs.", CL_INVALID_DEVICE_TYPE);
+    }
+
+    std::unique_ptr<GLInteropManager> glManager;
+    d3d12_interop_device_info d3d12DevInfo = {};
+    if (glProps.eglContext || glProps.wglContext)
+    {
+        glManager = GLInteropManager::Create(glProps);
+        if (!glManager || !glManager->GetDeviceData(d3d12DevInfo))
+        {
+            return ReportError("Failed to retrieve GL interop data for provided GL context.", CL_INVALID_OPERATION);
+        }
     }
 
     auto platformProp = FindProperty<cl_context_properties>(properties, CL_CONTEXT_PLATFORM);
@@ -195,6 +363,14 @@ clCreateContextFromType(const cl_context_properties * properties,
         {
             return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
         }
+        if (glManager)
+        {
+            LUID luid = device->GetAdapterLuid();
+            if (memcmp(&luid, &d3d12DevInfo.adapter_luid, sizeof(luid)) != 0)
+            {
+                return ReportError("Device does not support interop with requested GL context.", CL_INVALID_OPERATION);
+            }
+        }
         device_refs.emplace_back(std::make_pair(device, nullptr));
     }
 
@@ -202,7 +378,7 @@ clCreateContextFromType(const cl_context_properties * properties,
     {
         if (errcode_ret)
             *errcode_ret = CL_SUCCESS;
-        return new Context(*platform, std::move(device_refs), properties, pfn_notify, user_data);
+        return new Context(*platform, std::move(device_refs), properties, std::move(glManager), pfn_notify, user_data);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -282,12 +458,16 @@ clSetContextDestructorCallback(cl_context context_,
     return CL_SUCCESS;
 }
 
-Context::Context(Platform& Platform, decltype(m_AssociatedDevices) Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)
+Context::Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices,
+                 const cl_context_properties* Properties,
+                 std::unique_ptr<GLInteropManager> glManager,
+                 PfnCallbackType pfnErrorCb, void* CallbackContext)
     : CLChildBase(Platform)
     , m_AssociatedDevices(std::move(Devices))
     , m_ErrorCallback(pfnErrorCb ? pfnErrorCb : DummyCallback)
     , m_CallbackContext(CallbackContext)
     , m_Properties(PropertiesToVector(Properties))
+    , m_GLInteropManager(std::move(glManager))
 {
     for (auto& [device, d3ddevice] : m_AssociatedDevices)
     {

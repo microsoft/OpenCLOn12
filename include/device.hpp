@@ -70,6 +70,7 @@ public:
     bool SupportsTypedUAVLoad();
 
     std::string GetDeviceName() const;
+    LUID GetAdapterLuid() const;
 
     D3DDevice &InitD3D();
     void ReleaseD3D();

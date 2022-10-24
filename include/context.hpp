@@ -5,6 +5,8 @@
 #include "platform.hpp"
 #include "device.hpp"
 
+class GLInteropManager;
+
 class Context : public CLChildBase<Context, Platform, cl_context>
 {
 public:
@@ -30,12 +32,17 @@ private:
     mutable std::mutex m_DestructorLock;
     std::vector<DestructorCallback> m_DestructorCallbacks;
 
+    std::unique_ptr<GLInteropManager> m_GLInteropManager;
+
     static void CL_CALLBACK DummyCallback(const char*, const void*, size_t, void*) {}
 
     friend cl_int CL_API_CALL clGetContextInfo(cl_context, cl_context_info, size_t, void*, size_t*);
 
 public:
-    Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext);
+    Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices,
+            const cl_context_properties* Properties,
+            std::unique_ptr<GLInteropManager> glManager,
+            PfnCallbackType pfnErrorCb, void* CallbackContext);
     ~Context();
 
     void ReportError(const char* Error);
