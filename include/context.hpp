@@ -21,7 +21,7 @@ public:
     };
 
 private:
-    std::vector<Device::ref_ptr_int> m_AssociatedDevices;
+    std::vector<D3DDeviceAndRef> m_AssociatedDevices;
     const PfnCallbackType m_ErrorCallback;
     void* const m_CallbackContext;
 
@@ -35,7 +35,7 @@ private:
     friend cl_int CL_API_CALL clGetContextInfo(cl_context, cl_context_info, size_t, void*, size_t*);
 
 public:
-    Context(Platform& Platform, std::vector<Device::ref_ptr_int> Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext);
+    Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext);
     ~Context();
 
     void ReportError(const char* Error);
@@ -64,8 +64,10 @@ public:
 
     cl_uint GetDeviceCount() const noexcept;
     Device& GetDevice(cl_uint index) const noexcept;
+    D3DDevice &GetD3DDevice(cl_uint index) const noexcept;
     bool ValidDeviceForContext(Device& device) const noexcept;
-    std::vector<Device::ref_ptr_int> GetDevices() const noexcept { return m_AssociatedDevices; }
+    D3DDevice *D3DDeviceForContext(Device &device) const noexcept;
+    std::vector<D3DDeviceAndRef> GetDevices() const noexcept { return m_AssociatedDevices; }
 
     void AddDestructionCallback(DestructorCallback::Fn pfn, void* pUserData);
 };

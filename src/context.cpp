@@ -76,7 +76,7 @@ clCreateContext(const cl_context_properties * properties,
         }
     }
 
-    std::vector<Device::ref_ptr_int> device_refs;
+    std::vector<D3DDeviceAndRef> device_refs;
 
     for (cl_uint i = 0; i < num_devices; ++i)
     {
@@ -94,7 +94,7 @@ clCreateContext(const cl_context_properties * properties,
         {
             return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
         }
-        device_refs.emplace_back(device);
+        device_refs.emplace_back(std::make_pair(device, nullptr));
     }
 
     try
@@ -153,7 +153,7 @@ clCreateContextFromType(const cl_context_properties * properties,
         return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
     }
 
-    std::vector<Device::ref_ptr_int> device_refs;
+    std::vector<D3DDeviceAndRef> device_refs;
 
     for (cl_uint i = 0; i < platform->GetNumDevices(); ++i)
     {
@@ -162,7 +162,7 @@ clCreateContextFromType(const cl_context_properties * properties,
         {
             return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
         }
-        device_refs.emplace_back(device);
+        device_refs.emplace_back(std::make_pair(device, nullptr));
     }
 
     try
@@ -249,16 +249,16 @@ clSetContextDestructorCallback(cl_context context_,
     return CL_SUCCESS;
 }
 
-Context::Context(Platform& Platform, std::vector<Device::ref_ptr_int> Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)
+Context::Context(Platform& Platform, decltype(m_AssociatedDevices) Devices, const cl_context_properties* Properties, PfnCallbackType pfnErrorCb, void* CallbackContext)
     : CLChildBase(Platform)
     , m_AssociatedDevices(std::move(Devices))
     , m_ErrorCallback(pfnErrorCb ? pfnErrorCb : DummyCallback)
     , m_CallbackContext(CallbackContext)
     , m_Properties(PropertiesToVector(Properties))
 {
-    for (auto& device : m_AssociatedDevices)
+    for (auto& [device, d3ddevice] : m_AssociatedDevices)
     {
-        device->InitD3D();
+        d3ddevice = &device->InitD3D();
     }
 }
 
@@ -270,7 +270,7 @@ Context::~Context()
         callback.m_pfn(this, callback.m_userData);
     }
 
-    for (auto& device : m_AssociatedDevices)
+    for (auto& [device, _] : m_AssociatedDevices)
     {
         device->ReleaseD3D();
     }
@@ -288,14 +288,27 @@ cl_uint Context::GetDeviceCount() const noexcept
 
 Device& Context::GetDevice(cl_uint i) const noexcept
 {
-    assert(i < m_AssociatedDevices.size() && m_AssociatedDevices[i].Get());
-    return *m_AssociatedDevices[i].Get();
+    assert(i < m_AssociatedDevices.size() && m_AssociatedDevices[i].first.Get());
+    return *m_AssociatedDevices[i].first.Get();
+}
+
+D3DDevice& Context::GetD3DDevice(cl_uint i) const noexcept
+{
+    assert(i < m_AssociatedDevices.size() && m_AssociatedDevices[i].second);
+    return *m_AssociatedDevices[i].second;
 }
 
 bool Context::ValidDeviceForContext(Device& device) const noexcept
 {
     return std::find_if(m_AssociatedDevices.begin(), m_AssociatedDevices.end(),
-                        [&device](Device::ref_ptr_int const& d) { return d.Get() == &device; }) != m_AssociatedDevices.end();
+                        [&device](D3DDeviceAndRef const& d) { return d.first.Get() == &device; }) != m_AssociatedDevices.end();
+}
+
+D3DDevice *Context::D3DDeviceForContext(Device& device) const noexcept
+{
+    auto iter = std::find_if(m_AssociatedDevices.begin(), m_AssociatedDevices.end(),
+                             [&device](D3DDeviceAndRef const& d) { return d.first.Get() == &device; });
+    return iter == m_AssociatedDevices.end() ? nullptr : iter->second;
 }
 
 void Context::AddDestructionCallback(DestructorCallback::Fn pfn, void *pUserData)

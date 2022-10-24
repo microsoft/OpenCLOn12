@@ -287,8 +287,9 @@ static D3D12TranslationLayer::TranslationLayerCallbacks GetImmCtxCallbacks()
     return Callbacks;
 }
 
-D3DDevice::D3DDevice(ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options)
-    : m_spDevice(pDevice)
+D3DDevice::D3DDevice(Device &parent,ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options)
+    : m_Parent(parent)
+    , m_spDevice(pDevice)
     , m_Callbacks(GetImmCtxCallbacks())
     , m_ImmCtx(0, options, pDevice, nullptr, m_Callbacks, 0, GetImmCtxCreationArgs())
     , m_RecordingSubmission(new Submission)
@@ -309,13 +310,13 @@ D3DDevice::D3DDevice(ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &op
         (INT64)Task::TimestampToNanoseconds(GPUTimestamp, m_TimestampFrequency);
 }
 
-void Device::InitD3D()
+D3DDevice &Device::InitD3D()
 {
     std::lock_guard Lock(m_InitLock);
     ++m_ContextCount;
     if (m_D3DDevice)
     {
-        return;
+        return *m_D3DDevice;
     }
 
     g_Platform->DeviceInit();
@@ -323,7 +324,8 @@ void Device::InitD3D()
     ComPtr<ID3D12Device> spD3D12Device;
     THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spD3D12Device)));
     CacheCaps(Lock, spD3D12Device);
-    m_D3DDevice.emplace(spD3D12Device.Get(), m_D3D12Options);
+    m_D3DDevice.emplace(*this, spD3D12Device.Get(), m_D3D12Options);
+    return *m_D3DDevice;
 }
 
 void Device::ReleaseD3D()

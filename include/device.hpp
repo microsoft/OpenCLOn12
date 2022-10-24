@@ -10,13 +10,14 @@
 using ImmCtx = D3D12TranslationLayer::ImmediateContext;
 
 class Task;
+class Device;
 
 using Submission = std::vector<::ref_ptr_int<Task>>;
 
 class D3DDevice
 {
 public:
-    D3DDevice(ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options);
+    D3DDevice(Device &parent,  ID3D12Device *pDevice, D3D12_FEATURE_DATA_D3D12_OPTIONS &options);
     ~D3DDevice() = default;
 
     ID3D12Device* GetDevice() const noexcept { return m_spDevice.Get(); }
@@ -35,6 +36,7 @@ public:
 protected:
     void ExecuteTasks(Submission& tasks);
 
+    Device &m_Parent;
     const ComPtr<ID3D12Device> m_spDevice;
     const D3D12TranslationLayer::TranslationLayerCallbacks m_Callbacks;
     ::ImmCtx m_ImmCtx;
@@ -68,7 +70,7 @@ public:
 
     std::string GetDeviceName() const;
 
-    void InitD3D();
+    D3DDevice &InitD3D();
     void ReleaseD3D();
 
     std::optional<::D3DDevice> &D3DDevice() { return m_D3DDevice; }
@@ -88,3 +90,5 @@ protected:
     D3D12_FEATURE_DATA_ARCHITECTURE m_Architecture = {};
     unsigned m_ContextCount = 0;
 };
+
+using D3DDeviceAndRef = std::pair<Device::ref_ptr_int, D3DDevice *>;

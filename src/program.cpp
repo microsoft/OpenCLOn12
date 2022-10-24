@@ -108,11 +108,12 @@ clCreateProgramWithBinary(cl_context                     context_,
     {
         bool ReturnError = false;
 
-        std::vector<Device::ref_ptr_int> device_refs;
+        std::vector<D3DDeviceAndRef> device_refs;
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             Device* device = static_cast<Device*>(device_list[i]);
-            if (!context.ValidDeviceForContext(*device))
+            D3DDevice *d3dDevice = context.D3DDeviceForContext(*device);
+            if (!d3dDevice)
             {
                 return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
             }
@@ -142,7 +143,7 @@ clCreateProgramWithBinary(cl_context                     context_,
                 ReportError(ex.what(), CL_INVALID_BINARY);
                 ReturnError = true;
             }
-            device_refs.emplace_back(device);
+            device_refs.emplace_back(std::make_pair(device, d3dDevice));
         }
         if (ReturnError)
         {
@@ -248,17 +249,18 @@ clBuildProgram(cl_program           program_,
     Context& context = program.GetContext();
     auto ReportError = context.GetErrorReporter();
 
-    std::vector<Device::ref_ptr_int> device_refs;
+    std::vector<D3DDeviceAndRef> device_refs;
     if (device_list)
     {
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             Device* device = static_cast<Device*>(device_list[i]);
-            if (!context.ValidDeviceForContext(*device))
+            D3DDevice *d3dDevice = context.D3DDeviceForContext(*device);
+            if (!d3dDevice)
             {
                 return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
             }
-            device_refs.emplace_back(device);
+            device_refs.emplace_back(std::make_pair(device, d3dDevice));
         }
     }
     else
@@ -289,17 +291,18 @@ clCompileProgram(cl_program           program_,
     Context& context = program.GetContext();
     auto ReportError = context.GetErrorReporter();
 
-    std::vector<Device::ref_ptr_int> device_refs;
+    std::vector<D3DDeviceAndRef> device_refs;
     if (device_list)
     {
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             Device* device = static_cast<Device*>(device_list[i]);
-            if (!context.ValidDeviceForContext(*device))
+            D3DDevice *d3dDevice = context.D3DDeviceForContext(*device);
+            if (!d3dDevice)
             {
                 return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
             }
-            device_refs.emplace_back(device);
+            device_refs.emplace_back(std::make_pair(device, d3dDevice));
         }
     }
     else
@@ -330,17 +333,18 @@ clLinkProgram(cl_context           context_,
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter(errcode_ret);
 
-    std::vector<Device::ref_ptr_int> device_refs;
+    std::vector<D3DDeviceAndRef> device_refs;
     if (device_list)
     {
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             Device* device = static_cast<Device*>(device_list[i]);
-            if (!context.ValidDeviceForContext(*device))
+            D3DDevice *d3dDevice = context.D3DDeviceForContext(*device);
+            if (!d3dDevice)
             {
                 return ReportError("Device in device_list does not belong to context.", CL_INVALID_DEVICE);
             }
-            device_refs.emplace_back(device);
+            device_refs.emplace_back(std::make_pair(device, d3dDevice));
         }
     }
     else
@@ -412,7 +416,7 @@ clGetProgramInfo(cl_program         program_,
             for (cl_uint i = 0; i < program.m_AssociatedDevices.size(); ++i)
             {
                 Out[i] = 0;
-                auto& BuildData = program.m_BuildData[program.m_AssociatedDevices[i].Get()];
+                auto& BuildData = program.m_BuildData[program.m_AssociatedDevices[i].first.Get()];
                 if (BuildData && BuildData->m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
                 {
                     ProgramBinaryHeader header(BuildData->m_OwnedBinary.get(), BuildData->m_BinaryType);
@@ -442,7 +446,7 @@ clGetProgramInfo(cl_program         program_,
                 if (!Out[i])
                     continue;
 
-                auto& BuildData = program.m_BuildData[program.m_AssociatedDevices[i].Get()];
+                auto& BuildData = program.m_BuildData[program.m_AssociatedDevices[i].first.Get()];
                 if (BuildData && BuildData->m_BinaryType != CL_PROGRAM_BINARY_TYPE_NONE)
                 {
                     new (Out[i]) ProgramBinaryHeader(BuildData->m_OwnedBinary.get(), BuildData->m_BinaryType, ProgramBinaryHeader::CopyBinaryContentsTag{});
@@ -530,7 +534,7 @@ clGetProgramBuildInfo(cl_program            program_,
     };
 
     if (std::find_if(program.m_AssociatedDevices.begin(), program.m_AssociatedDevices.end(),
-                     [device](Device::ref_ptr_int const& d) {return d.Get() == device; }) == program.m_AssociatedDevices.end())
+                     [device](D3DDeviceAndRef const& d) {return d.first.Get() == device; }) == program.m_AssociatedDevices.end())
     {
         return program.GetContext().GetErrorReporter()("Invalid device.", CL_INVALID_DEVICE);
     }
@@ -563,13 +567,13 @@ Program::Program(Context& Parent, std::vector<std::byte> IL)
 {
 }
 
-Program::Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices)
+Program::Program(Context& Parent, std::vector<D3DDeviceAndRef> Devices)
     : CLChildBase(Parent)
     , m_AssociatedDevices(std::move(Devices))
 {
 }
 
-cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* options, Callback pfn_notify, void* user_data)
+cl_int Program::Build(std::vector<D3DDeviceAndRef> Devices, const char* options, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
 
@@ -591,7 +595,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
         }
         for (auto& device : Devices)
         {
-            auto &BuildData = m_BuildData[device.Get()];
+            auto &BuildData = m_BuildData[device.first.Get()];
             if (!BuildData)
             {
                 if (m_Source.empty() && m_IL.empty())
@@ -621,9 +625,9 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
             // Update build status to indicate build is starting so nobody else can start a build
             auto BuildData = std::make_shared<PerDeviceData>();
             Args.Common.BuildData = BuildData;
-            BuildData->m_Device = Devices[0].Get();
+            BuildData->m_Device = Devices[0].first.Get();
             BuildData->m_LastBuildOptions = options ? options : "";
-            for (auto& device : Devices)
+            for (auto& [device, _] : Devices)
             {
                 m_BuildData[device.Get()] = BuildData;
             }
@@ -631,7 +635,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
         else
         {
             // Update build data state, but don't throw away existing ones
-            for (auto& device : Devices)
+            for (auto& [device, _] : Devices)
             {
                 auto& BuildData = m_BuildData[device.Get()];
                 assert(BuildData && BuildData->m_OwnedBinary);
@@ -659,7 +663,7 @@ cl_int Program::Build(std::vector<Device::ref_ptr_int> Devices, const char* opti
     }
 }
 
-cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
+cl_int Program::Compile(std::vector<D3DDeviceAndRef> Devices, const char* options, cl_uint num_input_headers, const cl_program* input_headers, const char** header_include_names, Callback pfn_notify, void* user_data)
 {
     auto ReportError = GetContext().GetErrorReporter();
     if (m_Source.empty() && m_IL.empty())
@@ -701,7 +705,7 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
         {
             return ReportError("Cannot compile program: program has live kernels.", CL_INVALID_OPERATION);
         }
-        for (auto& device : Devices)
+        for (auto& [device, _] : Devices)
         {
             auto &BuildData = m_BuildData[device.Get()];
             if (!BuildData)
@@ -720,9 +724,9 @@ cl_int Program::Compile(std::vector<Device::ref_ptr_int> Devices, const char* op
         // Update build status to indicate build is starting so nobody else can start a build
         auto BuildData = std::make_shared<PerDeviceData>();
         Args.Common.BuildData = BuildData;
-        BuildData->m_Device = Devices[0].Get();
+        BuildData->m_Device = Devices[0].first.Get();
         BuildData->m_LastBuildOptions = options ? options : "";
-        for (auto& device : Devices)
+        for (auto& [device, _] : Devices)
         {
             m_BuildData[device.Get()] = BuildData;
         }
@@ -765,7 +769,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     }
 
     // Validation pass
-    for (auto& Device : m_AssociatedDevices)
+    for (auto& [Device, _] : m_AssociatedDevices)
     {
         unsigned ThisDeviceValidPrograms = 0;
 
@@ -808,7 +812,7 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
 
         std::shared_ptr<PerDeviceData> BuildData;
         std::lock_guard Lock(lib.m_Lock);
-        for (auto& Device : m_AssociatedDevices)
+        for (auto& [Device, _] : m_AssociatedDevices)
         {
             auto& ThisDeviceBuildData = lib.m_BuildData[Device.Get()];
             if (BuildData &&
@@ -830,16 +834,16 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
     if (AllDevicesSameProgram)
     {
         Args.Common.BuildData = std::make_shared<PerDeviceData>();
-        for (auto& Device : m_AssociatedDevices)
+        for (auto& [Device, _] : m_AssociatedDevices)
         {
             m_BuildData[Device.Get()] = Args.Common.BuildData;
         }
-        Args.Common.BuildData->m_Device = m_AssociatedDevices[0].Get();
+        Args.Common.BuildData->m_Device = m_AssociatedDevices[0].first.Get();
         Args.Common.BuildData->m_LastBuildOptions = options ? options : "";
     }
     else
     {
-        for (auto& Device : m_AssociatedDevices)
+        for (auto& [Device, _] : m_AssociatedDevices)
         {
             auto& BuildData = m_BuildData[Device.Get()];
             BuildData = std::make_shared<PerDeviceData>();
@@ -894,7 +898,7 @@ void Program::KernelFreed()
     --m_NumLiveKernels;
 }
 
-void Program::AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices, CommonOptions& optionsStruct)
+void Program::AddBuiltinOptions(std::vector<D3DDeviceAndRef> const& devices, CommonOptions& optionsStruct)
 {
     optionsStruct.Args.reserve(15);
 #ifdef CLON12_SUPPORT_3_0
@@ -908,10 +912,10 @@ void Program::AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices,
     }
     optionsStruct.Features.int64 = true;
     // Query device caps to determine additional things to enable and/or disable
-    if (std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return !d->IsMCDM(); }))
+    if (std::all_of(devices.begin(), devices.end(), [](D3DDeviceAndRef const& d) { return !d.first->IsMCDM(); }))
     {
         optionsStruct.Features.images = true;
-        if (!std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const &d) { return d->SupportsTypedUAVLoad(); }))
+        if (!std::all_of(devices.begin(), devices.end(), [](D3DDeviceAndRef const &d) { return d.first->SupportsTypedUAVLoad(); }))
         {
             optionsStruct.Features.images_read_write = true;
             optionsStruct.Features.images_write_3d = true;
@@ -1095,10 +1099,10 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     }
     else
     {
-        pCompiler->Initialize(Args.BinaryBuildDevices[0]->D3DDevice()->GetShaderCache());
+        pCompiler->Initialize(Args.BinaryBuildDevices[0].second->GetShaderCache());
 
         std::lock_guard Lock(m_Lock);
-        for (auto& device : Args.BinaryBuildDevices)
+        for (auto& [device, _] : Args.BinaryBuildDevices)
         {
             auto& BuildData = m_BuildData[device.Get()];
             Logger loggers(m_Lock, BuildData->m_BuildLog);
@@ -1193,9 +1197,9 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
     link_args.objs.reserve(Args.LinkPrograms.size());
     link_args.create_library = Args.Common.CreateLibrary;
 
-    for (auto& Device : m_AssociatedDevices)
+    for (auto& [Device, D3DDevice] : m_AssociatedDevices)
     {
-        pCompiler->Initialize(Device->D3DDevice()->GetShaderCache());
+        pCompiler->Initialize(D3DDevice->GetShaderCache());
 
         link_args.objs.clear();
         for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
