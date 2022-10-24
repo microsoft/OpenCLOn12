@@ -7,9 +7,12 @@ bool ValidateContextProperties(cl_context_properties const* properties, TReporte
 {
     constexpr cl_context_properties KnownProperties[] =
     {
-        CL_CONTEXT_PLATFORM, CL_CONTEXT_INTEROP_USER_SYNC
+        CL_CONTEXT_PLATFORM, CL_CONTEXT_INTEROP_USER_SYNC,
+        CL_GL_CONTEXT_KHR, CL_EGL_DISPLAY_KHR, CL_GLX_DISPLAY_KHR,
+        CL_WGL_HDC_KHR, CL_CGL_SHAREGROUP_KHR,
     };
     bool SeenProperties[std::extent_v<decltype(KnownProperties)>] = {};
+    bool glContext = false, eglDisplay = false, wglDisplay = false;
     for (auto CurProp = properties; properties && *CurProp; CurProp += 2)
     {
         auto KnownPropIter = std::find(KnownProperties, std::end(KnownProperties), *CurProp);
@@ -25,6 +28,36 @@ bool ValidateContextProperties(cl_context_properties const* properties, TReporte
         }
 
         SeenProperties[PropIndex] = true;
+
+        switch (*CurProp)
+        {
+        case CL_GL_CONTEXT_KHR:
+            glContext = *(CurProp + 1) != 0;
+            break;
+        case CL_EGL_DISPLAY_KHR:
+            eglDisplay = *(CurProp + 1) != 0;
+            break;
+        case CL_WGL_HDC_KHR:
+            wglDisplay = *(CurProp + 1) != 0;
+            break;
+        case CL_CGL_SHAREGROUP_KHR:
+            return !ReportError("CGL unsupported.", CL_INVALID_OPERATION);
+        case CL_GLX_DISPLAY_KHR:
+            return !ReportError("GLX unsupported.", CL_INVALID_OPERATION);
+        }
+    }
+
+    if (glContext && !(eglDisplay || wglDisplay))
+    {
+        return !ReportError("A GL context was provided, but no WGL or EGL display.", CL_INVALID_OPERATION);
+    }
+    if (!glContext && (eglDisplay || wglDisplay))
+    {
+        return !ReportError("A GL context was not provided, but a WGL or EGL display was.", CL_INVALID_OPERATION);
+    }
+    if (eglDisplay && wglDisplay)
+    {
+        return ReportError("If a GL context is provided, only one of WGL or EGL displays should be present.", CL_INVALID_OPERATION);
     }
 
     return true;
