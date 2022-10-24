@@ -126,7 +126,7 @@ cl_icd_dispatch g_DispatchTable
     nullptr, // clGetGLTextureInfo,
     nullptr, // clEnqueueAcquireGLObjects,
     nullptr, // clEnqueueReleaseGLObjects,
-    nullptr, // clGetGLContextInfoKHR,
+    clGetGLContextInfoKHR,
 
     /* cl_khr_d3d10_sharing */
     nullptr, // clGetDeviceIDsFromD3D10KHR,

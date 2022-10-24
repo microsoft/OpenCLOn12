@@ -39,7 +39,7 @@ private:
     friend cl_int CL_API_CALL clGetContextInfo(cl_context, cl_context_info, size_t, void*, size_t*);
 
 public:
-    Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices,
+    Context(std::vector<D3DDeviceAndRef> Devices,
             const cl_context_properties* Properties,
             std::unique_ptr<GLInteropManager> glManager,
             PfnCallbackType pfnErrorCb, void* CallbackContext);

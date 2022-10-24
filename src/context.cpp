@@ -153,6 +153,12 @@ bool ValidateContextProperties(cl_context_properties const* properties, TReporte
 
         switch (*CurProp)
         {
+        case CL_CONTEXT_PLATFORM:
+            if (reinterpret_cast<Platform *>(*(CurProp + 1)) != g_Platform)
+            {
+                return !ReportError("Invalid platform.", CL_INVALID_PLATFORM);
+            }
+            break;
         case CL_GL_CONTEXT_KHR:
             glContext = *(CurProp + 1);
             break;
@@ -229,17 +235,6 @@ clCreateContext(const cl_context_properties * properties,
         return nullptr;
     }
 
-    Platform* platform = nullptr;
-    auto platformProp = FindProperty<cl_context_properties>(properties, CL_CONTEXT_PLATFORM);
-    if (platformProp)
-    {
-        platform = static_cast<Platform*>(reinterpret_cast<cl_platform_id>(*platformProp));
-        if (!platform)
-        {
-            return ReportError("Platform specified but null.", CL_INVALID_PLATFORM);
-        }
-    }
-
     std::unique_ptr<GLInteropManager> glManager;
     d3d12_interop_device_info d3d12DevInfo = {};
     if (glProps.eglContext || glProps.wglContext)
@@ -260,15 +255,6 @@ clCreateContext(const cl_context_properties * properties,
         {
             return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
         }
-        if (platform && platform != &device->m_Parent.get())
-        {
-            return ReportError("Platform specified in properties doesn't match device platform.", CL_INVALID_PLATFORM);
-        }
-        platform = &device->m_Parent.get();
-        if (platform != g_Platform)
-        {
-            return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
-        }
 
         if (glManager)
         {
@@ -285,7 +271,7 @@ clCreateContext(const cl_context_properties * properties,
     {
         if (errcode_ret)
             *errcode_ret = CL_SUCCESS;
-        return new Context(*platform, std::move(device_refs), properties, std::move(glManager), pfn_notify, user_data);
+        return new Context(std::move(device_refs), properties, std::move(glManager), pfn_notify, user_data);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -334,26 +320,11 @@ clCreateContextFromType(const cl_context_properties * properties,
         }
     }
 
-    auto platformProp = FindProperty<cl_context_properties>(properties, CL_CONTEXT_PLATFORM);
-    if (!platformProp)
-    {
-        return ReportError("Platform not provided.", CL_INVALID_PLATFORM);
-    }
-    Platform* platform = static_cast<Platform*>(reinterpret_cast<cl_platform_id>(*platformProp));
-    if (!platform)
-    {
-        return ReportError("Platform specified but null.", CL_INVALID_PLATFORM);
-    }
-    if (platform != g_Platform)
-    {
-        return ReportError("Invalid platform.", CL_INVALID_PLATFORM);
-    }
-
     std::vector<D3DDeviceAndRef> device_refs;
 
-    for (cl_uint i = 0; i < platform->GetNumDevices(); ++i)
+    for (cl_uint i = 0; i < g_Platform->GetNumDevices(); ++i)
     {
-        Device* device = static_cast<Device*>(platform->GetDevice(i));
+        Device* device = static_cast<Device*>(g_Platform->GetDevice(i));
         if (!device->IsAvailable())
         {
             return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
@@ -373,7 +344,7 @@ clCreateContextFromType(const cl_context_properties * properties,
     {
         if (errcode_ret)
             *errcode_ret = CL_SUCCESS;
-        return new Context(*platform, std::move(device_refs), properties, std::move(glManager), pfn_notify, user_data);
+        return new Context(std::move(device_refs), properties, std::move(glManager), pfn_notify, user_data);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -453,11 +424,64 @@ clSetContextDestructorCallback(cl_context context_,
     return CL_SUCCESS;
 }
 
-Context::Context(Platform& Platform, std::vector<D3DDeviceAndRef> Devices,
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetGLContextInfoKHR(const cl_context_properties *properties,
+                      cl_gl_context_info            param_name,
+                      size_t                        param_value_size,
+                      void *param_value,
+                      size_t *param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!properties)
+    {
+        return CL_INVALID_PROPERTY;
+    }
+    GLProperties glProps = {};
+    {
+        cl_int ret = CL_SUCCESS;
+        auto ReportError = [&ret](const char *, cl_int err) { ret = err; return nullptr; };
+        if (!ValidateContextProperties(properties, ReportError, glProps))
+        {
+            return ret;
+        }
+    }
+    auto glManager = GLInteropManager::Create(glProps);
+    d3d12_interop_device_info d3d12DevInfo = {};
+    if (!glManager || !glManager->GetDeviceData(d3d12DevInfo))
+    {
+        return CL_INVALID_GL_SHAREGROUP_REFERENCE_KHR;
+    }
+
+    cl_device_id matchingDevice = nullptr;
+    for (cl_uint i = 0; i < g_Platform->GetNumDevices(); ++i)
+    {
+        Device* device = static_cast<Device*>(g_Platform->GetDevice(i));
+        LUID luid = device->GetAdapterLuid();
+        if (device->IsAvailable() &&
+            memcmp(&luid, &d3d12DevInfo.adapter_luid, sizeof(luid)) == 0)
+        {
+            matchingDevice = device;
+            break;
+        }
+    }
+    switch (param_name)
+    {
+    case CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR:
+    case CL_DEVICES_FOR_GL_CONTEXT_KHR:
+        if (matchingDevice)
+        {
+            return CopyOutParameter(matchingDevice, param_value_size, param_value, param_value_size_ret);
+        }
+        return CopyOutParameter(nullptr, param_value_size, param_value, param_value_size_ret);
+    default:
+        return CL_INVALID_VALUE;
+    }
+}
+
+Context::Context(std::vector<D3DDeviceAndRef> Devices,
                  const cl_context_properties* Properties,
                  std::unique_ptr<GLInteropManager> glManager,
                  PfnCallbackType pfnErrorCb, void* CallbackContext)
-    : CLChildBase(Platform)
+    : CLChildBase(*g_Platform)
     , m_AssociatedDevices(std::move(Devices))
     , m_ErrorCallback(pfnErrorCb ? pfnErrorCb : DummyCallback)
     , m_CallbackContext(CallbackContext)
