@@ -118,6 +118,7 @@ private:
     struct PerDeviceData
     {
         Device* m_Device;
+        D3DDevice *m_D3DDevice;
         cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
         std::string m_BuildLog;
         unique_spirv m_OwnedBinary;

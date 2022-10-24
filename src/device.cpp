@@ -537,7 +537,13 @@ void D3DDevice::ExecuteTasks(Submission& tasks)
         }
 
         // Enqueue another execution task if there's new items ready to go
-        g_Platform->FlushAllDevices(Lock);
+        for (auto& task : tasks)
+        {
+            if (task->m_D3DDevice)
+            {
+                task->m_D3DDevice->Flush(Lock);
+            }
+        }
     }
 }
 
@@ -555,6 +561,14 @@ void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> 
     spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &m_D3D12Options4, sizeof(m_D3D12Options4));
 
     m_CapsValid = true;
+}
+
+void Device::CloseCaches()
+{
+    if (m_D3DDevice)
+    {
+        m_D3DDevice->GetShaderCache().Close();
+    }
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL
@@ -591,10 +605,10 @@ clGetDeviceAndHostTimer(cl_device_id device_,
     try
     {
         // Should I just return 0 here if they haven't created a context on this device?
-        device.InitD3D();
+        auto& d3dDevice = device.InitD3D();
         auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(); });
 
-        auto pQueue = device.D3DDevice()->ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+        auto pQueue = d3dDevice.ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
         D3D12TranslationLayer::ThrowFailure(pQueue->GetClockCalibration(device_timestamp, host_timestamp));
         return CL_SUCCESS;
     }

@@ -180,11 +180,7 @@ clSetUserEventStatus(cl_event   event,
         e.Complete(execution_status, Lock);
         for (cl_uint i = 0; i < context.GetDeviceCount(); ++i)
         {
-            auto &d3dDeviceOpt = context.GetDevice(i).D3DDevice();
-            if (d3dDeviceOpt)
-            {
-                d3dDeviceOpt->Flush(Lock);
-            }
+            context.GetD3DDevice(i).Flush(Lock);
         }
     }
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -449,6 +445,7 @@ Task::Task(Context& Parent, cl_command_type command_type, cl_command_queue comma
     : CLChildBase(Parent)
     , m_CommandQueue(static_cast<CommandQueue*>(command_queue))
     , m_Device(command_queue ? &m_CommandQueue->GetDevice() : nullptr)
+    , m_D3DDevice(command_queue ? &m_CommandQueue->GetD3DDevice() : nullptr)
     , m_CommandType(command_type)
 {
     if (m_CommandQueue.Get() && m_CommandQueue->m_bProfile)
@@ -459,9 +456,10 @@ Task::Task(Context& Parent, cl_command_type command_type, cl_command_queue comma
     }
 }
 
-Task::Task(Context& Parent, Device& device)
+Task::Task(Context& Parent, D3DDevice& device)
     : CLChildBase(Parent)
-    , m_Device(&device)
+    , m_Device(&device.GetParent())
+    , m_D3DDevice(&device)
     , m_CommandType(0)
 {
 }
@@ -599,20 +597,20 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
 
     if (m_StartTimestamp || m_StopTimestamp)
     {
-        assert(m_CommandQueue.Get());
-        UINT64 Frequency = m_CommandQueue->GetD3DDevice().GetTimestampFrequency();
+        assert(m_CommandQueue.Get() && m_D3DDevice);
+        UINT64 Frequency = m_D3DDevice->GetTimestampFrequency();
         UINT64 GPUTimestamp;
         if (m_StartTimestamp &&
             m_StartTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
         {
             GetTimestamp(CL_PROFILING_COMMAND_START) =
-                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->D3DDevice()->GPUToQPCTimestampOffset();
+                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_D3DDevice->GPUToQPCTimestampOffset();
         }
         if (m_StopTimestamp &&
             m_StopTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
         {
             GetTimestamp(CL_PROFILING_COMMAND_END) =
-                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_Device->D3DDevice()->GPUToQPCTimestampOffset();
+                TimestampToNanoseconds(GPUTimestamp, Frequency) + m_D3DDevice->GPUToQPCTimestampOffset();
         }
     }
 
@@ -635,7 +633,7 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
     {
         for (auto& task : m_TasksWaitingOnThis)
         {
-            assert(task->m_CommandQueue.Get() || task->m_Device.Get());
+            assert(task->m_CommandQueue.Get() || task->m_D3DDevice);
 
             auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
                 [this](ref_ptr_int const& p) { return p.Get() == this; });
@@ -645,7 +643,7 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
             if (task->m_TasksToWaitOn.empty() &&
                 task->m_State == State::Submitted)
             {
-                task->m_Device->D3DDevice()->ReadyTask(task.Get(), lock);
+                task->m_D3DDevice->ReadyTask(task.Get(), lock);
             }
         }
     }

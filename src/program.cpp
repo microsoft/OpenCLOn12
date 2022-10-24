@@ -626,6 +626,7 @@ cl_int Program::Build(std::vector<D3DDeviceAndRef> Devices, const char* options,
             auto BuildData = std::make_shared<PerDeviceData>();
             Args.Common.BuildData = BuildData;
             BuildData->m_Device = Devices[0].first.Get();
+            BuildData->m_D3DDevice = Devices[0].second;
             BuildData->m_LastBuildOptions = options ? options : "";
             for (auto& [device, _] : Devices)
             {
@@ -725,6 +726,7 @@ cl_int Program::Compile(std::vector<D3DDeviceAndRef> Devices, const char* option
         auto BuildData = std::make_shared<PerDeviceData>();
         Args.Common.BuildData = BuildData;
         BuildData->m_Device = Devices[0].first.Get();
+        BuildData->m_D3DDevice = Devices[0].second;
         BuildData->m_LastBuildOptions = options ? options : "";
         for (auto& [device, _] : Devices)
         {
@@ -839,15 +841,17 @@ cl_int Program::Link(const char* options, cl_uint num_input_programs, const cl_p
             m_BuildData[Device.Get()] = Args.Common.BuildData;
         }
         Args.Common.BuildData->m_Device = m_AssociatedDevices[0].first.Get();
+        Args.Common.BuildData->m_D3DDevice = m_AssociatedDevices[0].second;
         Args.Common.BuildData->m_LastBuildOptions = options ? options : "";
     }
     else
     {
-        for (auto& [Device, _] : m_AssociatedDevices)
+        for (auto& [Device, D3DDevice] : m_AssociatedDevices)
         {
             auto& BuildData = m_BuildData[Device.Get()];
             BuildData = std::make_shared<PerDeviceData>();
             BuildData->m_Device = Device.Get();
+            BuildData->m_D3DDevice = D3DDevice;
             BuildData->m_LastBuildOptions = options ? options : "";
         }
     }
@@ -1053,7 +1057,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     if (!m_Source.empty() || !m_IL.empty())
     {
         auto& BuildData = Args.Common.BuildData;
-        pCompiler->Initialize(BuildData->m_Device->D3DDevice()->GetShaderCache());
+        pCompiler->Initialize(BuildData->m_D3DDevice->GetShaderCache());
 
         Logger loggers(m_Lock, BuildData->m_BuildLog);
         unique_spirv compiledObject;
@@ -1138,7 +1142,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
     auto pCompiler = g_Platform->GetCompiler();
-    pCompiler->Initialize(BuildData->m_Device->D3DDevice()->GetShaderCache());
+    pCompiler->Initialize(BuildData->m_D3DDevice->GetShaderCache());
     Logger loggers(m_Lock, BuildData->m_BuildLog);
 
     unique_spirv object;
@@ -1255,7 +1259,7 @@ void Program::PerDeviceData::CreateKernels(Program& program)
         return;
 
     auto pCompiler = g_Platform->GetCompiler();
-    pCompiler->Initialize(m_Device->D3DDevice()->GetShaderCache());
+    pCompiler->Initialize(m_D3DDevice->GetShaderCache());
 
     auto& kernels = m_OwnedBinary->GetKernelInfo();
     Logger loggers(program.m_Lock, m_BuildLog);

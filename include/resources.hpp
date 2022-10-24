@@ -33,11 +33,11 @@ public:
     static Resource* CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
 
     UnderlyingResource* GetUnderlyingResource(D3DDevice*);
-    void SetActiveDevice(Device*);
+    void SetActiveDevice(D3DDevice*);
     UnderlyingResource* GetActiveUnderlyingResource() const { return m_ActiveUnderlying; }
     cl_uint GetMapCount() const { std::lock_guard MapLock(m_MapLock); return m_MapCount; }
 
-    void EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, cl_mem_migration_flags flags);
+    void EnqueueMigrateResource(D3DDevice* newDevice, Task* triggeringTask, cl_mem_migration_flags flags);
 
     D3D12TranslationLayer::SRV& GetSRV(D3DDevice*);
     D3D12TranslationLayer::UAV& GetUAV(D3DDevice*);
@@ -51,7 +51,7 @@ public:
 
 protected:
     std::recursive_mutex m_MultiDeviceLock;
-    Device *m_CurrentActiveDevice = nullptr;
+    D3DDevice *m_CurrentActiveDevice = nullptr;
     UnderlyingResource *m_ActiveUnderlying = nullptr;
     std::unordered_map<D3DDevice*, UnderlyingResourcePtr> m_UnderlyingMap;
     std::unordered_map<D3DDevice*, D3D12TranslationLayer::SRV> m_SRVs;

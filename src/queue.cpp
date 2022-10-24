@@ -52,7 +52,8 @@ clCreateCommandQueueWithPropertiesImpl(cl_context               context_,
         return ReportError("Invalid device.", CL_INVALID_DEVICE);
     }
     Device& device = *static_cast<Device*>(device_);
-    if (!context.ValidDeviceForContext(device))
+    D3DDevice *d3dDevice = context.D3DDeviceForContext(device);
+    if (!d3dDevice)
     {
         return ReportError("Provided device not associated with provided context.", CL_INVALID_DEVICE);
     }
@@ -77,7 +78,7 @@ clCreateCommandQueueWithPropertiesImpl(cl_context               context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return new CommandQueue(device, context, properties, synthesized_properties);
+        return new CommandQueue(*d3dDevice, context, properties, synthesized_properties);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -232,10 +233,10 @@ static bool IsProfile(const cl_queue_properties* properties)
     auto prop = FindProperty<cl_queue_properties>(properties, CL_QUEUE_PROPERTIES);
     return prop != nullptr && ((*prop) & CL_QUEUE_PROFILING_ENABLE) != 0;
 }
-CommandQueue::CommandQueue(Device& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties)
-    : CLChildBase(device)
+CommandQueue::CommandQueue(D3DDevice& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties)
+    : CLChildBase(device.GetParent())
     , m_Context(context)
-    , m_D3DDevice(*device.D3DDevice())
+    , m_D3DDevice(device)
     , m_Properties(PropertiesToVector(properties))
     , m_bOutOfOrder(IsOutOfOrder(properties))
     , m_bProfile(IsProfile(properties))

@@ -126,12 +126,12 @@ public:
         for (auto& res : m_KernelArgUAVs)
         {
             if (res.Get())
-                res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+                res->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
         }
         for (auto& res : m_KernelArgSRVs)
         {
             if (res.Get())
-                res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+                res->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
         }
     }
     void RecordImpl() final;
@@ -232,7 +232,7 @@ public:
         if (kernel.m_Dxil.GetMetadata().printf_uav_id >= 0)
         {
             m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
-            m_PrintfUAV->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+            m_PrintfUAV->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
             m_UAVs[kernel.m_Dxil.GetMetadata().printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
         }
 

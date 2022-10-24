@@ -65,7 +65,6 @@ public:
     cl_uint GetDeviceCount() const noexcept;
     Device& GetDevice(cl_uint index) const noexcept;
     D3DDevice &GetD3DDevice(cl_uint index) const noexcept;
-    bool ValidDeviceForContext(Device& device) const noexcept;
     D3DDevice *D3DDeviceForContext(Device &device) const noexcept;
     std::vector<D3DDeviceAndRef> GetDevices() const noexcept { return m_AssociatedDevices; }
 

@@ -32,6 +32,7 @@ public:
     void Flush(TaskPoolLock const&);
 
     std::unique_ptr<D3D12TranslationLayer::PipelineState> CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc);
+    Device &GetParent() const noexcept { return m_Parent; }
 
 protected:
     void ExecuteTasks(Submission& tasks);
@@ -73,7 +74,8 @@ public:
     D3DDevice &InitD3D();
     void ReleaseD3D();
 
-    std::optional<::D3DDevice> &D3DDevice() { return m_D3DDevice; }
+    bool HasD3DDevice() const noexcept { return m_D3DDevice.has_value(); }
+    void CloseCaches();
 
 protected:
     void CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> spDevice = {});

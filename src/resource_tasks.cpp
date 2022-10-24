@@ -144,7 +144,7 @@ private:
 
     void MigrateResources() final
     {
-        m_Target->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Target->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
     }
     void RecordImpl() final;
     void OnComplete() final
@@ -698,7 +698,7 @@ private:
 
     void MigrateResources() final
     {
-        m_Target->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Target->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
     }
     void RecordImpl() final;
     void OnComplete() final
@@ -897,7 +897,7 @@ private:
 
     void MigrateResources() final
     {
-        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
     }
     void RecordImpl() final;
     void OnComplete() final
@@ -1380,8 +1380,8 @@ private:
 
     void MigrateResources() final
     {
-        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
-        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
+        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
     }
     void RecordImpl() final
     {
@@ -1694,8 +1694,8 @@ private:
 
     void MigrateResources() final
     {
-        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
-        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
+        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
     }
     void RecordImpl() final;
     void OnComplete() final
@@ -2056,10 +2056,10 @@ private:
     }
     void MigrateResources() final
     {
-        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
-        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_Source->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
+        m_Dest->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
         if (m_Temp.Get())
-            m_Temp->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+            m_Temp->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
     }
     void RecordImpl() final
     {
@@ -2359,7 +2359,7 @@ void MapTask::OnComplete()
 
 void MapTask::MigrateResources()
 {
-    m_Resource.EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+    m_Resource.EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
 }
 
 class MapUseHostPtrResourceTask : public MapTask
@@ -2509,7 +2509,7 @@ public:
             m_MappableResource.Attach(Resource::CreateImage(Parent, Args, nullptr, resource.m_Format, NewDesc, stagingFlags));
         }
 
-        m_MappableResource->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+        m_MappableResource->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
         auto UnderlyingMapArgs = args;
         UnderlyingMapArgs.SrcX = 0;
         UnderlyingMapArgs.SrcY = 0;

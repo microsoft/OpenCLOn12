@@ -124,7 +124,6 @@ public:
     void UnloadCompiler();
 
     TaskPoolLock GetTaskPoolLock();
-    void FlushAllDevices(TaskPoolLock const& Lock);
 
     bool AnyD3DDevicesExist() const noexcept;
     void CloseCaches();

@@ -173,17 +173,6 @@ TaskPoolLock Platform::GetTaskPoolLock()
     return lock;
 }
 
-void Platform::FlushAllDevices(TaskPoolLock const& Lock)
-{
-    for (auto& device : m_Devices)
-    {
-        if (auto &d3dDevice = device->D3DDevice())
-        {
-            d3dDevice->Flush(Lock);
-        }
-    }
-}
-
 void Platform::DeviceInit()
 {
     std::lock_guard Lock(m_ModuleLock);
@@ -277,16 +266,13 @@ void Platform::UnloadCompiler()
 bool Platform::AnyD3DDevicesExist() const noexcept
 {
     return std::any_of(m_Devices.begin(), m_Devices.end(), 
-                       [](std::unique_ptr<Device> const& dev) { return dev->D3DDevice().has_value(); });
+                       [](std::unique_ptr<Device> const& dev) { return dev->HasD3DDevice(); });
 }
 
 void Platform::CloseCaches()
 {
     for (auto& device : m_Devices)
     {
-        if (auto &d3dDevice = device->D3DDevice())
-        {
-            d3dDevice->GetShaderCache().Close();
-        }
+        device->CloseCaches();
     }
 }

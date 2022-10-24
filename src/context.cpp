@@ -298,12 +298,6 @@ D3DDevice& Context::GetD3DDevice(cl_uint i) const noexcept
     return *m_AssociatedDevices[i].second;
 }
 
-bool Context::ValidDeviceForContext(Device& device) const noexcept
-{
-    return std::find_if(m_AssociatedDevices.begin(), m_AssociatedDevices.end(),
-                        [&device](D3DDeviceAndRef const& d) { return d.first.Get() == &device; }) != m_AssociatedDevices.end();
-}
-
 D3DDevice *Context::D3DDeviceForContext(Device& device) const noexcept
 {
     auto iter = std::find_if(m_AssociatedDevices.begin(), m_AssociatedDevices.end(),

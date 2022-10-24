@@ -606,7 +606,7 @@ clGetSupportedImageFormats(cl_context           context_,
             for (cl_uint device = 0; device < context.GetDeviceCount(); ++device)
             {
                 D3D12_FEATURE_DATA_FORMAT_SUPPORT Support = { (DXGI_FORMAT)i };
-                if (FAILED(context.GetDevice(device).D3DDevice()->GetDevice()->CheckFeatureSupport(
+                if (FAILED(context.GetD3DDevice(device).GetDevice()->CheckFeatureSupport(
                     D3D12_FEATURE_FORMAT_SUPPORT, &Support, sizeof(Support))))
                 {
                     return false;
@@ -704,7 +704,7 @@ clGetMemObjectInfo(cl_mem           memobj,
             return RetValue(resource.m_Desc.image_width);
         auto Underlying = resource.GetActiveUnderlyingResource();
         if (!Underlying)
-            Underlying = resource.GetUnderlyingResource(&*resource.m_Parent->GetDevice(0).D3DDevice());
+            Underlying = resource.GetUnderlyingResource(&resource.m_Parent->GetD3DDevice(0));
         return RetValue((size_t)Underlying->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
     }
     case CL_MEM_HOST_PTR: return RetValue(resource.m_pHostPointer);
@@ -788,10 +788,10 @@ auto Resource::GetUnderlyingResource(D3DDevice* device) -> UnderlyingResource*
     return Entry.get();
 }
 
-void Resource::SetActiveDevice(Device* device)
+void Resource::SetActiveDevice(D3DDevice* device)
 {
     std::lock_guard Lock(m_MultiDeviceLock);
-    m_ActiveUnderlying = GetUnderlyingResource(&*device->D3DDevice());
+    m_ActiveUnderlying = GetUnderlyingResource(device);
     m_CurrentActiveDevice = device;
 }
 

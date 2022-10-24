@@ -9,7 +9,7 @@
 class CommandQueue : public CLChildBase<CommandQueue, Device, cl_command_queue>
 {
 public:
-    CommandQueue(Device& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties);
+    CommandQueue(D3DDevice& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties);
 
     friend cl_int CL_API_CALL clGetCommandQueueInfo(cl_command_queue, cl_command_queue_info, size_t, void*, size_t*);
 

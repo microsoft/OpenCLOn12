@@ -42,7 +42,7 @@ clSetDefaultDeviceCommandQueue(cl_context           context_,
         return ReportError("Device must not be null", CL_INVALID_DEVICE);
     }
     Device& device = *static_cast<Device*>(device_);
-    if (!context.ValidDeviceForContext(device))
+    if (!context.D3DDeviceForContext(device))
     {
         return ReportError("Device not valid for this context", CL_INVALID_DEVICE);
     }
@@ -131,7 +131,7 @@ clCreateProgramWithBuiltInKernels(cl_context            context_,
         {
             return ReportError("Device list must not contain null entries", CL_INVALID_DEVICE);
         }
-        if (!context.ValidDeviceForContext(*static_cast<Device*>(device_list[i])))
+        if (!context.D3DDeviceForContext(*static_cast<Device*>(device_list[i])))
         {
             return ReportError("Device list contains device that's invalid for context", CL_INVALID_DEVICE);
         }
