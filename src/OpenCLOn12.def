@@ -58,6 +58,7 @@ clGetDeviceInfo
 clGetEventInfo
 clGetEventProfilingInfo
 clGetExtensionFunctionAddress
+clGetGLContextInfoKHR
 ; clGetGLObjectInfo
 ; clGetGLTextureInfo
 clGetImageInfo

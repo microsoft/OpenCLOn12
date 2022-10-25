@@ -17,6 +17,8 @@
 
 #include <d3d12.h>
 
+#include <gl/GL.h>
+
 std::pair<cl::Context, cl::Device> GetWARPContext()
 {
     std::vector<cl::Platform> platforms;
@@ -331,6 +333,138 @@ TEST(OpenCLOn12, SPIRV)
     EXPECT_EQ(data[1], 0x20000002u);
     EXPECT_EQ(data[2], 0x00060006u);
     EXPECT_EQ(data[3], 0x1004080cu);
+}
+
+class window
+{
+public:
+    window(uint32_t width = 64, uint32_t height = 64);
+    ~window();
+
+    HWND get_hwnd() const { return _window; };
+    HDC get_hdc() const { return _hdc; };
+    HGLRC get_hglrc() const { return _hglrc; }
+    bool valid() const { return _window && _hdc && _hglrc; }
+    void show() {
+        ShowWindow(_window, SW_SHOW);
+    }
+
+    void recreate_attribs(const int *attribList);
+
+private:
+    HWND _window = nullptr;
+    HDC _hdc = nullptr;
+    HGLRC _hglrc = nullptr;
+};
+
+window::window(uint32_t width, uint32_t height)
+{
+    _window = CreateWindowW(
+        L"STATIC",
+        L"OpenGLTestWindow",
+        WS_OVERLAPPEDWINDOW,
+        0,
+        0,
+        width,
+        height,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    );
+
+    if (_window == nullptr)
+        return;
+
+    _hdc = ::GetDC(_window);
+
+    PIXELFORMATDESCRIPTOR pfd = {
+        sizeof(PIXELFORMATDESCRIPTOR),  /* size */
+        1,                              /* version */
+        PFD_SUPPORT_OPENGL |
+        PFD_DRAW_TO_WINDOW |
+        PFD_DOUBLEBUFFER,               /* support double-buffering */
+        PFD_TYPE_RGBA,                  /* color type */
+        8,                              /* prefered color depth */
+        0, 0, 0, 0, 0, 0,               /* color bits (ignored) */
+        0,                              /* no alpha buffer */
+        0,                              /* alpha bits (ignored) */
+        0,                              /* no accumulation buffer */
+        0, 0, 0, 0,                     /* accum bits (ignored) */
+        32,                             /* depth buffer */
+        0,                              /* no stencil buffer */
+        0,                              /* no auxiliary buffers */
+        PFD_MAIN_PLANE,                 /* main layer */
+        0,                              /* reserved */
+        0, 0, 0,                        /* no layer, visible, damage masks */
+    };
+    int pixel_format = ChoosePixelFormat(_hdc, &pfd);
+    if (pixel_format == 0)
+        return;
+    if (!SetPixelFormat(_hdc, pixel_format, &pfd))
+        return;
+
+    _hglrc = wglCreateContext(_hdc);
+    if (!_hglrc)
+        return;
+
+    wglMakeCurrent(_hdc, _hglrc);
+}
+
+void window::recreate_attribs(const int *attribs)
+{
+    using pwglCreateContextAttribsARB = HGLRC(WINAPI*)(HDC, HGLRC, const int *);
+    auto wglCreateContextAttribsARB = (pwglCreateContextAttribsARB)wglGetProcAddress("wglCreateContextAttribsARB");
+    if (!wglCreateContextAttribsARB)
+        GTEST_FAIL() << "failed to get wglCreateContextAttribsARB";
+
+    wglMakeCurrent(nullptr, nullptr);
+    wglDeleteContext(_hglrc);
+    _hglrc = wglCreateContextAttribsARB(_hdc, nullptr, attribs);
+    if (!_hglrc)
+        return;
+
+    wglMakeCurrent(_hdc, _hglrc);
+}
+
+window::~window()
+{
+    if (_hglrc) {
+        wglMakeCurrent(NULL, NULL);
+        wglDeleteContext(_hglrc);
+    }
+    if (_hdc)
+        ReleaseDC(_window, _hdc);
+    if (_window)
+        DestroyWindow(_window);
+}
+
+TEST(OpenCLOn12, GLInterop)
+{
+    window glWindow;
+    EXPECT_TRUE(glWindow.valid());
+
+    const char *renderer = (const char *)glGetString(GL_RENDERER);
+    if (!strstr(renderer, "D3D12"))
+        GTEST_SKIP();
+
+    std::vector<cl::Platform> platforms;
+    cl::Platform::get(&platforms);
+
+    EXPECT_EQ(platforms.size(), 1);
+
+    cl_context_properties context_props[] = {
+        CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[0](),
+        CL_GL_CONTEXT_KHR, (cl_context_properties)glWindow.get_hglrc(),
+        CL_WGL_HDC_KHR, (cl_context_properties)glWindow.get_hdc(),
+        0
+    };
+    cl_device_id glDevice;
+    EXPECT_EQ(CL_SUCCESS,
+              clGetGLContextInfoKHR(context_props, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR,
+                                    sizeof(glDevice), &glDevice, nullptr));
+    EXPECT_NE(glDevice, nullptr);
+    cl::Context context(cl::Device(glDevice), context_props);
 }
 
 int main(int argc, char** argv)
