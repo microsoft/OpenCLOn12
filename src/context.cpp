@@ -73,12 +73,6 @@ private:
             throw std::runtime_error("Failed to get wglGetProcAddress");
         }
 
-        m_MyContext = { createContext(m_Display), deleteContext };
-        if (!m_MyContext)
-        {
-            throw std::runtime_error("Failed to create WGL context");
-        }
-
         static ATOM windowClass = 0;
         if (!windowClass)
         {
@@ -98,6 +92,12 @@ private:
         bool unbindContext = false;
         if (getCurrentContext() == nullptr)
         {
+            m_MyContext = { createContext(m_Display), deleteContext };
+            if (!m_MyContext)
+            {
+                throw std::runtime_error("Failed to create temp WGL context");
+            }
+
             auto hdc = wil::GetDC(m_HiddenWindow.get());
             if (!hdc.get())
             {
@@ -123,15 +123,23 @@ private:
         m_FlushObjects = reinterpret_cast<decltype(m_FlushObjects)>(getProcAddress("wglMesaGLInteropFlushObjects"));
         m_WaitSync = reinterpret_cast<decltype(m_WaitSync)>(getProcAddress("glWaitSync"));
         m_DeleteSync = reinterpret_cast<decltype(m_DeleteSync)>(getProcAddress("glDeleteSync"));
+        auto createContextAttrib = reinterpret_cast<HGLRC(__stdcall *)(HDC, HGLRC, const int *)>(getProcAddress("wglCreateContextAttribsARB"));
 
         if (unbindContext)
         {
             m_MakeCurrent(nullptr, nullptr);
+            m_MyContext.reset(nullptr);
         }
 
-        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects || !m_WaitSync || !m_DeleteSync)
+        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects || !m_WaitSync || !m_DeleteSync || !createContextAttrib)
         {
             throw std::runtime_error("Failed to get Mesa interop functions for WGL");
+        }
+
+        m_MyContext = { createContextAttrib(m_Display, m_AppContext, nullptr), deleteContext };
+        if (!m_MyContext)
+        {
+            throw std::runtime_error("Failed to create WGL context");
         }
     }
 };
@@ -143,37 +151,65 @@ public:
     {
         mesa_glinterop_device_info mesaDevInfo = {};
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
-        return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
+        return m_QueryDeviceInfo(m_Display, m_AppContext, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
     virtual bool BindContext() final
     {
-        return false;
+        return m_MakeCurrent(m_Display, nullptr, nullptr, m_MyContext);
     }
     virtual void UnbindContext() final
     {
+        m_MakeCurrent(m_Display, nullptr, nullptr, nullptr);
     }
 
-    ~EGLInteropManager() = default;
+    ~EGLInteropManager()
+    {
+        assert(m_MyContext);
+        m_DestroyContext(m_Display, m_MyContext);
+    }
 
 private:
     const EGLDisplay m_Display;
-    const EGLContext m_Context;
+    const EGLContext m_AppContext;
+    EGLContext m_MyContext = nullptr;
     decltype(&MesaGLInteropEGLQueryDeviceInfo) m_QueryDeviceInfo;
     decltype(&MesaGLInteropEGLExportObject) m_ExportObject;
     decltype(&MesaGLInteropEGLFlushObjects) m_FlushObjects;
+    unsigned(__stdcall *m_MakeCurrent)(EGLDisplay, void *, void *, EGLContext);
+    unsigned(__stdcall *m_DestroyContext)(EGLDisplay, EGLContext);
 
     friend class GLInteropManager;
     EGLInteropManager(GLProperties const &glProps)
         : GLInteropManager(XPlatHelpers::unique_module("libEGL.dll"))
         , m_Display(glProps.eglDisplay)
-        , m_Context(glProps.eglContext)
+        , m_AppContext(glProps.eglContext)
     {
-        m_QueryDeviceInfo = m_hMod.proc_address<decltype(m_QueryDeviceInfo)>("wglMesaGLInteropQueryDeviceInfo");
-        m_ExportObject = m_hMod.proc_address<decltype(m_ExportObject)>("wglMesaGLInteropExportObject");
-        m_FlushObjects = m_hMod.proc_address<decltype(m_FlushObjects)>("wglMesaGLInteropFlushObjects");
-        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects)
+        m_QueryDeviceInfo = m_hMod.proc_address<decltype(m_QueryDeviceInfo)>("MesaGLInteropEGLQueryDeviceInfo");
+        m_ExportObject = m_hMod.proc_address<decltype(m_ExportObject)>("MesaGLInteropEGLExportObject");
+        m_FlushObjects = m_hMod.proc_address<decltype(m_FlushObjects)>("MesaGLInteropEGLFlushObjects");
+        m_MakeCurrent = m_hMod.proc_address<decltype(m_MakeCurrent)>("eglMakeCurrent");
+        m_DestroyContext = m_hMod.proc_address<decltype(m_DestroyContext)>("eglDestroyContext");
+        using eglFuncRetType = void (*)(void);
+        auto getProcAddress = m_hMod.proc_address<eglFuncRetType(__stdcall *)(const char *)>("eglGetProcAddress");
+        auto createContext = m_hMod.proc_address<
+            EGLContext(__stdcall *)(EGLDisplay, void *, EGLContext, const int32_t *)>("eglCreateContext");
+        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects || !m_MakeCurrent ||
+            !m_DestroyContext || !getProcAddress || !createContext)
         {
             throw std::runtime_error("Failed to get Mesa interop functions for EGL");
+        }
+
+        m_WaitSync = reinterpret_cast<decltype(m_WaitSync)>(getProcAddress("glWaitSync"));
+        m_DeleteSync = reinterpret_cast<decltype(m_DeleteSync)>(getProcAddress("glDeleteSync"));
+        if (!m_WaitSync || !m_DeleteSync)
+        {
+            throw std::runtime_error("Failed to get Mesa interop functions for EGL");
+        }
+
+        m_MyContext = createContext(m_Display, nullptr, m_AppContext, nullptr);
+        if (!m_MyContext)
+        {
+            throw std::runtime_error("Failed to create EGL context");
         }
     }
 };

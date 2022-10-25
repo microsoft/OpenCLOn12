@@ -19,6 +19,8 @@
 
 #include <gl/GL.h>
 
+#include <wil/resource.h>
+
 std::pair<cl::Context, cl::Device> GetWARPContext()
 {
     std::vector<cl::Platform> platforms;
@@ -439,7 +441,7 @@ window::~window()
         DestroyWindow(_window);
 }
 
-TEST(OpenCLOn12, GLInterop)
+TEST(OpenCLOn12, WGLInterop)
 {
     window glWindow;
     EXPECT_TRUE(glWindow.valid());
@@ -469,6 +471,65 @@ TEST(OpenCLOn12, GLInterop)
     }
 
     wglMakeCurrent(nullptr, nullptr);
+    cl::Context context(cl::Device(glDevice), context_props);
+}
+
+TEST(OpenCLOn12, EGLInterop)
+{
+    HMODULE egl = LoadLibraryA("libEGL.dll");
+    if (!egl)
+        GTEST_SKIP();
+
+    auto getProcAddress = reinterpret_cast<void *(__stdcall *)(const char *)>(GetProcAddress(egl, "eglGetProcAddress"));
+
+    auto getDisplay = reinterpret_cast<void *(__stdcall *)(unsigned platform, void *native_disp, const int32_t *attribs)>(
+        getProcAddress("eglGetPlatformDisplayEXT"));
+    if (!getDisplay)
+        GTEST_SKIP();
+    auto display = getDisplay(0x31DD /*surfaceless*/, nullptr, nullptr);
+    EXPECT_NE(display, nullptr);
+
+    reinterpret_cast<unsigned(__stdcall *)(void *disp, int32_t *major, int32_t *minor)>(
+        GetProcAddress(egl, "eglInitialize"))(display, nullptr, nullptr);
+    auto terminate = reinterpret_cast<unsigned(__stdcall *)(void *)>(GetProcAddress(egl, "eglTerminate"));
+    auto displayCleanup = wil::scope_exit([&]() { terminate(display); });
+
+    auto createContext = reinterpret_cast<void *(__stdcall *)(void *disp, void *config, void *context, const int32_t * attribs)>(
+        GetProcAddress(egl, "eglCreateContext"));
+    auto glcontext = createContext(display, nullptr, nullptr, nullptr);
+    EXPECT_NE(glcontext, nullptr);
+    auto destroyContext = reinterpret_cast<unsigned(__stdcall *)(void *disp, void *context)>(GetProcAddress(egl, "eglDestroyContext"));
+    auto contextCleanup = wil::scope_exit([&]() { destroyContext(display, glcontext); });
+
+    auto makeCurrent = reinterpret_cast<unsigned(__stdcall *)(void *disp, void *draw, void *read, void *context)>(
+        GetProcAddress(egl, "eglMakeCurrent"));
+    EXPECT_NE(makeCurrent(display, nullptr, nullptr, glcontext), 0u);
+
+    const char *renderer = (const char *)glGetString(GL_RENDERER);
+    if (!strstr(renderer, "D3D12"))
+        GTEST_SKIP();
+
+    std::vector<cl::Platform> platforms;
+    cl::Platform::get(&platforms);
+
+    EXPECT_EQ(platforms.size(), 1);
+
+    cl_context_properties context_props[] = {
+        CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[0](),
+        CL_GL_CONTEXT_KHR, (cl_context_properties)glcontext,
+        CL_EGL_DISPLAY_KHR, (cl_context_properties)display,
+        0
+    };
+    cl_device_id glDevice;
+    EXPECT_EQ(CL_SUCCESS,
+              clGetGLContextInfoKHR(context_props, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR,
+                                    sizeof(glDevice), &glDevice, nullptr));
+    EXPECT_NE(glDevice, nullptr);
+    {
+        cl::Context context(cl::Device(glDevice), context_props);
+    }
+
+    makeCurrent(display, nullptr, nullptr, nullptr);
     cl::Context context(cl::Device(glDevice), context_props);
 }
 
