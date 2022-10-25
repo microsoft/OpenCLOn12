@@ -5,6 +5,8 @@
 #include <mesa_glinterop.h>
 #include <d3d12_interop_public.h>
 
+#include <wil/resource.h>
+
 struct GLProperties
 {
     EGLDisplay eglDisplay;
@@ -13,27 +15,15 @@ struct GLProperties
     HGLRC wglContext;
 };
 
-class GLInteropManager
+void GLInteropManager::PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevInfo,
+                                           d3d12_interop_device_info &d3d12DevInfo)
 {
-public:
-    static std::unique_ptr<GLInteropManager> Create(GLProperties const &glProps);
-    virtual ~GLInteropManager() = default;
-    virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) = 0;
-protected:
-    void PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevInfo,
-                             d3d12_interop_device_info &d3d12DevInfo)
-    {
-        mesaDevInfo.version = 2;
-        mesaDevInfo.driver_data_size = sizeof(d3d12DevInfo);
-        mesaDevInfo.driver_data = &d3d12DevInfo;
-    }
-    GLInteropManager(XPlatHelpers::unique_module mod)
-        : m_hMod(std::move(mod))
-    {
-    }
-    XPlatHelpers::unique_module m_hMod;
-};
+    mesaDevInfo.version = 2;
+    mesaDevInfo.driver_data_size = sizeof(d3d12DevInfo);
+    mesaDevInfo.driver_data = &d3d12DevInfo;
+}
 
+typedef struct HPBUFFERARB__ *HPBUFFERARB;
 class WGLInteropManager : public GLInteropManager
 {
 public:
@@ -41,13 +31,28 @@ public:
     {
         mesa_glinterop_device_info mesaDevInfo = {};
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
-        return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
+        return m_QueryDeviceInfo(m_Display, m_AppContext, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
+
+    virtual bool BindContext() final
+    {
+        auto hdc = wil::GetDC(m_HiddenWindow.get());
+        return m_MakeCurrent(hdc.get(), m_MyContext.get());
+    }
+    virtual void UnbindContext() final
+    {
+        m_MakeCurrent(nullptr, nullptr);
+    }
+
     ~WGLInteropManager() = default;
 
 private:
     const HDC m_Display;
-    const HGLRC m_Context;
+    const HGLRC m_AppContext;
+    wil::unique_hwnd m_HiddenWindow;
+    std::unique_ptr<std::remove_pointer_t<HGLRC>,
+        decltype(&wglDeleteContext)> m_MyContext {nullptr, nullptr};
+    decltype(&wglMakeCurrent) m_MakeCurrent;
     decltype(&MesaGLInteropWGLQueryDeviceInfo) m_QueryDeviceInfo;
     decltype(&MesaGLInteropWGLExportObject) m_ExportObject;
     decltype(&MesaGLInteropWGLFlushObjects) m_FlushObjects;
@@ -56,17 +61,75 @@ private:
     WGLInteropManager(GLProperties const &glProps)
         : GLInteropManager(XPlatHelpers::unique_module("opengl32.dll"))
         , m_Display(glProps.wglDisplay)
-        , m_Context(glProps.wglContext)
+        , m_AppContext(glProps.wglContext)
     {
         auto getProcAddress = m_hMod.proc_address<decltype(&wglGetProcAddress)>("wglGetProcAddress");
-        if (!getProcAddress)
+        auto getCurrentContext = m_hMod.proc_address<decltype(&wglGetCurrentContext)>("wglGetCurrentContext");
+        auto createContext = m_hMod.proc_address<decltype(&wglCreateContext)>("wglCreateContext");
+        auto deleteContext = m_hMod.proc_address<decltype(&wglDeleteContext)>("wglDeleteContext");
+        m_MakeCurrent = m_hMod.proc_address<decltype(&wglMakeCurrent)>("wglMakeCurrent");
+        if (!getProcAddress || !getCurrentContext || !createContext || !deleteContext || !m_MakeCurrent)
         {
             throw std::runtime_error("Failed to get wglGetProcAddress");
         }
+
+        m_MyContext = { createContext(m_Display), deleteContext };
+        if (!m_MyContext)
+        {
+            throw std::runtime_error("Failed to create WGL context");
+        }
+
+        static ATOM windowClass = 0;
+        if (!windowClass)
+        {
+            WNDCLASSW classDesc = {};
+            classDesc.lpfnWndProc = DefWindowProcW;
+            classDesc.lpszClassName = L"CLOn12";
+            windowClass = RegisterClassW(&classDesc);
+        }
+        m_HiddenWindow.reset(CreateWindowExW(0, L"CLOn12", L"CLOn12Window",
+                                                0, 0, 0, 1, 1,
+                                                nullptr, nullptr, nullptr, nullptr));
+        if (!m_HiddenWindow.get())
+        {
+            throw std::runtime_error("Failed to create hidden window for binding context");
+        }
+
+        bool unbindContext = false;
+        if (getCurrentContext() == nullptr)
+        {
+            auto hdc = wil::GetDC(m_HiddenWindow.get());
+            if (!hdc.get())
+            {
+                throw std::runtime_error("Failed to get HDC for temp window");
+            }
+            int ipfd = GetPixelFormat(m_Display);
+            if (ipfd <= 0)
+            {
+                throw std::runtime_error("Failed to get pixel format for app display");
+            }
+            PIXELFORMATDESCRIPTOR pfd;
+            DescribePixelFormat(m_Display, ipfd, sizeof(pfd), &pfd);
+            SetPixelFormat(hdc.get(), ipfd, &pfd);
+            if (!m_MakeCurrent(hdc.get(), m_MyContext.get()))
+            {
+                throw std::runtime_error("Failed to make interop context current");
+            }
+            unbindContext = true;
+        }
+
         m_QueryDeviceInfo = reinterpret_cast<decltype(m_QueryDeviceInfo)>(getProcAddress("wglMesaGLInteropQueryDeviceInfo"));
         m_ExportObject = reinterpret_cast<decltype(m_ExportObject)>(getProcAddress("wglMesaGLInteropExportObject"));
         m_FlushObjects = reinterpret_cast<decltype(m_FlushObjects)>(getProcAddress("wglMesaGLInteropFlushObjects"));
-        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects)
+        m_WaitSync = reinterpret_cast<decltype(m_WaitSync)>(getProcAddress("glWaitSync"));
+        m_DeleteSync = reinterpret_cast<decltype(m_DeleteSync)>(getProcAddress("glDeleteSync"));
+
+        if (unbindContext)
+        {
+            m_MakeCurrent(nullptr, nullptr);
+        }
+
+        if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects || !m_WaitSync || !m_DeleteSync)
         {
             throw std::runtime_error("Failed to get Mesa interop functions for WGL");
         }
@@ -82,6 +145,14 @@ public:
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_Context, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
+    virtual bool BindContext() final
+    {
+        return false;
+    }
+    virtual void UnbindContext() final
+    {
+    }
+
     ~EGLInteropManager() = default;
 
 private:

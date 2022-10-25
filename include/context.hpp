@@ -5,7 +5,32 @@
 #include "platform.hpp"
 #include "device.hpp"
 
-class GLInteropManager;
+struct GLProperties;
+struct d3d12_interop_device_info;
+struct mesa_glinterop_device_info;
+typedef struct __GLsync *GLsync;
+
+class GLInteropManager
+{
+public:
+    static std::unique_ptr<GLInteropManager> Create(GLProperties const &glProps);
+    virtual ~GLInteropManager() = default;
+    virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) = 0;
+    bool SyncWait(GLsync fence);
+    void DeleteSync(GLsync fence);
+protected:
+    void PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevInfo,
+                             d3d12_interop_device_info &d3d12DevInfo);
+    virtual bool BindContext() = 0;
+    virtual void UnbindContext() = 0;
+    GLInteropManager(XPlatHelpers::unique_module mod)
+        : m_hMod(std::move(mod))
+    {
+    }
+    XPlatHelpers::unique_module m_hMod;
+    void(__stdcall *m_WaitSync)(GLsync, unsigned flags, uint64_t timeout);
+    void(__stdcall *m_DeleteSync)(GLsync);
+};
 
 class Context : public CLChildBase<Context, Platform, cl_context>
 {

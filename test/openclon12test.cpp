@@ -464,6 +464,11 @@ TEST(OpenCLOn12, GLInterop)
               clGetGLContextInfoKHR(context_props, CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR,
                                     sizeof(glDevice), &glDevice, nullptr));
     EXPECT_NE(glDevice, nullptr);
+    {
+        cl::Context context(cl::Device(glDevice), context_props);
+    }
+
+    wglMakeCurrent(nullptr, nullptr);
     cl::Context context(cl::Device(glDevice), context_props);
 }
 
