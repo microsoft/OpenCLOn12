@@ -4,6 +4,12 @@
 #include "formats.hpp"
 #include "task.hpp"
 
+#include <mesa_glinterop.h>
+#include <d3d12_interop_public.h>
+
+#define GL_ARRAY_BUFFER 0x8892
+#define GL_RENDERBUFFER 0x8D41
+
 constexpr cl_mem_flags ValidMemFlags =
     CL_MEM_READ_WRITE |
     CL_MEM_WRITE_ONLY |
@@ -758,6 +764,224 @@ clGetImageInfo(cl_mem           image,
     return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
+template <typename TErrFunc>
+bool ValidateMemFlagsGL(cl_mem_flags flags, TErrFunc&& ReportError)
+{
+    if (flags & ~ValidMemFlags)
+    {
+        ReportError("Unknown flags specified.", CL_INVALID_VALUE);
+        return false;
+    }
+    if (!IsZeroOrPow2(flags & DeviceReadWriteFlagsMask))
+    {
+        ReportError("Only one of CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY, and CL_MEM_READ_ONLY can be specified.", CL_INVALID_VALUE);
+        return false;
+    }
+    if (flags & ~DeviceReadWriteFlagsMask)
+    {
+        ReportError("Only CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY, and CL_MEM_READ_WRITE are valid for GL interop.", CL_INVALID_VALUE);
+        return false;
+    }
+
+    return true;
+}
+
+static unsigned ConvertAccessFlags(cl_mem_flags flags)
+{
+    switch (flags)
+    {
+    case CL_MEM_READ_WRITE: return MESA_GLINTEROP_ACCESS_READ_WRITE;
+    case CL_MEM_READ_ONLY: return MESA_GLINTEROP_ACCESS_READ_ONLY;
+    case CL_MEM_WRITE_ONLY: return MESA_GLINTEROP_ACCESS_WRITE_ONLY;
+    default: return 0;
+    }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateFromGLBuffer(cl_context     context_,
+                     cl_mem_flags   flags,
+                     cl_GLuint      bufobj,
+                     cl_int *       errcode_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context& context = *static_cast<Context*>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+
+    auto glManager = context.GetGLManager();
+    if (!glManager)
+    {
+        return ReportError("Context was not created from a GL context", CL_INVALID_CONTEXT);
+    }
+
+    if (!ValidateMemFlagsGL(flags, ReportError))
+    {
+        return nullptr;
+    }
+
+    mesa_glinterop_export_in glData = {};
+    glData.access = ConvertAccessFlags(flags);
+    glData.target = GL_ARRAY_BUFFER;
+    glData.obj = bufobj;
+
+    try
+    {
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        return Resource::ImportGLResource(context, flags, glData);
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (_com_error& e)
+    {
+        if (e.Error() == E_INVALIDARG)
+            return ReportError("Invalid buffer.", CL_INVALID_GL_OBJECT);
+        return ReportError(nullptr, CL_OUT_OF_RESOURCES);
+    }
+    catch (std::exception& e)
+    {
+        return ReportError(e.what(), CL_OUT_OF_RESOURCES);
+    }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateFromGLTexture(cl_context      context_,
+                      cl_mem_flags    flags,
+                      cl_GLenum       target,
+                      cl_GLint        miplevel,
+                      cl_GLuint       texture,
+                      cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_2
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context& context = *static_cast<Context*>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+
+    auto glManager = context.GetGLManager();
+    if (!glManager)
+    {
+        return ReportError("Context was not created from a GL context", CL_INVALID_CONTEXT);
+    }
+
+    if (!ValidateMemFlagsGL(flags, ReportError))
+    {
+        return nullptr;
+    }
+
+    mesa_glinterop_export_in glData = {};
+    glData.access = ConvertAccessFlags(flags);
+    glData.target = target;
+    glData.obj = texture;
+    glData.miplevel = miplevel;
+
+    try
+    {
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        return Resource::ImportGLResource(context, flags, glData);
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (_com_error& e)
+    {
+        if (e.Error() == E_INVALIDARG)
+            return ReportError("Invalid texture.", CL_INVALID_GL_OBJECT);
+        return ReportError(nullptr, CL_OUT_OF_RESOURCES);
+    }
+    catch (std::exception& e)
+    {
+        return ReportError(e.what(), CL_OUT_OF_RESOURCES);
+    }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateFromGLRenderbuffer(cl_context   context,
+                           cl_mem_flags flags,
+                           cl_GLuint    renderbuffer,
+                           cl_int *     errcode_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    return clCreateFromGLTexture(context, flags, GL_RENDERBUFFER, 0, renderbuffer, errcode_ret);
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetGLObjectInfo(cl_mem                memobj,
+                  cl_gl_object_type *   gl_object_type,
+                  cl_GLuint *           gl_object_name) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!memobj)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+
+    Resource& resource = *static_cast<Resource*>(memobj);
+    if (!resource.m_GLInfo)
+    {
+        return resource.m_Parent->GetErrorReporter()("Memory object was not imported from GL", CL_INVALID_GL_OBJECT);
+    }
+
+    if (!gl_object_type || !gl_object_name)
+    {
+        return resource.m_Parent->GetErrorReporter()("Null output pointers passed", CL_INVALID_VALUE);
+    }
+    *gl_object_type = resource.m_GLInfo->ObjectType;
+    *gl_object_name = resource.m_GLInfo->ObjectName;
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetGLTextureInfo(cl_mem               memobj,
+                   cl_gl_texture_info   param_name,
+                   size_t               param_value_size,
+                   void *               param_value,
+                   size_t *             param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!memobj)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+
+    Resource& resource = *static_cast<Resource*>(memobj);
+    if (!resource.m_GLInfo)
+    {
+        return resource.m_Parent->GetErrorReporter()("Memory object was not imported from GL", CL_INVALID_GL_OBJECT);
+    }
+    auto RetValue = [&](auto&& param)
+    {
+        return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
+    };
+
+    switch (param_name)
+    {
+    case CL_GL_TEXTURE_TARGET: return RetValue(resource.m_GLInfo->TextureTarget);
+    case CL_GL_MIPMAP_LEVEL: return RetValue(resource.m_GLInfo->MipLevel);
+    }
+    return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
+}
+
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
+clCreateFromGLTexture2D(cl_context      context,
+                        cl_mem_flags    flags,
+                        cl_GLenum       target,
+                        cl_GLint        miplevel,
+                        cl_GLuint       texture,
+                        cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clCreateFromGLTexture(context, flags, target, miplevel, texture, errcode_ret);
+}
+
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
+clCreateFromGLTexture3D(cl_context      context,
+                        cl_mem_flags    flags,
+                        cl_GLenum       target,
+                        cl_GLint        miplevel,
+                        cl_GLuint       texture,
+                        cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clCreateFromGLTexture(context, flags, target, miplevel, texture, errcode_ret);
+}
+
 auto Resource::GetUnderlyingResource(D3DDevice* device) -> UnderlyingResource*
 {
     std::lock_guard Lock(m_MultiDeviceLock);
@@ -828,6 +1052,26 @@ Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::Resource
 Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
 {
     return new Resource(ParentBuffer, 0, image_desc.image_width, image_format, image_desc.image_type, flags);
+}
+
+Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in)
+{
+    in.version = 1;
+
+    mesa_glinterop_export_out out = {};
+    out.version = 1;
+
+    d3d12_interop_resource_info d3d12 = {};
+    in.out_driver_data = &d3d12;
+    in.out_driver_data_size = sizeof(d3d12);
+
+    auto glManager = Parent.GetGLManager();
+    if (!glManager->GetResourceData(in, out) || !d3d12.resource)
+    {
+        return nullptr;
+    }
+
+    D3D12TranslationLayer::ResourceCreationArgs Args = {};
 }
 
 Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags)

@@ -3,9 +3,13 @@
 #pragma once
 
 #include "context.hpp"
+#include <optional>
 
 class MapTask;
 class Task;
+
+struct mesa_glinterop_export_in;
+struct mesa_glinterop_export_out;
 
 class Resource : public CLChildBase<Resource, Context, cl_mem>
 {
@@ -27,10 +31,20 @@ public:
     const cl_image_desc m_Desc;
     D3D12TranslationLayer::ResourceCreationArgs m_CreationArgs;
 
+    struct GLInfo
+    {
+        cl_gl_object_type ObjectType;
+        cl_GLuint ObjectName;
+        cl_GLenum TextureTarget;
+        cl_GLint MipLevel;
+    };
+    std::optional<GLInfo> m_GLInfo;
+
     static Resource* CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags);
     static Resource* CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags);
     static Resource* CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
     static Resource* CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
+    static Resource *ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in);
 
     UnderlyingResource* GetUnderlyingResource(D3DDevice*);
     void SetActiveDevice(D3DDevice*);

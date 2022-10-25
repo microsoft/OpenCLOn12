@@ -33,6 +33,10 @@ public:
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_AppContext, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
+    virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
+    {
+        return m_ExportObject(m_Display, m_AppContext, &in, &out);
+    }
 
     virtual bool BindContext() final
     {
@@ -152,6 +156,10 @@ public:
         mesa_glinterop_device_info mesaDevInfo = {};
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_AppContext, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
+    }
+    virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
+    {
+        return m_ExportObject(m_Display, m_AppContext, &in, &out);
     }
     virtual bool BindContext() final
     {
