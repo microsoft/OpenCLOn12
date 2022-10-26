@@ -19,8 +19,9 @@ public:
     virtual ~GLInteropManager() = default;
     virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) = 0;
     virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) = 0;
-    bool SyncWait(GLsync fence);
-    void DeleteSync(GLsync fence);
+    virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) = 0;
+    virtual bool IsAppContextBoundToThread() = 0;
+    bool SyncWait(GLsync fence, bool deleteSync);
 protected:
     void PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevInfo,
                              d3d12_interop_device_info &d3d12DevInfo);
@@ -61,6 +62,7 @@ private:
     std::vector<DestructorCallback> m_DestructorCallbacks;
 
     std::unique_ptr<GLInteropManager> m_GLInteropManager;
+    ID3D12CommandQueue *m_GLCommandQueue = nullptr; // weak
 
     static void CL_CALLBACK DummyCallback(const char*, const void*, size_t, void*) {}
 
@@ -102,6 +104,7 @@ public:
     D3DDevice &GetD3DDevice(cl_uint index) const noexcept;
     D3DDevice *D3DDeviceForContext(Device &device) const noexcept;
     GLInteropManager *GetGLManager() const noexcept { return m_GLInteropManager.get(); }
+    void InsertGLWait(ID3D12Fence *fence, UINT64 value) const noexcept { m_GLCommandQueue->Wait(fence, value); }
     std::vector<D3DDeviceAndRef> GetDevices() const noexcept { return m_AssociatedDevices; }
 
     void AddDestructionCallback(DestructorCallback::Fn pfn, void* pUserData);

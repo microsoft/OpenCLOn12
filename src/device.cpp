@@ -527,33 +527,29 @@ std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12
 
 void D3DDevice::ExecuteTasks(Submission& tasks)
 {
+    for (cl_uint i = 0; i < tasks.size(); ++i)
     {
-        for (cl_uint i = 0; i < tasks.size(); ++i)
+        try
         {
-            try
-            {
-                auto& task = tasks[i];
-                task->Record();
-                auto Lock = g_Platform->GetTaskPoolLock();
-                task->Started(Lock);
-            }
-            catch (...)
-            {
-                auto Lock = g_Platform->GetTaskPoolLock();
-                if ((cl_int)tasks[i]->GetState() > 0)
-                {
-                    tasks[i]->Complete(CL_OUT_OF_RESOURCES, Lock);
-                }
-                for (size_t j = i + 1; j < tasks.size(); ++j)
-                {
-                    auto& task = tasks[j];
-                    task->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, Lock);
-                }
-                tasks.erase(tasks.begin() + i, tasks.end());
-            }
+            auto& task = tasks[i];
+            task->Record();
+            auto Lock = g_Platform->GetTaskPoolLock();
+            task->Started(Lock);
         }
-
-        ImmCtx().Flush(D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK);
+        catch (...)
+        {
+            auto Lock = g_Platform->GetTaskPoolLock();
+            if ((cl_int)tasks[i]->GetState() > 0)
+            {
+                tasks[i]->Complete(CL_OUT_OF_RESOURCES, Lock);
+            }
+            for (size_t j = i + 1; j < tasks.size(); ++j)
+            {
+                auto& task = tasks[j];
+                task->Complete(CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST, Lock);
+            }
+            tasks.erase(tasks.begin() + i, tasks.end());
+        }
     }
 
     ImmCtx().WaitForCompletion(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);

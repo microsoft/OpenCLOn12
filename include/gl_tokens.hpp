@@ -88,4 +88,5 @@ EGLBoolean WINAPI eglTerminate(EGLDisplay);
 EGLContext WINAPI eglCreateContext(EGLDisplay, EGLConfig, EGLContext, const int32_t *);
 EGLBoolean WINAPI eglMakeCurrent(EGLDisplay, EGLSurface, EGLSurface, EGLContext);
 EGLBoolean WINAPI eglDestroyContext(EGLDisplay, EGLContext);
+EGLContext WINAPI eglGetCurrentContext();
 __eglMustCastToProperFunctionPointerType WINAPI eglGetProcAddress(const char *);

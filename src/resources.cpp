@@ -1151,10 +1151,9 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     Args.m_appDesc.m_Subresources = Args.m_appDesc.m_SubresourcesPerPlane =
         Args.m_appDesc.m_MipLevels * Args.m_appDesc.m_ArraySize;
     d3d12.resource->GetHeapProperties(&Args.m_heapDesc.Properties, &Args.m_heapDesc.Flags);
-    Args.m_PrivateCreateFn = [&](D3D12TranslationLayer::ResourceCreationArgs const &, ID3D12SwapChainAssistant *, ID3D12Resource **ppOut)
+    Args.m_PrivateCreateFn = [res = ComPtr<ID3D12Resource>(d3d12.resource)](D3D12TranslationLayer::ResourceCreationArgs const &, ID3D12SwapChainAssistant *, ID3D12Resource **ppOut) mutable
     {
-        d3d12.resource->AddRef();
-        *ppOut = d3d12.resource;
+        *ppOut = res.Detach();
     };
 
     cl_image_desc imageDesc = {};

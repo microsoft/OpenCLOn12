@@ -19,10 +19,10 @@ clCreateBuffer
 clCreateCommandQueue
 clCreateContext
 clCreateContextFromType
-; clCreateFromGLBuffer
-; clCreateFromGLRenderbuffer
-; clCreateFromGLTexture2D
-; clCreateFromGLTexture3D
+clCreateFromGLBuffer
+clCreateFromGLRenderbuffer
+clCreateFromGLTexture2D
+clCreateFromGLTexture3D
 clCreateImage2D
 clCreateImage3D
 clCreateKernel
@@ -30,7 +30,7 @@ clCreateKernelsInProgram
 clCreateProgramWithBinary
 clCreateProgramWithSource
 clCreateSampler
-; clEnqueueAcquireGLObjects
+clEnqueueAcquireGLObjects
 clEnqueueBarrier
 clEnqueueCopyBuffer
 clEnqueueCopyBufferToImage
@@ -43,7 +43,7 @@ clEnqueueNDRangeKernel
 clEnqueueNativeKernel
 clEnqueueReadBuffer
 clEnqueueReadImage
-; clEnqueueReleaseGLObjects
+clEnqueueReleaseGLObjects
 clEnqueueTask
 clEnqueueUnmapMemObject
 clEnqueueWaitForEvents
@@ -59,8 +59,8 @@ clGetEventInfo
 clGetEventProfilingInfo
 clGetExtensionFunctionAddress
 clGetGLContextInfoKHR
-; clGetGLObjectInfo
-; clGetGLTextureInfo
+clGetGLObjectInfo
+clGetGLTextureInfo
 clGetImageInfo
 clGetKernelInfo
 clGetKernelWorkGroupInfo
@@ -102,7 +102,7 @@ clSetUserEventStatus
 
 ; OpenCL 1.2 API
 clCompileProgram
-; clCreateFromGLTexture
+clCreateFromGLTexture
 clCreateImage
 clCreateProgramWithBuiltInKernels
 clCreateSubDevices

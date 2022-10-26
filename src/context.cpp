@@ -24,6 +24,16 @@ void GLInteropManager::PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevIn
     mesaDevInfo.driver_data_size = sizeof(d3d12DevInfo);
     mesaDevInfo.driver_data = &d3d12DevInfo;
 }
+bool GLInteropManager::SyncWait(GLsync sync, bool deleteSync)
+{
+    if (!BindContext())
+        return false;
+    m_WaitSync(sync, 0, UINT64_MAX);
+    if (deleteSync)
+        m_DeleteSync(sync);
+    UnbindContext();
+    return true;
+}
 
 class WGLInteropManager : public GLInteropManager
 {
@@ -37,6 +47,14 @@ public:
     virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
     {
         return m_ExportObject(m_Display, m_AppContext, &in, &out);
+    }
+    virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) final
+    {
+        return m_FlushObjects(m_Display, m_AppContext, (unsigned)resources.size(), resources.data(), sync);
+    }
+    virtual bool IsAppContextBoundToThread() final
+    {
+        return m_GetCurrentContext() == m_AppContext;
     }
 
     virtual bool BindContext() final
@@ -58,6 +76,7 @@ private:
     std::unique_ptr<std::remove_pointer_t<HGLRC>,
         decltype(&wglDeleteContext)> m_MyContext {nullptr, nullptr};
     decltype(&wglMakeCurrent) m_MakeCurrent;
+    decltype(&wglGetCurrentContext) m_GetCurrentContext;
     decltype(&MesaGLInteropWGLQueryDeviceInfo) m_QueryDeviceInfo;
     decltype(&MesaGLInteropWGLExportObject) m_ExportObject;
     decltype(&MesaGLInteropWGLFlushObjects) m_FlushObjects;
@@ -69,11 +88,11 @@ private:
         , m_AppContext(glProps.wglContext)
     {
         auto getProcAddress = m_hMod.proc_address<decltype(&wglGetProcAddress)>("wglGetProcAddress");
-        auto getCurrentContext = m_hMod.proc_address<decltype(&wglGetCurrentContext)>("wglGetCurrentContext");
         auto createContext = m_hMod.proc_address<decltype(&wglCreateContext)>("wglCreateContext");
         auto deleteContext = m_hMod.proc_address<decltype(&wglDeleteContext)>("wglDeleteContext");
         m_MakeCurrent = m_hMod.proc_address<decltype(&wglMakeCurrent)>("wglMakeCurrent");
-        if (!getProcAddress || !getCurrentContext || !createContext || !deleteContext || !m_MakeCurrent)
+        m_GetCurrentContext = m_hMod.proc_address<decltype(&wglGetCurrentContext)>("wglGetCurrentContext");
+        if (!getProcAddress || !createContext || !deleteContext || !m_MakeCurrent || !m_GetCurrentContext)
         {
             throw std::runtime_error("Failed to get wglGetProcAddress");
         }
@@ -95,7 +114,7 @@ private:
         }
 
         bool unbindContext = false;
-        if (getCurrentContext() == nullptr)
+        if (m_GetCurrentContext() == nullptr)
         {
             m_MyContext = { createContext(m_Display), deleteContext };
             if (!m_MyContext)
@@ -162,6 +181,14 @@ public:
     {
         return m_ExportObject(m_Display, m_AppContext, &in, &out);
     }
+    virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) final
+    {
+        return m_FlushObjects(m_Display, m_AppContext, (unsigned)resources.size(), resources.data(), sync);
+    }
+    virtual bool IsAppContextBoundToThread() final
+    {
+        return m_GetCurrentContext() == m_AppContext;
+    }
     virtual bool BindContext() final
     {
         return m_MakeCurrent(m_Display, nullptr, nullptr, m_MyContext);
@@ -186,6 +213,7 @@ private:
     decltype(&MesaGLInteropEGLFlushObjects) m_FlushObjects;
     decltype(&eglMakeCurrent) m_MakeCurrent;
     decltype(&eglDestroyContext) m_DestroyContext;
+    decltype(&eglGetCurrentContext) m_GetCurrentContext;
 
     friend class GLInteropManager;
     EGLInteropManager(GLProperties const &glProps)
@@ -198,10 +226,11 @@ private:
         m_FlushObjects = m_hMod.proc_address<decltype(m_FlushObjects)>("MesaGLInteropEGLFlushObjects");
         m_MakeCurrent = m_hMod.proc_address<decltype(m_MakeCurrent)>("eglMakeCurrent");
         m_DestroyContext = m_hMod.proc_address<decltype(m_DestroyContext)>("eglDestroyContext");
+        m_GetCurrentContext = m_hMod.proc_address<decltype(m_GetCurrentContext)>("eglGetCurrentContext");
         auto getProcAddress = m_hMod.proc_address<decltype(&eglGetProcAddress)>("eglGetProcAddress");
         auto createContext = m_hMod.proc_address<decltype(&eglCreateContext)>("eglCreateContext");
         if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects || !m_MakeCurrent ||
-            !m_DestroyContext || !getProcAddress || !createContext)
+            !m_DestroyContext || !m_GetCurrentContext || !getProcAddress || !createContext)
         {
             throw std::runtime_error("Failed to get Mesa interop functions for EGL");
         }
@@ -609,7 +638,8 @@ Context::Context(std::vector<D3DDeviceAndRef> Devices,
         {
             m_GLInteropManager->GetDeviceData(glInfo);
         }
-        d3ddevice = &device->InitD3D(glInfo.device, glInfo.queue);
+        d3ddevice = &device->InitD3D(glInfo.device);
+        m_GLCommandQueue = glInfo.queue;
     }
 }
 
