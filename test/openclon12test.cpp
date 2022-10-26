@@ -18,6 +18,7 @@
 #include <d3d12.h>
 
 #include <gl/GL.h>
+#include "gl_tokens.hpp"
 
 #include <wil/resource.h>
 
@@ -480,29 +481,23 @@ TEST(OpenCLOn12, EGLInterop)
     if (!egl)
         GTEST_SKIP();
 
-    auto getProcAddress = reinterpret_cast<void *(__stdcall *)(const char *)>(GetProcAddress(egl, "eglGetProcAddress"));
-
-    auto getDisplay = reinterpret_cast<void *(__stdcall *)(unsigned platform, void *native_disp, const int32_t *attribs)>(
-        getProcAddress("eglGetPlatformDisplayEXT"));
+    auto getDisplay = reinterpret_cast<decltype(&eglGetPlatformDisplay)>(GetProcAddress(egl, "eglGetPlatformDisplay"));
     if (!getDisplay)
         GTEST_SKIP();
-    auto display = getDisplay(0x31DD /*surfaceless*/, nullptr, nullptr);
+    auto display = getDisplay(EGL_PLATFORM_SURFACELESS_MESA, nullptr, nullptr);
     EXPECT_NE(display, nullptr);
 
-    reinterpret_cast<unsigned(__stdcall *)(void *disp, int32_t *major, int32_t *minor)>(
-        GetProcAddress(egl, "eglInitialize"))(display, nullptr, nullptr);
-    auto terminate = reinterpret_cast<unsigned(__stdcall *)(void *)>(GetProcAddress(egl, "eglTerminate"));
+    reinterpret_cast<decltype(&eglInitialize)>(GetProcAddress(egl, "eglInitialize"))(display, nullptr, nullptr);
+    auto terminate = reinterpret_cast<decltype(&eglTerminate)>(GetProcAddress(egl, "eglTerminate"));
     auto displayCleanup = wil::scope_exit([&]() { terminate(display); });
 
-    auto createContext = reinterpret_cast<void *(__stdcall *)(void *disp, void *config, void *context, const int32_t * attribs)>(
-        GetProcAddress(egl, "eglCreateContext"));
+    auto createContext = reinterpret_cast<decltype(&eglCreateContext)>(GetProcAddress(egl, "eglCreateContext"));
     auto glcontext = createContext(display, nullptr, nullptr, nullptr);
     EXPECT_NE(glcontext, nullptr);
-    auto destroyContext = reinterpret_cast<unsigned(__stdcall *)(void *disp, void *context)>(GetProcAddress(egl, "eglDestroyContext"));
+    auto destroyContext = reinterpret_cast<decltype(&eglDestroyContext)>(GetProcAddress(egl, "eglDestroyContext"));
     auto contextCleanup = wil::scope_exit([&]() { destroyContext(display, glcontext); });
 
-    auto makeCurrent = reinterpret_cast<unsigned(__stdcall *)(void *disp, void *draw, void *read, void *context)>(
-        GetProcAddress(egl, "eglMakeCurrent"));
+    auto makeCurrent = reinterpret_cast<decltype(&eglMakeCurrent)>(GetProcAddress(egl, "eglMakeCurrent"));
     EXPECT_NE(makeCurrent(display, nullptr, nullptr, glcontext), 0u);
 
     const char *renderer = (const char *)glGetString(GL_RENDERER);

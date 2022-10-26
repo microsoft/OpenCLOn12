@@ -4,13 +4,13 @@
 
 #include "platform.hpp"
 #include "device.hpp"
+#include "gl_tokens.hpp"
 
 struct GLProperties;
 struct d3d12_interop_device_info;
 struct mesa_glinterop_device_info;
 struct mesa_glinterop_export_in;
 struct mesa_glinterop_export_out;
-typedef struct __GLsync *GLsync;
 
 class GLInteropManager
 {
@@ -31,8 +31,8 @@ protected:
     {
     }
     XPlatHelpers::unique_module m_hMod;
-    void(__stdcall *m_WaitSync)(GLsync, unsigned flags, uint64_t timeout);
-    void(__stdcall *m_DeleteSync)(GLsync);
+    decltype(&glWaitSync) m_WaitSync;
+    decltype(&glDeleteSync) m_DeleteSync;
 };
 
 class Context : public CLChildBase<Context, Platform, cl_context>

@@ -37,6 +37,8 @@ public:
         cl_GLuint ObjectName;
         cl_GLenum TextureTarget;
         cl_GLint MipLevel;
+        uint64_t BufferOffset;
+        uint32_t BaseArray;
     };
     std::optional<GLInfo> m_GLInfo;
 
@@ -82,9 +84,9 @@ protected:
     mutable std::mutex m_DestructorLock;
     std::vector<DestructorCallback> m_DestructorCallbacks;
 
-    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags);
+    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo);
     Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags);
-    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
+    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo);
 
     static cl_image_desc GetBufferDesc(size_t size, cl_mem_object_type type);
     void UploadInitialData(Task* triggeringTask);

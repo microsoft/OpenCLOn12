@@ -7,8 +7,7 @@
 #include <mesa_glinterop.h>
 #include <d3d12_interop_public.h>
 
-#define GL_ARRAY_BUFFER 0x8892
-#define GL_RENDERBUFFER 0x8D41
+#include "gl_tokens.hpp"
 
 constexpr cl_mem_flags ValidMemFlags =
     CL_MEM_READ_WRITE |
@@ -1035,7 +1034,7 @@ D3D12TranslationLayer::UAV& Resource::GetUAV(D3DDevice* device)
 
 Resource* Resource::CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags)
 {
-    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags);
+    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags, std::nullopt);
 }
 
 Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags)
@@ -1046,12 +1045,71 @@ Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_regi
 
 Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
 {
-    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags);
+    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags, std::nullopt);
 }
 
 Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
 {
     return new Resource(ParentBuffer, 0, image_desc.image_width, image_format, image_desc.image_type, flags);
+}
+
+static cl_mem_object_type CLTypeFromGLType(cl_GLuint target)
+{
+    switch (target)
+    {
+    case GL_ARRAY_BUFFER: return CL_MEM_OBJECT_BUFFER;
+    case GL_TEXTURE_1D: return CL_MEM_OBJECT_IMAGE1D;
+    case GL_TEXTURE_1D_ARRAY: return CL_MEM_OBJECT_IMAGE1D_ARRAY;
+    case GL_TEXTURE_BUFFER: return CL_MEM_OBJECT_IMAGE1D_BUFFER;
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case GL_RENDERBUFFER:
+    case GL_TEXTURE_2D: return CL_MEM_OBJECT_IMAGE2D;
+    case GL_TEXTURE_2D_ARRAY: return CL_MEM_OBJECT_IMAGE2D_ARRAY;
+    case GL_TEXTURE_3D: return CL_MEM_OBJECT_IMAGE3D;
+    default: return 0;
+    }
+}
+
+static cl_gl_object_type CLGLTypeFromGLType(cl_GLuint target)
+{
+    switch (target)
+    {
+    case GL_ARRAY_BUFFER: return CL_GL_OBJECT_BUFFER;
+    case GL_TEXTURE_1D: return CL_GL_OBJECT_TEXTURE1D;
+    case GL_TEXTURE_1D_ARRAY: return CL_GL_OBJECT_TEXTURE1D_ARRAY;
+    case GL_TEXTURE_BUFFER: return CL_GL_OBJECT_TEXTURE_BUFFER;
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case GL_TEXTURE_2D: return CL_GL_OBJECT_TEXTURE2D;
+    case GL_RENDERBUFFER: return CL_GL_OBJECT_RENDERBUFFER;
+    case GL_TEXTURE_2D_ARRAY: return CL_GL_OBJECT_TEXTURE2D_ARRAY;
+    case GL_TEXTURE_3D: return CL_GL_OBJECT_TEXTURE3D;
+    default: return 0;
+    }
+}
+
+static uint32_t CubeFaceArrayOffset(cl_GLuint target)
+{
+    switch (target)
+    {
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+        return target - GL_TEXTURE_CUBE_MAP_POSITIVE_X;
+    default: return 0;
+    }
 }
 
 Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in)
@@ -1072,14 +1130,76 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     }
 
     D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_desc12 = d3d12.resource->GetDesc();
+    Args.m_appDesc.m_ArraySize = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+        1 : Args.m_desc12.DepthOrArraySize;
+    Args.m_appDesc.m_Depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+        Args.m_desc12.DepthOrArraySize : 1;
+    Args.m_appDesc.m_Width = (UINT)Args.m_desc12.Width;
+    Args.m_appDesc.m_Height = Args.m_desc12.Height;
+    Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE;
+    if (Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+        Args.m_appDesc.m_bindFlags |= D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
+    Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_NONE;
+    Args.m_appDesc.m_resourceDimension = Args.m_desc12.Dimension;
+    Args.m_appDesc.m_Format = Args.m_desc12.Format;
+    Args.m_appDesc.m_MipLevels = (UINT8)Args.m_desc12.MipLevels;
+    Args.m_appDesc.m_NonOpaquePlaneCount = 1;
+    Args.m_appDesc.m_Samples = Args.m_desc12.SampleDesc.Count;
+    Args.m_appDesc.m_Quality = Args.m_desc12.SampleDesc.Quality;
+    Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
+    Args.m_appDesc.m_Subresources = Args.m_appDesc.m_SubresourcesPerPlane =
+        Args.m_appDesc.m_MipLevels * Args.m_appDesc.m_ArraySize;
+    d3d12.resource->GetHeapProperties(&Args.m_heapDesc.Properties, &Args.m_heapDesc.Flags);
+    Args.m_PrivateCreateFn = [&](D3D12TranslationLayer::ResourceCreationArgs const &, ID3D12SwapChainAssistant *, ID3D12Resource **ppOut)
+    {
+        d3d12.resource->AddRef();
+        *ppOut = d3d12.resource;
+    };
+
+    cl_image_desc imageDesc = {};
+    imageDesc.image_array_size = out.view_numlayers;
+    imageDesc.image_depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+        (Args.m_desc12.DepthOrArraySize >> out.view_minlevel) : 1;
+    imageDesc.image_height = Args.m_desc12.Height >> out.view_minlevel;
+    imageDesc.image_width = Args.m_desc12.Width >> out.view_minlevel;
+    imageDesc.num_mip_levels = out.view_numlevels;
+    imageDesc.num_samples = Args.m_desc12.SampleDesc.Count;
+    imageDesc.image_type = CLTypeFromGLType(in.target);
+    if (!imageDesc.image_type)
+    {
+        // Mesa accepts full cubes and cube arrays, which complicate things.
+        // Reject types that are not in our list.
+        return nullptr;
+    }
+
+    cl_image_format format = GetCLImageFormatForDXGIFormat(Args.m_desc12.Format);
+
+    Resource::GLInfo glInfo = {};
+    glInfo.TextureTarget = in.target;
+    glInfo.ObjectType = CLGLTypeFromGLType(in.target);
+    glInfo.MipLevel = in.miplevel;
+    glInfo.ObjectName = in.obj;
+    glInfo.BufferOffset = out.buf_offset + d3d12.buffer_offset;
+    glInfo.BaseArray = out.view_minlayer + CubeFaceArrayOffset(in.target);
+    if (Args.ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
+    {
+        return new Resource(Parent, Args, nullptr, out.buf_size, flags, glInfo);
+    }
+    else
+    {
+        return new Resource(Parent, Args, nullptr, format, imageDesc, flags, glInfo);
+    }
 }
 
-Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo)
     : CLChildBase(Parent)
     , m_Flags(flags)
     , m_pHostPointer(pHostPointer)
     , m_Desc(GetBufferDesc(size, CL_MEM_OBJECT_BUFFER))
     , m_CreationArgs(CreationArgs)
+    , m_GLInfo(glInfo)
+    , m_Offset(glInfo.has_value() ? glInfo->BufferOffset : 0)
 {
     if (pHostPointer)
     {
@@ -1104,14 +1224,14 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     , m_Flags(flags)
     , m_ParentBuffer(&ParentBuffer)
     , m_Format(image_format)
-    , m_Offset(offset)
+    , m_Offset(offset + ParentBuffer.m_Offset)
     , m_Desc(GetBufferDesc(size, type))
     , m_CreationArgs(ParentBuffer.m_CreationArgs)
 {
     if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
     {
         DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-        assert(m_Offset == 0);
+        UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
 
         {
             auto& UAVDescWrapper = m_UAVDesc;
@@ -1121,7 +1241,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             UAVDesc.Buffer.CounterOffsetInBytes = 0;
             UAVDesc.Buffer.StructureByteStride = 0;
             UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-            UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+            UAVDesc.Buffer.FirstElement = m_Offset / FormatByteSize;
             UAVDesc.Buffer.NumElements = (UINT)size;
 
             UAVDescWrapper.m_D3D11UAVFlags = 0;
@@ -1133,7 +1253,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             SRVDesc.Buffer.StructureByteStride = 0;
             SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-            SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+            SRVDesc.Buffer.FirstElement = m_Offset / FormatByteSize;
             SRVDesc.Buffer.NumElements = (UINT)size;
         }
     }
@@ -1152,13 +1272,14 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     }
 }
 
-Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo)
     : CLChildBase(Parent)
     , m_pHostPointer(pHostPointer)
     , m_Format(image_format)
     , m_Desc(image_desc)
     , m_Flags(flags)
     , m_CreationArgs(Args)
+    , m_GLInfo(glInfo)
 {
     if (pHostPointer)
     {
@@ -1170,6 +1291,9 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         memcpy(m_InitialData.get(), pHostPointer, size);
     }
 
+    UINT FirstArraySlice = glInfo.has_value() ? glInfo->BaseArray : 0;
+    UINT MostDetailedMip = glInfo.has_value() ? glInfo->MipLevel : 0;
+
     DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
     {
         auto& UAVDescWrapper = m_UAVDesc;
@@ -1178,32 +1302,25 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         switch (image_desc.image_type)
         {
         case CL_MEM_OBJECT_IMAGE1D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
-            UAVDesc.Texture1D.MipSlice = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE1D_ARRAY:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
-            UAVDesc.Texture1DArray.FirstArraySlice = 0;
+            UAVDesc.Texture1DArray.FirstArraySlice = FirstArraySlice;
             UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-            UAVDesc.Texture1DArray.MipSlice = 0;
+            UAVDesc.Texture1DArray.MipSlice = MostDetailedMip;
             break;
         case CL_MEM_OBJECT_IMAGE2D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-            UAVDesc.Texture2D.MipSlice = 0;
-            UAVDesc.Texture2D.PlaneSlice = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE2D_ARRAY:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
-            UAVDesc.Texture2DArray.FirstArraySlice = 0;
+            UAVDesc.Texture2DArray.FirstArraySlice = FirstArraySlice;
             UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-            UAVDesc.Texture2DArray.MipSlice = 0;
+            UAVDesc.Texture2DArray.MipSlice = MostDetailedMip;
             UAVDesc.Texture2DArray.PlaneSlice = 0;
             break;
         case CL_MEM_OBJECT_IMAGE3D:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
             UAVDesc.Texture3D.FirstWSlice = 0;
             UAVDesc.Texture3D.WSize = (UINT)image_desc.image_depth;
-            UAVDesc.Texture3D.MipSlice = 0;
+            UAVDesc.Texture3D.MipSlice = MostDetailedMip;
             break;
         default: assert(false);
         }
@@ -1217,32 +1334,21 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         switch (image_desc.image_type)
         {
         case CL_MEM_OBJECT_IMAGE1D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-            SRVDesc.Texture1D.MipLevels = 1;
-            SRVDesc.Texture1D.MostDetailedMip = 0;
-            SRVDesc.Texture1D.ResourceMinLODClamp = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE1D_ARRAY:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
-            SRVDesc.Texture1DArray.FirstArraySlice = 0;
+            SRVDesc.Texture1DArray.FirstArraySlice = FirstArraySlice;
             SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
             SRVDesc.Texture1DArray.MipLevels = 1;
-            SRVDesc.Texture1DArray.MostDetailedMip = 0;
+            SRVDesc.Texture1DArray.MostDetailedMip = MostDetailedMip;
             SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
             break;
         case CL_MEM_OBJECT_IMAGE2D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            SRVDesc.Texture2D.MipLevels = 1;
-            SRVDesc.Texture2D.MostDetailedMip = 0;
-            SRVDesc.Texture2D.PlaneSlice = 0;
-            SRVDesc.Texture2D.ResourceMinLODClamp = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE2D_ARRAY:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-            SRVDesc.Texture2DArray.FirstArraySlice = 0;
+            SRVDesc.Texture2DArray.FirstArraySlice = FirstArraySlice;
             SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
             SRVDesc.Texture2DArray.MipLevels = 1;
-            SRVDesc.Texture2DArray.MostDetailedMip = 0;
+            SRVDesc.Texture2DArray.MostDetailedMip = MostDetailedMip;
             SRVDesc.Texture2DArray.PlaneSlice = 0;
             SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
             break;

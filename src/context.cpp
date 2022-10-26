@@ -5,6 +5,8 @@
 #include <mesa_glinterop.h>
 #include <d3d12_interop_public.h>
 
+#include "gl_tokens.hpp"
+
 #include <wil/resource.h>
 
 struct GLProperties
@@ -23,7 +25,6 @@ void GLInteropManager::PrepQueryDeviceInfo(mesa_glinterop_device_info &mesaDevIn
     mesaDevInfo.driver_data = &d3d12DevInfo;
 }
 
-typedef struct HPBUFFERARB__ *HPBUFFERARB;
 class WGLInteropManager : public GLInteropManager
 {
 public:
@@ -127,7 +128,7 @@ private:
         m_FlushObjects = reinterpret_cast<decltype(m_FlushObjects)>(getProcAddress("wglMesaGLInteropFlushObjects"));
         m_WaitSync = reinterpret_cast<decltype(m_WaitSync)>(getProcAddress("glWaitSync"));
         m_DeleteSync = reinterpret_cast<decltype(m_DeleteSync)>(getProcAddress("glDeleteSync"));
-        auto createContextAttrib = reinterpret_cast<HGLRC(__stdcall *)(HDC, HGLRC, const int *)>(getProcAddress("wglCreateContextAttribsARB"));
+        auto createContextAttrib = reinterpret_cast<decltype(&wglCreateContextAttribsARB)>(getProcAddress("wglCreateContextAttribsARB"));
 
         if (unbindContext)
         {
@@ -183,8 +184,8 @@ private:
     decltype(&MesaGLInteropEGLQueryDeviceInfo) m_QueryDeviceInfo;
     decltype(&MesaGLInteropEGLExportObject) m_ExportObject;
     decltype(&MesaGLInteropEGLFlushObjects) m_FlushObjects;
-    unsigned(__stdcall *m_MakeCurrent)(EGLDisplay, void *, void *, EGLContext);
-    unsigned(__stdcall *m_DestroyContext)(EGLDisplay, EGLContext);
+    decltype(&eglMakeCurrent) m_MakeCurrent;
+    decltype(&eglDestroyContext) m_DestroyContext;
 
     friend class GLInteropManager;
     EGLInteropManager(GLProperties const &glProps)
@@ -197,10 +198,8 @@ private:
         m_FlushObjects = m_hMod.proc_address<decltype(m_FlushObjects)>("MesaGLInteropEGLFlushObjects");
         m_MakeCurrent = m_hMod.proc_address<decltype(m_MakeCurrent)>("eglMakeCurrent");
         m_DestroyContext = m_hMod.proc_address<decltype(m_DestroyContext)>("eglDestroyContext");
-        using eglFuncRetType = void (*)(void);
-        auto getProcAddress = m_hMod.proc_address<eglFuncRetType(__stdcall *)(const char *)>("eglGetProcAddress");
-        auto createContext = m_hMod.proc_address<
-            EGLContext(__stdcall *)(EGLDisplay, void *, EGLContext, const int32_t *)>("eglCreateContext");
+        auto getProcAddress = m_hMod.proc_address<decltype(&eglGetProcAddress)>("eglGetProcAddress");
+        auto createContext = m_hMod.proc_address<decltype(&eglCreateContext)>("eglCreateContext");
         if (!m_QueryDeviceInfo || !m_ExportObject || !m_FlushObjects || !m_MakeCurrent ||
             !m_DestroyContext || !getProcAddress || !createContext)
         {
