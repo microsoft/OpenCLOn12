@@ -31,6 +31,17 @@ struct ExtensionTableEntry
 static struct ExtensionTableEntry clExtensions[] =
 {
     EXT_FUNC(clIcdGetPlatformIDsKHR),
+    EXT_FUNC(clGetGLContextInfoKHR),
+    EXT_FUNC(clCreateFromGLBuffer),
+    EXT_FUNC(clCreateFromGLTexture),
+    EXT_FUNC(clCreateFromGLTexture2D),
+    EXT_FUNC(clCreateFromGLTexture3D),
+    EXT_FUNC(clCreateFromGLRenderbuffer),
+    EXT_FUNC(clEnqueueAcquireGLObjects),
+    EXT_FUNC(clEnqueueReleaseGLObjects),
+    EXT_FUNC(clGetGLObjectInfo),
+    EXT_FUNC(clGetGLTextureInfo),
+    EXT_FUNC(clCreateEventFromGLsyncKHR),
 };
 
 static const int clExtensionCount = sizeof(clExtensions) / sizeof(clExtensions[0]);
@@ -47,6 +58,24 @@ clGetExtensionFunctionAddress(const char *name)
     }
 
     return nullptr;
+}
+
+/* Extension function access
+*
+* Returns the extension function address for the given function name,
+* or NULL if a valid function can not be found.  The client must
+* check to make sure the address is not NULL, before using or
+* calling the returned function address.
+*/
+extern CL_API_ENTRY void * CL_API_CALL
+clGetExtensionFunctionAddressForPlatform(cl_platform_id platform,
+                                         const char *   func_name) CL_API_SUFFIX__VERSION_1_2
+{
+    if (platform != g_Platform)
+    {
+        return nullptr;
+    }
+    return clGetExtensionFunctionAddress(func_name);
 }
 
 cl_icd_dispatch g_DispatchTable

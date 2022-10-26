@@ -330,20 +330,6 @@ clEnqueueSVMMigrateMem(cl_command_queue         command_queue,
     return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
 }
 
-/* Extension function access
- *
- * Returns the extension function address for the given function name,
- * or NULL if a valid function can not be found.  The client must
- * check to make sure the address is not NULL, before using or
- * calling the returned function address.
- */
-extern CL_API_ENTRY void * CL_API_CALL
-clGetExtensionFunctionAddressForPlatform(cl_platform_id platform,
-    const char *   func_name) CL_API_SUFFIX__VERSION_1_2
-{
-    return nullptr;
-}
-
 /* Deprecated OpenCL 1.1 APIs */
 
 extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_int CL_API_CALL
