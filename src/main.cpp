@@ -30,7 +30,10 @@ struct ExtensionTableEntry
 
 static struct ExtensionTableEntry clExtensions[] =
 {
+    // cl_khr_icd
     EXT_FUNC(clIcdGetPlatformIDsKHR),
+
+    // cl_khr_gl_sharing
     EXT_FUNC(clGetGLContextInfoKHR),
     EXT_FUNC(clCreateFromGLBuffer),
     EXT_FUNC(clCreateFromGLTexture),
@@ -41,7 +44,12 @@ static struct ExtensionTableEntry clExtensions[] =
     EXT_FUNC(clEnqueueReleaseGLObjects),
     EXT_FUNC(clGetGLObjectInfo),
     EXT_FUNC(clGetGLTextureInfo),
+
+    // cl_khr_gl_event
     EXT_FUNC(clCreateEventFromGLsyncKHR),
+
+    // cl_khr_il_program
+    EXT_FUNC(clCreateProgramWithILKHR),
 };
 
 static const int clExtensionCount = sizeof(clExtensions) / sizeof(clExtensions[0]);

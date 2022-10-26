@@ -160,8 +160,6 @@ clCreateEventFromGLsyncKHR(cl_context context_,
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
-
-    return CL_SUCCESS;
 }
 
 class ReleaseToGLTask : public Task

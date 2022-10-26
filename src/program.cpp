@@ -209,6 +209,14 @@ clCreateProgramWithIL(cl_context    context_,
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
 }
+extern CL_API_ENTRY cl_program CL_API_CALL
+clCreateProgramWithILKHR(cl_context    context,
+                         const void*   il,
+                         size_t        length,
+                         cl_int*       errcode_ret)
+{
+    return clCreateProgramWithIL(context, il, length, errcode_ret);
+}
 
 extern CL_API_ENTRY cl_int CL_API_CALL
 clRetainProgram(cl_program program) CL_API_SUFFIX__VERSION_1_0
