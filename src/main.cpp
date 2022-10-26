@@ -118,14 +118,14 @@ cl_icd_dispatch g_DispatchTable
     clEnqueueWaitForEvents,
     clEnqueueBarrier,
     clGetExtensionFunctionAddress,
-    nullptr, // clCreateFromGLBuffer,
-    nullptr, // clCreateFromGLTexture2D,
-    nullptr, // clCreateFromGLTexture3D,
-    nullptr, // clCreateFromGLRenderbuffer,
-    nullptr, // clGetGLObjectInfo,
-    nullptr, // clGetGLTextureInfo,
-    nullptr, // clEnqueueAcquireGLObjects,
-    nullptr, // clEnqueueReleaseGLObjects,
+    clCreateFromGLBuffer,
+    clCreateFromGLTexture2D,
+    clCreateFromGLTexture3D,
+    clCreateFromGLRenderbuffer,
+    clGetGLObjectInfo,
+    clGetGLTextureInfo,
+    clEnqueueAcquireGLObjects,
+    clEnqueueReleaseGLObjects,
     clGetGLContextInfoKHR,
 
     /* cl_khr_d3d10_sharing */
@@ -170,7 +170,7 @@ cl_icd_dispatch g_DispatchTable
     clEnqueueMarkerWithWaitList,
     clEnqueueBarrierWithWaitList,
     clGetExtensionFunctionAddressForPlatform,
-    nullptr, // clCreateFromGLTexture,
+    clCreateFromGLTexture,
 
     /* cl_khr_d3d11_sharing */
     nullptr, // clGetDeviceIDsFromD3D11KHR,
