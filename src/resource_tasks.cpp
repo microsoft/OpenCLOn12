@@ -19,6 +19,7 @@ static cl_int ProcessImageDimensions(
     Resource& resource,
     cl_ushort& FirstArraySlice,
     cl_ushort& NumArraySlices,
+    cl_uchar& FirstMipLevel,
     cl_uint& Height, cl_uint& Depth,
     cl_uint& Y, cl_uint& Z)
 {
@@ -96,6 +97,11 @@ static cl_int ProcessImageDimensions(
         }
         break;
     }
+    if (resource.m_GLInfo)
+    {
+        FirstArraySlice += (cl_ushort)resource.m_GLInfo->BaseArray;
+        FirstMipLevel = (cl_uchar)resource.m_GLInfo->MipLevel;
+    }
     return CL_SUCCESS;
 }
 
@@ -123,6 +129,7 @@ public:
         cl_uint Depth;
         cl_ushort FirstArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstMipLevel;
         std::variant<WriteData, FillData> Data;
         cl_uint SrcX;
         cl_uint SrcY;
@@ -181,7 +188,9 @@ void MemWriteFillTask::CopyFromHostPtr(UpdateSubresourcesFlags flags)
     const cl_uint FormatBytes = GetFormatSizeBytes(m_Target->m_Format);
     for (UINT16 i = 0; i < m_Args.NumArraySlices; ++i)
     {
-        subresources.m_BeginArray = (UINT16)(m_Args.FirstArraySlice + i);
+        subresources.m_BeginArray = (UINT16)
+            ((m_Args.FirstArraySlice + i) * m_Target->m_CreationArgs.m_desc12.MipLevels +
+              m_Args.FirstMipLevel);
         subresources.m_EndArray = subresources.m_BeginArray + 1;
 
         for (UINT z = 0; z < NumSliceCopies; ++z)
@@ -623,7 +632,9 @@ clEnqueueWriteImage(cl_command_queue    command_queue,
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
-    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
+    auto imageResult = ProcessImageDimensions(ReportError, origin, region,
+                                              resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstMipLevel,
+                                              CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
@@ -687,6 +698,7 @@ public:
         cl_uint Depth;
         cl_ushort FirstArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstMipLevel;
         char Pattern[16];
     };
 
@@ -719,7 +731,9 @@ void FillImageTask::RecordImpl()
     auto& ImmCtx = m_CommandQueue->GetD3DDevice().ImmCtx();
     for (cl_uint i = 0; i < m_Args.NumArraySlices; ++i)
     {
-        D3D12TranslationLayer::CSubresourceSubset Subset(1, 1, 1, 0, (UINT16)(m_Args.FirstArraySlice + i), 0);
+        D3D12TranslationLayer::CSubresourceSubset Subset(1, 1, 1,
+                                                         (UINT8)m_Args.FirstMipLevel,
+                                                         (UINT16)(m_Args.FirstArraySlice + i), 0);
         D3D12_BOX Box =
         {
             m_Args.DstX,
@@ -831,7 +845,9 @@ clEnqueueFillImage(cl_command_queue   command_queue,
         }
     }
 
-    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
+    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource,
+                                              CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstMipLevel,
+                                              CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
@@ -870,6 +886,7 @@ public:
         cl_uint Depth;
         cl_ushort FirstArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstMipLevel;
         cl_uint DstX;
         cl_uint DstY;
         cl_uint DstZ;
@@ -1271,7 +1288,9 @@ clEnqueueReadImage(cl_command_queue     command_queue,
     CmdArgs.NumArraySlices = 1;
     CmdArgs.pData = ptr;
 
-    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+    auto imageResult = ProcessImageDimensions(ReportError, origin, region, resource,
+                                              CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstMipLevel,
+                                              CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
@@ -1348,6 +1367,8 @@ public:
         cl_ushort FirstSrcArraySlice;
         cl_ushort FirstDstArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstSrcMipLevel;
+        cl_uchar FirstDstMipLevel;
     };
 
     CopyResourceTask(Context& Parent, Resource& Source, Resource& Dest,
@@ -1399,14 +1420,18 @@ private:
                     m_Args.SrcY + m_Args.Height,
                     m_Args.SrcZ + m_Args.Depth
                 };
+                UINT SrcSubresource = (m_Args.FirstSrcArraySlice + i) * m_Source->m_CreationArgs.m_desc12.MipLevels
+                    + m_Args.FirstSrcMipLevel;
+                UINT DstSubresource = (m_Args.FirstDstArraySlice + i) * m_Dest->m_CreationArgs.m_desc12.MipLevels
+                    + m_Args.FirstDstMipLevel;
                 ImmCtx.ResourceCopyRegion(
                     m_Dest->GetActiveUnderlyingResource(),
-                    m_Args.FirstDstArraySlice + i,
+                    DstSubresource,
                     m_Args.DstX,
                     m_Args.DstY,
                     m_Args.DstZ,
                     m_Source->GetActiveUnderlyingResource(),
-                    m_Args.FirstSrcArraySlice + i,
+                    SrcSubresource,
                     &SrcBox);
             }
         }
@@ -1459,9 +1484,11 @@ private:
                 m_Args.SrcY + m_Args.Height,
                 m_Args.SrcZ + m_Args.Depth
             };
+            UINT SrcSubresource = m_Args.FirstSrcArraySlice * m_Source->m_CreationArgs.m_desc12.MipLevels + m_Args.FirstSrcMipLevel;
+            UINT DstSubresource = m_Args.FirstDstArraySlice * m_Dest->m_CreationArgs.m_desc12.MipLevels + m_Args.FirstDstMipLevel;
             ImmCtx.ResourceCopyRegion(tempResource.get(), 0, 0, 0, 0,
-                m_Source->GetActiveUnderlyingResource(), m_Args.FirstSrcArraySlice, &SrcBox);
-            ImmCtx.ResourceCopyRegion(m_Dest->GetActiveUnderlyingResource(), m_Args.FirstDstArraySlice,
+                m_Source->GetActiveUnderlyingResource(), SrcSubresource, &SrcBox);
+            ImmCtx.ResourceCopyRegion(m_Dest->GetActiveUnderlyingResource(), DstSubresource,
                 m_Args.DstX, m_Args.DstY, m_Args.DstZ, tempResource.get(), 0, nullptr);
         }
     }
@@ -1606,12 +1633,16 @@ clEnqueueCopyImage(cl_command_queue     command_queue,
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
-    auto imageResult = ProcessImageDimensions(ReportError, src_origin, region, source, CmdArgs.FirstSrcArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+    auto imageResult = ProcessImageDimensions(ReportError, src_origin, region, source,
+                                              CmdArgs.FirstSrcArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstSrcMipLevel,
+                                              CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
     }
-    imageResult = ProcessImageDimensions(ReportError, dst_origin, region, dest, CmdArgs.FirstDstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
+    imageResult = ProcessImageDimensions(ReportError, dst_origin, region, dest,
+                                         CmdArgs.FirstDstArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstDstMipLevel,
+                                         CmdArgs.Height, CmdArgs.Depth, CmdArgs.DstY, CmdArgs.DstZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
@@ -1998,6 +2029,7 @@ public:
         cl_uint BufferPitch;
         cl_ushort FirstImageArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstImageMipLevel;
     };
 
     CopyBufferAndImageTask(Context& Parent, Resource& Source, Resource& Dest,
@@ -2041,7 +2073,7 @@ private:
         Buffer.PlacedFootprint = m_BufferFootprint;
         Buffer.PlacedFootprint.Offset = BufferOffset;
     }
-    void MoveToNextArraySlice(D3D12_TEXTURE_COPY_LOCATION& Desc)
+    void MoveToNextArraySlice(D3D12_TEXTURE_COPY_LOCATION& Desc, UINT MipLevels)
     {
         if (Desc.Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT)
         {
@@ -2051,7 +2083,7 @@ private:
         }
         else
         {
-            Desc.SubresourceIndex++;
+            Desc.SubresourceIndex += MipLevels;
         }
     }
     void MigrateResources() final
@@ -2098,7 +2130,8 @@ private:
 
             Dest = CD3DX12_TEXTURE_COPY_LOCATION(UnderlyingDest->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
             DestSubresources = D3D12TranslationLayer::CViewSubresourceSubset(
-                D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, 0, m_Args.FirstImageArraySlice, 0), 1, (UINT16)m_Dest->m_Desc.image_array_size, 1);
+                D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, m_Args.FirstImageMipLevel, m_Args.FirstImageArraySlice, 0),
+                (UINT8)m_Dest->m_CreationArgs.m_desc12.MipLevels, (UINT16)m_Dest->m_Desc.image_array_size, 1);
             DstX = m_Args.ImageX;
             DstY = m_Args.ImageY;
             DstZ = m_Args.ImageZ;
@@ -2107,7 +2140,8 @@ private:
         {
             Src = CD3DX12_TEXTURE_COPY_LOCATION(UnderlyingSrc->GetUnderlyingResource(), m_Args.FirstImageArraySlice);
             SrcSubresources = D3D12TranslationLayer::CViewSubresourceSubset(
-                D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, 0, m_Args.FirstImageArraySlice, 0), 1, (UINT16)m_Source->m_Desc.image_array_size, 1);
+                D3D12TranslationLayer::CSubresourceSubset(1, m_Args.NumArraySlices, 1, m_Args.FirstImageMipLevel, m_Args.FirstImageArraySlice, 0),
+                (UINT8)m_Source->m_CreationArgs.m_desc12.MipLevels, (UINT16)m_Source->m_Desc.image_array_size, 1);
             SrcBox =
             {
                 m_Args.ImageX,
@@ -2130,8 +2164,8 @@ private:
         for (cl_ushort i = 0; i < m_Args.NumArraySlices; ++i)
         {
             ImmCtx.GetGraphicsCommandList()->CopyTextureRegion(&Dest, DstX, DstY, DstZ, &Src, &SrcBox);
-            MoveToNextArraySlice(Src);
-            MoveToNextArraySlice(Dest);
+            MoveToNextArraySlice(Src, m_Source->m_CreationArgs.m_desc12.MipLevels);
+            MoveToNextArraySlice(Dest, m_Dest->m_CreationArgs.m_desc12.MipLevels);
         }
         ImmCtx.PostCopy(UnderlyingSrc, SrcSubresources.begin().StartSubresource(),
                         UnderlyingDest, DestSubresources.begin().StartSubresource(),
@@ -2204,7 +2238,9 @@ clEnqueueCopyImageToBuffer(cl_command_queue command_queue,
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
-    auto imageResult = ProcessImageDimensions(ReportError, src_origin, region, image, CmdArgs.FirstImageArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.ImageY, CmdArgs.ImageZ);
+    auto imageResult = ProcessImageDimensions(ReportError, src_origin, region, image,
+                                              CmdArgs.FirstImageArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstImageMipLevel,
+                                              CmdArgs.Height, CmdArgs.Depth, CmdArgs.ImageY, CmdArgs.ImageZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
@@ -2291,7 +2327,9 @@ clEnqueueCopyBufferToImage(cl_command_queue command_queue,
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
-    auto imageResult = ProcessImageDimensions(ReportError, dst_origin, region, image, CmdArgs.FirstImageArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.ImageY, CmdArgs.ImageZ);
+    auto imageResult = ProcessImageDimensions(ReportError, dst_origin, region, image,
+                                              CmdArgs.FirstImageArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstImageMipLevel,
+                                              CmdArgs.Height, CmdArgs.Depth, CmdArgs.ImageY, CmdArgs.ImageZ);
     if (imageResult != CL_SUCCESS)
     {
         return imageResult;
@@ -2392,6 +2430,7 @@ private:
             ReadArgs.Depth = m_Args.Depth;
             ReadArgs.FirstArraySlice = m_Args.FirstArraySlice;
             ReadArgs.NumArraySlices = m_Args.NumArraySlices;
+            assert(m_Args.FirstMipLevel == 0);
             ReadArgs.pData = m_Resource.m_pHostPointer;
             ReadArgs.DstRowPitch = (cl_uint)m_Resource.m_Desc.image_row_pitch;
             ReadArgs.DstSlicePitch = (cl_uint)m_Resource.m_Desc.image_slice_pitch;
@@ -2419,6 +2458,7 @@ private:
             WriteArgs.Depth = m_Args.Depth;
             WriteArgs.FirstArraySlice = m_Args.FirstArraySlice;
             WriteArgs.NumArraySlices = m_Args.NumArraySlices;
+            assert(m_Args.FirstMipLevel == 0);
             MemWriteFillTask(m_Parent.get(), m_Resource, CL_COMMAND_WRITE_BUFFER, m_CommandQueue.Get(), WriteArgs, true).Record();
         }
     }
@@ -2433,18 +2473,19 @@ public:
     {
         void* basePointer = nullptr;
         auto& Device = m_CommandQueue->GetD3DDevice();
+        UINT subresource = args.FirstArraySlice * resource.m_CreationArgs.m_appDesc.m_MipLevels + args.FirstMipLevel;
         D3D12TranslationLayer::ThrowFailure(resource.GetUnderlyingResource(&Device)->GetUnderlyingResource()->Map(0, &EmptyRange, &basePointer));
-        auto& Placement = resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(args.FirstArraySlice);
+        auto& Placement = resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(subresource);
         m_RowPitch = Placement.Footprint.RowPitch;
         m_SlicePitch = args.NumArraySlices > 1 ?
-            (UINT)(resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(args.FirstArraySlice + 1).Offset - Placement.Offset) :
-            resource.GetUnderlyingResource(&Device)->DepthPitch(args.FirstArraySlice);
+            (UINT)(resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(subresource + 1).Offset - Placement.Offset) :
+            resource.GetUnderlyingResource(&Device)->DepthPitch(subresource);
 
         m_Pointer = (byte*)basePointer +
-            m_SlicePitch * (m_Args.SrcZ + m_Args.FirstArraySlice) +
+            m_SlicePitch * m_Args.SrcZ +
             m_RowPitch * m_Args.SrcY +
             GetFormatSizeBytes(resource.m_Format) * m_Args.SrcX +
-            resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(0).Offset;
+            resource.GetUnderlyingResource(&Device)->GetSubresourcePlacement(subresource).Offset;
     }
 
 private:
@@ -2462,9 +2503,10 @@ private:
         }(m_MapFlags);
         for (cl_uint i = 0; i < m_Args.NumArraySlices; ++i)
         {
+            UINT subresource = (m_Args.FirstArraySlice + i) * m_Resource.m_CreationArgs.m_appDesc.m_MipLevels + m_Args.FirstMipLevel;
             m_Resource.GetActiveUnderlyingResource()->m_pParent->SynchronizeForMap(
                 m_Resource.GetActiveUnderlyingResource(),
-                m_Args.FirstArraySlice + i, MapType, false);
+                subresource, MapType, false);
         };
     }
     void Unmap([[maybe_unused]] bool IsResourceBeingDestroyed) final
@@ -2483,6 +2525,7 @@ public:
         Args.m_appDesc.m_Subresources = args.NumArraySlices;
         Args.m_appDesc.m_SubresourcesPerPlane = args.NumArraySlices;
         Args.m_appDesc.m_ArraySize = args.NumArraySlices;
+        Args.m_appDesc.m_MipLevels = 1;
         Args.m_appDesc.m_Depth = args.Depth;
         Args.m_appDesc.m_Width = args.Width;
         Args.m_appDesc.m_Height = args.Height;
@@ -2515,6 +2558,7 @@ public:
         UnderlyingMapArgs.SrcY = 0;
         UnderlyingMapArgs.SrcZ = 0;
         UnderlyingMapArgs.FirstArraySlice = 0;
+        UnderlyingMapArgs.FirstMipLevel = 0;
         m_UnderlyingMapTask.reset(new MapSynchronizeTask(Parent, command_queue, flags, *m_MappableResource.Get(), UnderlyingMapArgs, command));
         m_RowPitch = m_UnderlyingMapTask->GetRowPitch();
         m_SlicePitch = m_UnderlyingMapTask->GetSlicePitch();
@@ -2532,6 +2576,7 @@ private:
             CopyArgs.SrcY = m_Args.SrcY;
             CopyArgs.SrcZ = m_Args.SrcZ;
             CopyArgs.FirstSrcArraySlice = m_Args.FirstArraySlice;
+            CopyArgs.FirstSrcMipLevel = m_Args.FirstMipLevel;
             CopyArgs.Width = m_Args.Width;
             CopyArgs.Height = m_Args.Height;
             CopyArgs.Depth = m_Args.Depth;
@@ -2551,6 +2596,7 @@ private:
             CopyArgs.DstY = m_Args.SrcY;
             CopyArgs.DstZ = m_Args.SrcZ;
             CopyArgs.FirstDstArraySlice = m_Args.FirstArraySlice;
+            CopyArgs.FirstDstMipLevel = m_Args.FirstMipLevel;
             CopyArgs.Width = m_Args.Width;
             CopyArgs.Height = m_Args.Height;
             CopyArgs.Depth = m_Args.Depth;
@@ -2761,7 +2807,10 @@ clEnqueueMapImage(cl_command_queue  command_queue,
     CmdArgs.Depth = 1;
     CmdArgs.NumArraySlices = 1;
 
-    cl_int imageResult = ProcessImageDimensions(context.GetErrorReporter(), origin, region, resource, CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+    cl_int imageResult = ProcessImageDimensions(context.GetErrorReporter(), origin, region, resource,
+                                                CmdArgs.FirstArraySlice, CmdArgs.NumArraySlices, CmdArgs.FirstMipLevel,
+                                                CmdArgs.Height, CmdArgs.Depth, CmdArgs.SrcY, CmdArgs.SrcZ);
+
     if (imageResult != CL_SUCCESS)
     {
         if (errcode_ret)
@@ -2921,6 +2970,7 @@ void MemReadTask::RecordViaCopy()
     MapArgs.Depth = m_Args.Depth;
     MapArgs.FirstArraySlice = m_Args.FirstArraySlice;
     MapArgs.NumArraySlices = m_Args.NumArraySlices;
+    MapArgs.FirstMipLevel = m_Args.FirstMipLevel;
     if (m_CommandType == CL_COMMAND_READ_BUFFER_RECT)
     {
         MapArgs = {};

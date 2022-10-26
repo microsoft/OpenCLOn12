@@ -183,6 +183,7 @@ public:
         cl_uint Depth;
         cl_ushort FirstArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstMipLevel;
     };
 
     MapTask(Context& Parent, cl_command_queue command_queue, Resource& resource, cl_map_flags flags, cl_command_type command, Args const& args);
