@@ -18,6 +18,16 @@ public:
         , m_Sync(sync)
         , m_Resources(std::move(resources))
     {
+        if (!command_queue)
+        {
+            Submit();
+            std::thread([ref_this = AcquireFromGLTask::ref_ptr_int(this)]()
+                       {
+                           ref_this->Record();
+                           auto TaskPoolLock = g_Platform->GetTaskPoolLock();
+                           static_cast<AcquireFromGLTask*>(ref_this.Get())->Complete(CL_SUCCESS, TaskPoolLock);
+                       }).detach();
+        }
     }
 
 private:
@@ -29,7 +39,7 @@ private:
     {
         for (auto &res : m_Resources)
         {
-            res->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
+            res->EnqueueMigrateResource(&m_Parent->GetD3DDevice(0), this, 0);
         }
     }
     GLsync m_Sync;
@@ -117,6 +127,39 @@ clEnqueueAcquireGLObjects(cl_command_queue      command_queue,
     catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
     catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
     catch (Task::DependencyException&) { return ReportError("Context mismatch between command_queue and event_wait_list", CL_INVALID_CONTEXT); }
+
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_event CL_API_CALL
+clCreateEventFromGLsyncKHR(cl_context context_,
+                           cl_GLsync  sync,
+                           cl_int *   errcode_ret) CL_API_SUFFIX__VERSION_1_1
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context &context = *static_cast<Context *>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+    if (!context.GetGLManager())
+    {
+        return ReportError("Context was not created from a GL context", CL_INVALID_CONTEXT);
+    }
+
+    if (!sync)
+    {
+        return ReportError("Invalid sync", CL_INVALID_GL_OBJECT);
+    }
+
+    try
+    {
+        return new AcquireFromGLTask(context, CL_COMMAND_GL_FENCE_SYNC_OBJECT_KHR, nullptr, {}, sync);
+    }
+    catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (std::exception &e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
+    catch (_com_error&) { return ReportError(nullptr, CL_OUT_OF_RESOURCES); }
 
     return CL_SUCCESS;
 }

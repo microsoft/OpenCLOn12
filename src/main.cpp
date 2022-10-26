@@ -152,7 +152,7 @@ cl_icd_dispatch g_DispatchTable
     nullptr, // clReleaseDeviceEXT,
 
     /* cl_khr_gl_event */
-    nullptr, // clCreateEventFromGLsyncKHR,
+    clCreateEventFromGLsyncKHR,
 
     /* OpenCL 1.2 */
     clCreateSubDevices,
