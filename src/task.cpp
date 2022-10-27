@@ -502,10 +502,13 @@ void Task::AddDependencies(const cl_event* event_wait_list, cl_uint num_events_i
                 {
                     throw DependencyException {};
                 }
-                auto insertRet = task->m_TasksWaitingOnThis.insert(this);
-                if (insertRet.second)
+                if ((cl_int)task->GetState() > CL_COMPLETE)
                 {
-                    m_TasksToWaitOn.emplace_back(task);
+                    auto insertRet = task->m_TasksWaitingOnThis.insert(this);
+                    if (insertRet.second)
+                    {
+                        m_TasksToWaitOn.emplace_back(task);
+                    }
                 }
             }
         }
