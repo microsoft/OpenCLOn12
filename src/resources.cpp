@@ -664,7 +664,7 @@ clGetSupportedImageFormats(cl_context           context_,
         if (!IsSupported)
             continue;
 
-        cl_image_format format = GetCLImageFormatForDXGIFormat((DXGI_FORMAT)i);
+        cl_image_format format = GetCLImageFormatForDXGIFormat((DXGI_FORMAT)i, 0);
         if (format.image_channel_data_type != 0)
         {
             if (NumFormats < num_entries && image_formats)
@@ -1172,7 +1172,12 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
         return nullptr;
     }
 
-    cl_image_format format = GetCLImageFormatForDXGIFormat(Args.m_desc12.Format);
+    cl_image_format format = GetCLImageFormatForDXGIFormat(Args.m_desc12.Format, out.internal_format);
+    if (format.image_channel_data_type == 0)
+    {
+        // Couldn't infer a CL format to use
+        return nullptr;
+    }
 
     Resource::GLInfo glInfo = {};
     glInfo.TextureTarget = in.target;
