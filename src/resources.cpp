@@ -829,7 +829,10 @@ clCreateFromGLBuffer(cl_context     context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return Resource::ImportGLResource(context, flags, glData);
+        auto res = Resource::ImportGLResource(context, flags, glData);
+        if (!res)
+            return ReportError("Failed to import.", CL_INVALID_GL_OBJECT);
+        return res;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (_com_error& e)
@@ -880,7 +883,10 @@ clCreateFromGLTexture(cl_context      context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return Resource::ImportGLResource(context, flags, glData);
+        auto res = Resource::ImportGLResource(context, flags, glData);
+        if (!res)
+            return ReportError("Failed to import.", CL_INVALID_GL_OBJECT);
+        return res;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (_com_error& e)
@@ -1068,6 +1074,7 @@ static cl_mem_object_type CLTypeFromGLType(cl_GLuint target)
     case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
     case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
     case GL_RENDERBUFFER:
+    case GL_TEXTURE_RECTANGLE:
     case GL_TEXTURE_2D: return CL_MEM_OBJECT_IMAGE2D;
     case GL_TEXTURE_2D_ARRAY: return CL_MEM_OBJECT_IMAGE2D_ARRAY;
     case GL_TEXTURE_3D: return CL_MEM_OBJECT_IMAGE3D;
@@ -1089,6 +1096,7 @@ static cl_gl_object_type CLGLTypeFromGLType(cl_GLuint target)
     case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
     case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
     case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case GL_TEXTURE_RECTANGLE:
     case GL_TEXTURE_2D: return CL_GL_OBJECT_TEXTURE2D;
     case GL_RENDERBUFFER: return CL_GL_OBJECT_RENDERBUFFER;
     case GL_TEXTURE_2D_ARRAY: return CL_GL_OBJECT_TEXTURE2D_ARRAY;
@@ -1157,12 +1165,14 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     };
 
     cl_image_desc imageDesc = {};
-    imageDesc.image_array_size = out.view_numlayers;
+    imageDesc.image_array_size = out.view_numlayers ?
+        out.view_numlayers : Args.m_appDesc.m_ArraySize;
     imageDesc.image_depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
         (Args.m_desc12.DepthOrArraySize >> out.view_minlevel) : 1;
     imageDesc.image_height = Args.m_desc12.Height >> out.view_minlevel;
     imageDesc.image_width = Args.m_desc12.Width >> out.view_minlevel;
-    imageDesc.num_mip_levels = out.view_numlevels;
+    imageDesc.num_mip_levels = out.view_numlevels ? 
+        out.view_numlevels : Args.m_appDesc.m_MipLevels;
     imageDesc.num_samples = Args.m_desc12.SampleDesc.Count;
     imageDesc.image_type = CLTypeFromGLType(in.target);
     if (!imageDesc.image_type)
@@ -1172,19 +1182,12 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
         return nullptr;
     }
 
-    cl_image_format format = GetCLImageFormatForDXGIFormat(Args.m_desc12.Format, out.internal_format);
-    if (format.image_channel_data_type == 0)
-    {
-        // Couldn't infer a CL format to use
-        return nullptr;
-    }
-
     Resource::GLInfo glInfo = {};
     glInfo.TextureTarget = in.target;
     glInfo.ObjectType = CLGLTypeFromGLType(in.target);
     glInfo.MipLevel = in.miplevel;
     glInfo.ObjectName = in.obj;
-    glInfo.BufferOffset = out.buf_offset + d3d12.buffer_offset;
+    glInfo.BufferOffset = d3d12.buffer_offset;
     glInfo.BaseArray = out.view_minlayer + CubeFaceArrayOffset(in.target);
     if (Args.ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
     {
@@ -1192,6 +1195,13 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     }
     else
     {
+        cl_image_format format = GetCLImageFormatForDXGIFormat(Args.m_desc12.Format, out.internal_format);
+        if (format.image_channel_data_type == 0)
+        {
+            // Couldn't infer a CL format to use
+            return nullptr;
+        }
+
         return new Resource(Parent, Args, nullptr, format, imageDesc, flags, glInfo);
     }
 }
@@ -1309,14 +1319,14 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         case CL_MEM_OBJECT_IMAGE1D_ARRAY:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
             UAVDesc.Texture1DArray.FirstArraySlice = FirstArraySlice;
-            UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+            UAVDesc.Texture1DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
             UAVDesc.Texture1DArray.MipSlice = MostDetailedMip;
             break;
         case CL_MEM_OBJECT_IMAGE2D:
         case CL_MEM_OBJECT_IMAGE2D_ARRAY:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
             UAVDesc.Texture2DArray.FirstArraySlice = FirstArraySlice;
-            UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+            UAVDesc.Texture2DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
             UAVDesc.Texture2DArray.MipSlice = MostDetailedMip;
             UAVDesc.Texture2DArray.PlaneSlice = 0;
             break;
@@ -1341,7 +1351,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         case CL_MEM_OBJECT_IMAGE1D_ARRAY:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
             SRVDesc.Texture1DArray.FirstArraySlice = FirstArraySlice;
-            SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+            SRVDesc.Texture1DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
             SRVDesc.Texture1DArray.MipLevels = 1;
             SRVDesc.Texture1DArray.MostDetailedMip = MostDetailedMip;
             SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
@@ -1350,7 +1360,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         case CL_MEM_OBJECT_IMAGE2D_ARRAY:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
             SRVDesc.Texture2DArray.FirstArraySlice = FirstArraySlice;
-            SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+            SRVDesc.Texture2DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
             SRVDesc.Texture2DArray.MipLevels = 1;
             SRVDesc.Texture2DArray.MostDetailedMip = MostDetailedMip;
             SRVDesc.Texture2DArray.PlaneSlice = 0;

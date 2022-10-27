@@ -400,9 +400,25 @@ clGetProgramInfo(cl_program         program_,
     case CL_PROGRAM_CONTEXT: return RetValue((cl_context)&program.GetContext());
     case CL_PROGRAM_NUM_DEVICES: return RetValue((cl_uint)program.m_AssociatedDevices.size());
     case CL_PROGRAM_DEVICES:
-        return CopyOutParameterImpl(program.m_AssociatedDevices.data(),
-                                    program.m_AssociatedDevices.size() * sizeof(program.m_AssociatedDevices[0]),
-                                    param_value_size, param_value, param_value_size_ret);
+    {
+        size_t expectedSize = program.m_AssociatedDevices.size() * sizeof(cl_device_id);
+        if (param_value_size && param_value_size < expectedSize)
+        {
+            return CL_INVALID_VALUE;
+        }
+        if (param_value_size)
+        {
+            std::transform(program.m_AssociatedDevices.begin(),
+                           program.m_AssociatedDevices.end(),
+                           static_cast<cl_device_id *>(param_value),
+                           [](D3DDeviceAndRef const &dev) { return dev.first.Get(); });
+        }
+        if (param_value_size_ret)
+        {
+            *param_value_size_ret = expectedSize;
+        }
+        return CL_SUCCESS;
+    }
     case CL_PROGRAM_SOURCE: return RetValue(program.m_Source.c_str());
     case CL_PROGRAM_IL: return CopyOutParameterImpl(program.m_IL.data(), program.m_IL.size(),
                                                     param_value_size, param_value, param_value_size_ret);

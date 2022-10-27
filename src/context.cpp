@@ -46,11 +46,11 @@ public:
     }
     virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
     {
-        return m_ExportObject(m_Display, m_AppContext, &in, &out);
+        return m_ExportObject(m_Display, m_AppContext, &in, &out) == MESA_GLINTEROP_SUCCESS;
     }
     virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) final
     {
-        return m_FlushObjects(m_Display, m_AppContext, (unsigned)resources.size(), resources.data(), sync);
+        return m_FlushObjects(m_Display, m_AppContext, (unsigned)resources.size(), resources.data(), sync) == MESA_GLINTEROP_SUCCESS;
     }
     virtual bool IsAppContextBoundToThread() final
     {
@@ -179,11 +179,11 @@ public:
     }
     virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
     {
-        return m_ExportObject(m_Display, m_AppContext, &in, &out);
+        return m_ExportObject(m_Display, m_AppContext, &in, &out) == MESA_GLINTEROP_SUCCESS;
     }
     virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) final
     {
-        return m_FlushObjects(m_Display, m_AppContext, (unsigned)resources.size(), resources.data(), sync);
+        return m_FlushObjects(m_Display, m_AppContext, (unsigned)resources.size(), resources.data(), sync) == MESA_GLINTEROP_SUCCESS;
     }
     virtual bool IsAppContextBoundToThread() final
     {
@@ -538,9 +538,25 @@ clGetContextInfo(cl_context         context_,
     case CL_CONTEXT_REFERENCE_COUNT: return RetValue((cl_uint)context->GetRefCount());
     case CL_CONTEXT_NUM_DEVICES: return RetValue(context->GetDeviceCount());
     case CL_CONTEXT_DEVICES:
-        return CopyOutParameterImpl(context->m_AssociatedDevices.data(),
-            context->m_AssociatedDevices.size() * sizeof(context->m_AssociatedDevices[0]),
-            param_value_size, param_value, param_value_size_ret);
+    {
+        size_t expectedSize = context->m_AssociatedDevices.size() * sizeof(cl_device_id);
+        if (param_value_size && param_value_size < expectedSize)
+        {
+            return CL_INVALID_VALUE;
+        }
+        if (param_value_size)
+        {
+            std::transform(context->m_AssociatedDevices.begin(),
+                           context->m_AssociatedDevices.end(),
+                           static_cast<cl_device_id *>(param_value),
+                           [](D3DDeviceAndRef const &dev) { return dev.first.Get(); });
+        }
+        if (param_value_size_ret)
+        {
+            *param_value_size_ret = expectedSize;
+        }
+        return CL_SUCCESS;
+    }
     case CL_CONTEXT_PROPERTIES:
         return CopyOutParameterImpl(context->m_Properties.data(),
             context->m_Properties.size() * sizeof(context->m_Properties[0]),
