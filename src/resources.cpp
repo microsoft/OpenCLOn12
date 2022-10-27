@@ -170,6 +170,7 @@ clCreateBufferWithProperties(cl_context   context_,
     }
 
     D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_bManageResidency = true;
     Args.m_appDesc.m_Subresources = 1;
     Args.m_appDesc.m_SubresourcesPerPlane = 1;
     Args.m_appDesc.m_NonOpaquePlaneCount = 1;
@@ -185,7 +186,7 @@ clCreateBufferWithProperties(cl_context   context_,
     Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
     Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE | D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
     Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(D3D12TranslationLayer::Align<size_t>(size, 4), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
+    Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT);
     ModifyResourceArgsForMemFlags(Args, flags);
 
     try
@@ -295,6 +296,7 @@ clCreateImageWithProperties(cl_context              context_,
 
     auto image_desc_copy = *image_desc;
     D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_bManageResidency = true;
     switch (image_desc->image_type)
     {
     case CL_MEM_OBJECT_BUFFER:
@@ -457,7 +459,7 @@ clCreateImageWithProperties(cl_context              context_,
         {
             Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
             Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE;
-            Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
+            Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT);
             ModifyResourceArgsForMemFlags(Args, flags);
 
             Args.m_desc12.Dimension = Args.m_appDesc.m_resourceDimension;
@@ -1138,6 +1140,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     }
 
     D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_bManageResidency = true;
     Args.m_desc12 = d3d12.resource->GetDesc();
     Args.m_appDesc.m_ArraySize = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
         1 : Args.m_desc12.DepthOrArraySize;
@@ -1159,6 +1162,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     Args.m_appDesc.m_Subresources = Args.m_appDesc.m_SubresourcesPerPlane =
         Args.m_appDesc.m_MipLevels * Args.m_appDesc.m_ArraySize;
     d3d12.resource->GetHeapProperties(&Args.m_heapDesc.Properties, &Args.m_heapDesc.Flags);
+    Args.m_heapDesc.Flags |= D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT;
     Args.m_PrivateCreateFn = [res = ComPtr<ID3D12Resource>(d3d12.resource)](D3D12TranslationLayer::ResourceCreationArgs const &, ID3D12SwapChainAssistant *, ID3D12Resource **ppOut) mutable
     {
         *ppOut = res.Detach();
@@ -1191,7 +1195,20 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     glInfo.BaseArray = out.view_minlayer + CubeFaceArrayOffset(in.target);
     if (Args.ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
     {
-        return new Resource(Parent, Args, nullptr, out.buf_size, flags, glInfo);
+        Resource::ref_ptr buffer(new Resource(Parent, Args, nullptr, out.buf_size, flags, glInfo), adopt_ref{});
+        if (in.target == GL_TEXTURE_BUFFER)
+        {
+            cl_image_format format = GetCLImageFormatForGLFormat(out.internal_format);
+            if (format.image_channel_data_type == 0)
+            {
+                // Couldn't infer a CL format to use
+                return nullptr;
+            }
+            DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(format);
+            UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
+            return new Resource(*buffer.Get(), 0, out.buf_size / FormatByteSize, format, CL_MEM_OBJECT_IMAGE1D_BUFFER, flags);
+        }
+        return buffer.Detach();
     }
     else
     {
@@ -1241,6 +1258,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     , m_Offset(offset + ParentBuffer.m_Offset)
     , m_Desc(GetBufferDesc(size, type))
     , m_CreationArgs(ParentBuffer.m_CreationArgs)
+    , m_GLInfo(ParentBuffer.m_GLInfo)
 {
     if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
     {

@@ -176,6 +176,8 @@ constexpr cl_image_format GetCLImageFormatForDXGIFormat(DXGI_FORMAT fmt, cl_GLui
         case GL_RGBA8UI: return { CL_RGBA, CL_UNSIGNED_INT8 };
         case GL_RGBA8_SNORM: return { CL_RGBA, CL_SNORM_INT8 };
         case GL_RGBA8I: return { CL_RGBA, CL_SIGNED_INT8 };
+        case GL_UNSIGNED_INT_8_8_8_8_REV: return { CL_RGBA, CL_UNORM_INT8 };
+        case GL_RGBA: return { CL_RGBA, CL_UNORM_INT8 };
         }
         break;
     case DXGI_FORMAT_R16G16_FLOAT: return { CL_RG, CL_HALF_FLOAT };
@@ -248,6 +250,53 @@ constexpr cl_image_format GetCLImageFormatForDXGIFormat(DXGI_FORMAT fmt, cl_GLui
     case DXGI_FORMAT_A8_UNORM: return { CL_A, CL_UNORM_INT8 };
     case DXGI_FORMAT_B8G8R8A8_UNORM: return { CL_BGRA, CL_UNORM_INT8 };
     case DXGI_FORMAT_B8G8R8A8_TYPELESS: return { CL_BGRA, CL_UNORM_INT8 };
+    }
+    return {};
+}
+
+constexpr cl_image_format GetCLImageFormatForGLFormat(cl_GLuint fmt)
+{
+    switch (fmt)
+    {
+    case GL_RGBA32F: return { CL_RGBA, CL_FLOAT };
+    case GL_RGBA32UI: return { CL_RGBA, CL_UNSIGNED_INT32 };
+    case GL_RGBA32I: return { CL_RGBA, CL_SIGNED_INT32 };
+    case GL_RGBA16F: return { CL_RGBA, CL_HALF_FLOAT };
+    case GL_RGBA16: return { CL_RGBA, CL_UNORM_INT16 };
+    case GL_RGBA16UI: return { CL_RGBA, CL_UNSIGNED_INT16 };
+    case GL_RGBA16_SNORM: return { CL_RGBA, CL_SNORM_INT16 };
+    case GL_RGBA16I: return { CL_RGBA, CL_SIGNED_INT16 };
+    case GL_RG32F: return { CL_RG, CL_FLOAT };
+    case GL_RG32UI: return { CL_RG, CL_UNSIGNED_INT32 };
+    case GL_RG32I: return { CL_RG, CL_SIGNED_INT32 };
+    case GL_RGBA8: return { CL_RGBA, CL_UNORM_INT8 };
+    case GL_RGBA8UI: return { CL_RGBA, CL_UNSIGNED_INT8 };
+    case GL_RGBA8_SNORM: return { CL_RGBA, CL_SNORM_INT8 };
+    case GL_RGBA8I: return { CL_RGBA, CL_SIGNED_INT8 };
+    case GL_UNSIGNED_INT_8_8_8_8_REV: return { CL_RGBA, CL_UNORM_INT8 };
+    case GL_RGBA: return { CL_RGBA, CL_UNORM_INT8 };
+    case GL_RG16F: return { CL_RG, CL_HALF_FLOAT };
+    case GL_RG16: return { CL_RG, CL_UNORM_INT16 };
+    case GL_RG16UI: return { CL_RG, CL_UNSIGNED_INT16 };
+    case GL_RG16_SNORM: return { CL_RG, CL_SNORM_INT16 };
+    case GL_RG16I: return { CL_RG, CL_SIGNED_INT16 };
+    case GL_R32F: return { CL_R, CL_FLOAT };
+    case GL_R32UI: return { CL_R, CL_UNSIGNED_INT32 };
+    case GL_R32I: return { CL_R, CL_SIGNED_INT32 };
+    case GL_RG8: return { CL_RG, CL_UNORM_INT8 };
+    case GL_RG8UI: return { CL_RG, CL_UNSIGNED_INT8 };
+    case GL_RG8_SNORM: return { CL_RG, CL_SNORM_INT8 };
+    case GL_RG8I: return { CL_RG, CL_SIGNED_INT8 };
+    case GL_R16F: return { CL_R, CL_HALF_FLOAT };
+    case GL_R16: return { CL_R, CL_UNORM_INT16 };
+    case GL_R16UI: return { CL_R, CL_UNSIGNED_INT16 };
+    case GL_R16_SNORM: return { CL_R, CL_SNORM_INT16 };
+    case GL_R16I: return { CL_R, CL_SIGNED_INT16 };
+    case GL_R8: return { CL_R, CL_UNORM_INT8 };
+    case GL_R8UI: return { CL_R, CL_UNSIGNED_INT8 };
+    case GL_R8_SNORM: return { CL_R, CL_SNORM_INT8 };
+    case GL_R8I: return { CL_R, CL_SIGNED_INT8 };
+    case GL_BGRA: return { CL_BGRA, CL_UNORM_INT8 };
     }
     return {};
 }
