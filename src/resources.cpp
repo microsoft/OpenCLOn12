@@ -1170,13 +1170,13 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
 
     cl_image_desc imageDesc = {};
     imageDesc.image_array_size = out.view_numlayers ?
-        out.view_numlayers : Args.m_appDesc.m_ArraySize;
+        out.view_numlayers : Args.m_appDesc.m_ArraySize - (out.view_minlayer + CubeFaceArrayOffset(in.target));
     imageDesc.image_depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
         (Args.m_desc12.DepthOrArraySize >> out.view_minlevel) : 1;
     imageDesc.image_height = Args.m_desc12.Height >> out.view_minlevel;
     imageDesc.image_width = Args.m_desc12.Width >> out.view_minlevel;
     imageDesc.num_mip_levels = out.view_numlevels ? 
-        out.view_numlevels : Args.m_appDesc.m_MipLevels;
+        out.view_numlevels : Args.m_appDesc.m_MipLevels - out.view_minlevel;
     imageDesc.num_samples = Args.m_desc12.SampleDesc.Count;
     imageDesc.image_type = CLTypeFromGLType(in.target);
     if (!imageDesc.image_type)
