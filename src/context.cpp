@@ -77,9 +77,9 @@ private:
         decltype(&wglDeleteContext)> m_MyContext {nullptr, nullptr};
     decltype(&wglMakeCurrent) m_MakeCurrent;
     decltype(&wglGetCurrentContext) m_GetCurrentContext;
-    decltype(&MesaGLInteropWGLQueryDeviceInfo) m_QueryDeviceInfo;
-    decltype(&MesaGLInteropWGLExportObject) m_ExportObject;
-    decltype(&MesaGLInteropWGLFlushObjects) m_FlushObjects;
+    decltype(&wglMesaGLInteropQueryDeviceInfo) m_QueryDeviceInfo;
+    decltype(&wglMesaGLInteropExportObject) m_ExportObject;
+    decltype(&wglMesaGLInteropFlushObjects) m_FlushObjects;
 
     friend class GLInteropManager;
     WGLInteropManager(GLProperties const &glProps)
