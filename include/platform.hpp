@@ -110,7 +110,8 @@ public:
                                               "cl_khr_local_int32_base_atomics "
                                               "cl_khr_local_int32_extended_atomics "
                                               "cl_khr_byte_addressable_store "
-                                              "cl_khr_il_program ";
+                                              "cl_khr_il_program "
+                                              "cl_khr_3d_image_writes ";
     static constexpr const char* ICDSuffix = "oclon12";
 
     Platform(cl_icd_dispatch* dispatch);

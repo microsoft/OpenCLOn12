@@ -209,6 +209,7 @@ clGetDeviceInfo(cl_device_id    device,
                                                    "cl_khr_local_int32_extended_atomics "
                                                    "cl_khr_byte_addressable_store "
                                                    "cl_khr_il_program "
+                                                   "cl_khr_3d_image_writes "
         );
 
         case CL_DEVICE_PRINTF_BUFFER_SIZE: return RetValue((size_t)1024 * 1024);

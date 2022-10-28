@@ -914,6 +914,7 @@ void Program::AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices,
         if (!std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const &d) { return d->SupportsTypedUAVLoad(); }))
         {
             optionsStruct.Features.images_read_write = true;
+            optionsStruct.Features.images_write_3d = true;
         }
     }
 }
