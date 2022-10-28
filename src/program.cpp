@@ -970,14 +970,18 @@ cl_int Program::ParseOptions(const char* optionsStr, CommonOptions& optionsStruc
                 return CL_SUCCESS;
             }
         }
-        if (curOption == "-cl-denorms-are-zero"sv ||
-            curOption == "-cl-no-signed-zeros"sv ||
+        if (curOption == "-cl-no-signed-zeros"sv ||
             curOption == "-cl-unsafe-math-optimizations"sv ||
             curOption == "-cl-finite-math-only"sv ||
             curOption == "-cl-fast-relaxed-math"sv ||
             curOption == "-cl-mad-enable"sv)
         {
             optionsStruct.Args.push_back(curOption);
+            return CL_SUCCESS;
+        }
+        else if (curOption == "-cl-denorms-are-zero"sv)
+        {
+            // Hide from Clang, it doesn't have such a flag
             return CL_SUCCESS;
         }
         return CL_INVALID_BUILD_OPTIONS;
