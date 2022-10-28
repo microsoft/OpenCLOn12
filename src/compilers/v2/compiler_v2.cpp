@@ -286,8 +286,6 @@ std::unique_ptr<ProgramBinary> CompilerV2::Load(const void *data, size_t size) c
 
 std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *conf, Logger const *logger) const
 {
-    CompiledDxilV2::unique_obj dxil({}, FreeDxil);
-
     clc_runtime_kernel_conf conf_impl;
     std::vector<clc_runtime_arg_info> conf_args;
     if (conf)
@@ -321,9 +319,11 @@ std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBin
         logger_impl = ConvertLogger(*logger);
 
     ProgramBinaryV2 const& objv2 = static_cast<ProgramBinaryV2 const&>(obj);
-    if (!GetKernelImpl(GetLibclc(), &objv2.GetRaw(), &objv2.GetParsedInfo(), name, conf ? &conf_impl : nullptr, nullptr, logger ? &logger_impl : nullptr, &dxil))
+    clc_dxil_object raw_dxil = {};
+    if (!GetKernelImpl(GetLibclc(), &objv2.GetRaw(), &objv2.GetParsedInfo(), name, conf ? &conf_impl : nullptr, nullptr, logger ? &logger_impl : nullptr, &raw_dxil))
         return nullptr;
 
+    CompiledDxilV2::unique_obj dxil(raw_dxil, FreeDxil);
     return std::make_unique<CompiledDxilV2>(static_cast<ProgramBinaryV2 const&>(obj), std::move(dxil));
 }
 
