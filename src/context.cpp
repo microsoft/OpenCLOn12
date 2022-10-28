@@ -44,9 +44,9 @@ public:
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_AppContext, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
-    virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
+    virtual int GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
     {
-        return m_ExportObject(m_Display, m_AppContext, &in, &out) == MESA_GLINTEROP_SUCCESS;
+        return m_ExportObject(m_Display, m_AppContext, &in, &out);
     }
     virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) final
     {
@@ -177,9 +177,9 @@ public:
         PrepQueryDeviceInfo(mesaDevInfo, d3d12DevInfo);
         return m_QueryDeviceInfo(m_Display, m_AppContext, &mesaDevInfo) == MESA_GLINTEROP_SUCCESS;
     }
-    virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
+    virtual int GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) final
     {
-        return m_ExportObject(m_Display, m_AppContext, &in, &out) == MESA_GLINTEROP_SUCCESS;
+        return m_ExportObject(m_Display, m_AppContext, &in, &out);
     }
     virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) final
     {

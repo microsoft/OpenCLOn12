@@ -831,9 +831,9 @@ clCreateFromGLBuffer(cl_context     context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        auto res = Resource::ImportGLResource(context, flags, glData);
+        auto res = Resource::ImportGLResource(context, flags, glData, errcode_ret);
         if (!res)
-            return ReportError("Failed to import.", CL_INVALID_GL_OBJECT);
+            return ReportError("Failed to import.", *errcode_ret);
         return res;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -885,9 +885,9 @@ clCreateFromGLTexture(cl_context      context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        auto res = Resource::ImportGLResource(context, flags, glData);
+        auto res = Resource::ImportGLResource(context, flags, glData, errcode_ret);
         if (!res)
-            return ReportError("Failed to import.", CL_INVALID_GL_OBJECT);
+            return ReportError("Failed to import.", *errcode_ret);
         return res;
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -1122,7 +1122,7 @@ static uint32_t CubeFaceArrayOffset(cl_GLuint target)
     }
 }
 
-Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in)
+Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in, cl_int *error)
 {
     in.version = 1;
 
@@ -1134,8 +1134,20 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     in.out_driver_data_size = sizeof(d3d12);
 
     auto glManager = Parent.GetGLManager();
-    if (!glManager->GetResourceData(in, out) || !d3d12.resource)
+    switch (glManager->GetResourceData(in, out))
     {
+    case MESA_GLINTEROP_SUCCESS:
+        if (!d3d12.resource)
+        {
+            if (error) *error = CL_INVALID_GL_OBJECT;
+            return nullptr;
+        }
+        break;
+    case MESA_GLINTEROP_INVALID_MIP_LEVEL:
+        if (error) *error = CL_INVALID_MIP_LEVEL;
+        return nullptr;
+    default:
+        if (error) *error = CL_INVALID_GL_OBJECT;
         return nullptr;
     }
 
@@ -1183,6 +1195,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     {
         // Mesa accepts full cubes and cube arrays, which complicate things.
         // Reject types that are not in our list.
+        if (error) *error = CL_INVALID_GL_OBJECT;
         return nullptr;
     }
 
@@ -1202,6 +1215,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
             if (format.image_channel_data_type == 0)
             {
                 // Couldn't infer a CL format to use
+                if (error) *error = CL_INVALID_IMAGE_FORMAT_DESCRIPTOR;
                 return nullptr;
             }
             DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(format);
@@ -1216,6 +1230,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
         if (format.image_channel_data_type == 0)
         {
             // Couldn't infer a CL format to use
+            if (error) *error = CL_INVALID_IMAGE_FORMAT_DESCRIPTOR;
             return nullptr;
         }
 

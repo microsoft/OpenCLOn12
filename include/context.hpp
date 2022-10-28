@@ -18,7 +18,7 @@ public:
     static std::unique_ptr<GLInteropManager> Create(GLProperties const &glProps);
     virtual ~GLInteropManager() = default;
     virtual bool GetDeviceData(d3d12_interop_device_info &d3d12DevInfo) = 0;
-    virtual bool GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) = 0;
+    virtual int GetResourceData(mesa_glinterop_export_in &in, mesa_glinterop_export_out &out) = 0;
     virtual bool AcquireResources(std::vector<mesa_glinterop_export_in> &resources, GLsync *sync) = 0;
     virtual bool IsAppContextBoundToThread() = 0;
     bool SyncWait(GLsync fence, bool deleteSync);

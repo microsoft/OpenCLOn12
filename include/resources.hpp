@@ -46,7 +46,7 @@ public:
     static Resource* CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags);
     static Resource* CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
     static Resource* CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
-    static Resource *ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in);
+    static Resource *ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in, cl_int *error);
 
     UnderlyingResource* GetUnderlyingResource(D3DDevice*);
     void SetActiveDevice(D3DDevice*);
