@@ -902,6 +902,10 @@ void Program::AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices,
 #else
     optionsStruct.Args.push_back("-D__OPENCL_VERSION__=120");
 #endif
+    if (!optionsStruct.Features.fp64)
+    {
+        optionsStruct.Args.push_back("-cl-single-precision-constant");
+    }
     optionsStruct.Features.int64 = true;
     // Query device caps to determine additional things to enable and/or disable
     if (std::all_of(devices.begin(), devices.end(), [](Device::ref_ptr_int const& d) { return !d->IsMCDM(); }))
