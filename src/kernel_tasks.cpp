@@ -108,6 +108,7 @@ public:
     std::vector<D3D12TranslationLayer::Resource*> m_CBs;
     std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
+    std::vector<std::byte> m_KernelArgsCbData;
     Resource::ref_ptr m_PrintfUAV;
 
     std::vector<Resource::ref_ptr_int> m_KernelArgUAVs;
@@ -176,8 +177,12 @@ public:
         size_t WorkPropertiesSize = pCompiler->GetWorkPropertiesChunkSize() * numIterations;
         KernelInputsCbSize = WorkPropertiesOffset + WorkPropertiesSize;
 
-        kernel.m_KernelArgsCbData.resize(KernelInputsCbSize);
-        std::byte* workPropertiesData = kernel.m_KernelArgsCbData.data() + WorkPropertiesOffset;
+        m_KernelArgsCbData.resize(KernelInputsCbSize);
+        if (!kernel.m_KernelArgsCbData.empty())
+        {
+            memcpy(m_KernelArgsCbData.data(), kernel.m_KernelArgsCbData.data(), kernel.m_KernelArgsCbData.size());
+        }
+        std::byte* workPropertiesData = m_KernelArgsCbData.data() + WorkPropertiesOffset;
         for (cl_uint x = 0; x < numXIterations; ++x)
         {
             for (cl_uint y = 0; y < numYIterations; ++y)
@@ -201,7 +206,7 @@ public:
         Args.m_appDesc.m_MipLevels = 1;
         Args.m_appDesc.m_ArraySize = 1;
         Args.m_appDesc.m_Depth = 1;
-        Args.m_appDesc.m_Width = (UINT)kernel.m_KernelArgsCbData.size();
+        Args.m_appDesc.m_Width = (UINT)m_KernelArgsCbData.size();
         Args.m_appDesc.m_Height = 1;
         Args.m_appDesc.m_Format = DXGI_FORMAT_UNKNOWN;
         Args.m_appDesc.m_Samples = 1;
@@ -541,11 +546,11 @@ void ExecuteKernel::RecordImpl()
         if (m_Specialized->m_Dxil->GetMetadata().program_kernel_info.args[i].address_qualifier != ProgramBinary::Kernel::Arg::AddressSpace::Local)
             continue;
 
-        UINT *offsetLocation = reinterpret_cast<UINT*>(&m_Kernel->m_KernelArgsCbData[m_Specialized->m_Dxil->GetMetadata().args[i].offset]);
+        UINT *offsetLocation = reinterpret_cast<UINT*>(&m_KernelArgsCbData[m_Specialized->m_Dxil->GetMetadata().args[i].offset]);
         *offsetLocation = std::get<CompiledDxil::Metadata::Arg::Local>(m_Specialized->m_Dxil->GetMetadata().args[i].properties).sharedmem_offset;
     }
 
-    D3D11_SUBRESOURCE_DATA Data = { m_Kernel->m_KernelArgsCbData.data() };
+    D3D11_SUBRESOURCE_DATA Data = { m_KernelArgsCbData.data() };
     Device.ImmCtx().UpdateSubresources(
         m_KernelArgsCb.get(),
         m_KernelArgsCb->GetFullSubresourceSubset(),
