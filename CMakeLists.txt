@@ -42,7 +42,12 @@ target_include_directories(openclon12
     PRIVATE include
     PRIVATE external
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(openclon12 d3d12translationlayer OpenCL::Headers WIL)
+target_link_libraries(openclon12
+    d3d12translationlayer
+    OpenCL::Headers
+    WIL
+    user32
+    gdi32)
 source_group("Header Files\\External" FILES ${EXTERNAL_INC})
 
 option(BUILD_TESTS "Build tests" ON)

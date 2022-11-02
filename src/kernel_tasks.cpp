@@ -126,12 +126,12 @@ public:
         for (auto& res : m_KernelArgUAVs)
         {
             if (res.Get())
-                res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+                res->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
         }
         for (auto& res : m_KernelArgSRVs)
         {
             if (res.Get())
-                res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, 0);
+                res->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
         }
     }
     void RecordImpl() final;
@@ -197,7 +197,7 @@ public:
             }
         }
 
-        auto& Device = m_CommandQueue->GetDevice();
+        auto& Device = m_CommandQueue->GetD3DDevice();
 
         D3D12TranslationLayer::ResourceCreationArgs Args = {};
         Args.m_appDesc.m_Subresources = 1;
@@ -232,7 +232,7 @@ public:
         if (kernel.m_Dxil.GetMetadata().printf_uav_id >= 0)
         {
             m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
-            m_PrintfUAV->EnqueueMigrateResource(&Device, this, 0);
+            m_PrintfUAV->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
             m_UAVs[kernel.m_Dxil.GetMetadata().printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
         }
 
@@ -524,7 +524,7 @@ void ExecuteKernel::RecordImpl()
         throw std::exception("Failed to specialize");
     }
 
-    auto& Device = m_CommandQueue->GetDevice();
+    auto& Device = m_CommandQueue->GetD3DDevice();
     std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetUAV(&Device) : nullptr; });
     std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetSRV(&Device) : nullptr; });
     std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
@@ -593,7 +593,7 @@ void ExecuteKernel::OnComplete()
 
     if (m_PrintfUAV.Get())
     {
-        auto& Device = m_CommandQueue->GetDevice();
+        auto& Device = m_CommandQueue->GetD3DDevice();
         auto& ImmCtx = Device.ImmCtx();
         auto TranslationResource = m_PrintfUAV->GetUnderlyingResource(&Device);
         D3D12TranslationLayer::MappedSubresource MapRet = {};

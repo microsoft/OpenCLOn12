@@ -9,12 +9,13 @@
 class CommandQueue : public CLChildBase<CommandQueue, Device, cl_command_queue>
 {
 public:
-    CommandQueue(Device& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties);
+    CommandQueue(D3DDevice& device, Context& context, const cl_queue_properties* properties, bool synthesizedProperties);
 
     friend cl_int CL_API_CALL clGetCommandQueueInfo(cl_command_queue, cl_command_queue_info, size_t, void*, size_t*);
 
     Context& GetContext() const { return m_Context.get(); }
     Device& GetDevice() const { return m_Parent.get(); }
+    D3DDevice &GetD3DDevice() const { return m_D3DDevice; }
 
     void Flush(TaskPoolLock const&, bool flushDevice);
     void QueueTask(Task*, TaskPoolLock const&);
@@ -28,6 +29,7 @@ public:
 
 protected:
     Context::ref_int m_Context;
+    D3DDevice &m_D3DDevice;
 
     std::deque<Task::ref_ptr> m_QueuedTasks;
     std::vector<Task::ref_ptr_int> m_OutstandingTasks;

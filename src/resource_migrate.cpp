@@ -12,16 +12,14 @@ class CopyCrossAdapter : public Task
 {
     Resource& m_Resource;
     unique_comptr<ID3D12Resource> m_CrossAdapterBuffer;
-    Device& m_Device;
     ImmCtx& m_ImmCtx;
     bool m_ToCrossAdapter;
 public:
-    CopyCrossAdapter(Context& Context, Resource& Resource, unique_comptr<ID3D12Resource> CrossAdapterBuffer, Device& Device, bool ToCrossAdapter)
+    CopyCrossAdapter(Context& Context, Resource& Resource, unique_comptr<ID3D12Resource> CrossAdapterBuffer, D3DDevice& Device, bool ToCrossAdapter)
         : Task(Context, Device)
         , m_Resource(Resource)
         , m_CrossAdapterBuffer(std::move(CrossAdapterBuffer))
-        , m_Device(Device)
-        , m_ImmCtx(Device.ImmCtx())
+        , m_ImmCtx(m_D3DDevice->ImmCtx())
         , m_ToCrossAdapter(ToCrossAdapter)
     {
     }
@@ -31,15 +29,15 @@ public:
     {
         if (!m_ToCrossAdapter)
         {
-            m_Resource.SetActiveDevice(&m_Device);
+            m_Resource.SetActiveDevice(m_D3DDevice);
         }
 
         m_ImmCtx.GetResourceStateManager().TransitionResource(
-            m_Resource.GetUnderlyingResource(&m_Device),
+            m_Resource.GetUnderlyingResource(m_D3DDevice),
             m_ToCrossAdapter ? D3D12_RESOURCE_STATE_COPY_SOURCE : D3D12_RESOURCE_STATE_COPY_DEST);
         m_ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
 
-        ID3D12Resource* CLResource = m_Resource.GetUnderlyingResource(&m_Device)->GetUnderlyingResource();
+        ID3D12Resource* CLResource = m_Resource.GetUnderlyingResource(m_D3DDevice)->GetUnderlyingResource();
         if (m_Resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
             ID3D12Resource* Source = m_ToCrossAdapter ? CLResource : m_CrossAdapterBuffer.get();
@@ -48,7 +46,7 @@ public:
         }
         else
         {
-            auto TransRes = m_Resource.GetUnderlyingResource(&m_Device);
+            auto TransRes = m_Resource.GetUnderlyingResource(m_D3DDevice);
             UINT NumSubresources = TransRes->NumSubresources();
             D3D12_TEXTURE_COPY_LOCATION Buffer, Image;
             Buffer.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
@@ -70,7 +68,7 @@ public:
     }
 };
 
-void Resource::EnqueueMigrateResource(Device* newDevice, Task* triggeringTask, cl_mem_migration_flags flags)
+void Resource::EnqueueMigrateResource(D3DDevice* newDevice, Task* triggeringTask, cl_mem_migration_flags flags)
 {
     if (m_ParentBuffer.Get())
     {
@@ -146,7 +144,7 @@ class UploadInitialData : public Task
 {
     Resource& m_Resource;
 public:
-    UploadInitialData(Context& Context, Resource& Resource, Device& Device)
+    UploadInitialData(Context& Context, Resource& Resource, D3DDevice& Device)
         : Task(Context, Device)
         , m_Resource(Resource)
     {
@@ -222,7 +220,7 @@ public:
     {
         for (auto& res : m_Resources)
         {
-            res->EnqueueMigrateResource(&m_CommandQueue->GetDevice(), this, m_Flags);
+            res->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, m_Flags);
         }
     }
     void RecordImpl() final {}

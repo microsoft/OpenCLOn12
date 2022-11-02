@@ -4,6 +4,11 @@
 #include "formats.hpp"
 #include "task.hpp"
 
+#include <mesa_glinterop.h>
+#include <d3d12_interop_public.h>
+
+#include "gl_tokens.hpp"
+
 constexpr cl_mem_flags ValidMemFlags =
     CL_MEM_READ_WRITE |
     CL_MEM_WRITE_ONLY |
@@ -165,6 +170,7 @@ clCreateBufferWithProperties(cl_context   context_,
     }
 
     D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_bManageResidency = true;
     Args.m_appDesc.m_Subresources = 1;
     Args.m_appDesc.m_SubresourcesPerPlane = 1;
     Args.m_appDesc.m_NonOpaquePlaneCount = 1;
@@ -180,7 +186,7 @@ clCreateBufferWithProperties(cl_context   context_,
     Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
     Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE | D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
     Args.m_desc12 = CD3DX12_RESOURCE_DESC::Buffer(D3D12TranslationLayer::Align<size_t>(size, 4), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
+    Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT);
     ModifyResourceArgsForMemFlags(Args, flags);
 
     try
@@ -290,6 +296,7 @@ clCreateImageWithProperties(cl_context              context_,
 
     auto image_desc_copy = *image_desc;
     D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_bManageResidency = true;
     switch (image_desc->image_type)
     {
     case CL_MEM_OBJECT_BUFFER:
@@ -452,7 +459,7 @@ clCreateImageWithProperties(cl_context              context_,
         {
             Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
             Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE;
-            Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT);
+            Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT);
             ModifyResourceArgsForMemFlags(Args, flags);
 
             Args.m_desc12.Dimension = Args.m_appDesc.m_resourceDimension;
@@ -606,7 +613,7 @@ clGetSupportedImageFormats(cl_context           context_,
             for (cl_uint device = 0; device < context.GetDeviceCount(); ++device)
             {
                 D3D12_FEATURE_DATA_FORMAT_SUPPORT Support = { (DXGI_FORMAT)i };
-                if (FAILED(context.GetDevice(device).GetDevice()->CheckFeatureSupport(
+                if (FAILED(context.GetD3DDevice(device).GetDevice()->CheckFeatureSupport(
                     D3D12_FEATURE_FORMAT_SUPPORT, &Support, sizeof(Support))))
                 {
                     return false;
@@ -659,7 +666,7 @@ clGetSupportedImageFormats(cl_context           context_,
         if (!IsSupported)
             continue;
 
-        cl_image_format format = GetCLImageFormatForDXGIFormat((DXGI_FORMAT)i);
+        cl_image_format format = GetCLImageFormatForDXGIFormat((DXGI_FORMAT)i, 0);
         if (format.image_channel_data_type != 0)
         {
             if (NumFormats < num_entries && image_formats)
@@ -704,7 +711,7 @@ clGetMemObjectInfo(cl_mem           memobj,
             return RetValue(resource.m_Desc.image_width);
         auto Underlying = resource.GetActiveUnderlyingResource();
         if (!Underlying)
-            Underlying = resource.GetUnderlyingResource(&resource.m_Parent->GetDevice(0));
+            Underlying = resource.GetUnderlyingResource(&resource.m_Parent->GetD3DDevice(0));
         return RetValue((size_t)Underlying->GetResourceSize()); // TODO: GetResourceAllocationInfo instead?
     }
     case CL_MEM_HOST_PTR: return RetValue(resource.m_pHostPointer);
@@ -758,7 +765,231 @@ clGetImageInfo(cl_mem           image,
     return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
 
-auto Resource::GetUnderlyingResource(Device* device) -> UnderlyingResource*
+template <typename TErrFunc>
+bool ValidateMemFlagsGL(cl_mem_flags flags, TErrFunc&& ReportError)
+{
+    if (flags & ~ValidMemFlags)
+    {
+        ReportError("Unknown flags specified.", CL_INVALID_VALUE);
+        return false;
+    }
+    if (!IsZeroOrPow2(flags & DeviceReadWriteFlagsMask))
+    {
+        ReportError("Only one of CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY, and CL_MEM_READ_ONLY can be specified.", CL_INVALID_VALUE);
+        return false;
+    }
+    if (flags & ~DeviceReadWriteFlagsMask)
+    {
+        ReportError("Only CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY, and CL_MEM_READ_WRITE are valid for GL interop.", CL_INVALID_VALUE);
+        return false;
+    }
+
+    return true;
+}
+
+static unsigned ConvertAccessFlags(cl_mem_flags flags)
+{
+    switch (flags)
+    {
+    case CL_MEM_READ_WRITE: return MESA_GLINTEROP_ACCESS_READ_WRITE;
+    case CL_MEM_READ_ONLY: return MESA_GLINTEROP_ACCESS_READ_ONLY;
+    case CL_MEM_WRITE_ONLY: return MESA_GLINTEROP_ACCESS_WRITE_ONLY;
+    default: return 0;
+    }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateFromGLBuffer(cl_context     context_,
+                     cl_mem_flags   flags,
+                     cl_GLuint      bufobj,
+                     cl_int *       errcode_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context& context = *static_cast<Context*>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+
+    auto glManager = context.GetGLManager();
+    if (!glManager)
+    {
+        return ReportError("Context was not created from a GL context", CL_INVALID_CONTEXT);
+    }
+
+    if (!ValidateMemFlagsGL(flags, ReportError))
+    {
+        return nullptr;
+    }
+
+    mesa_glinterop_export_in glData = {};
+    glData.access = ConvertAccessFlags(flags);
+    glData.target = GL_ARRAY_BUFFER;
+    glData.obj = bufobj;
+
+    try
+    {
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        auto res = Resource::ImportGLResource(context, flags, glData, errcode_ret);
+        if (!res)
+            return ReportError("Failed to import.", *errcode_ret);
+        return res;
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (_com_error& e)
+    {
+        if (e.Error() == E_INVALIDARG)
+            return ReportError("Invalid buffer.", CL_INVALID_GL_OBJECT);
+        return ReportError(nullptr, CL_OUT_OF_RESOURCES);
+    }
+    catch (std::exception& e)
+    {
+        return ReportError(e.what(), CL_OUT_OF_RESOURCES);
+    }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateFromGLTexture(cl_context      context_,
+                      cl_mem_flags    flags,
+                      cl_GLenum       target,
+                      cl_GLint        miplevel,
+                      cl_GLuint       texture,
+                      cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_2
+{
+    if (!context_)
+    {
+        if (errcode_ret) *errcode_ret = CL_INVALID_CONTEXT;
+        return nullptr;
+    }
+    Context& context = *static_cast<Context*>(context_);
+    auto ReportError = context.GetErrorReporter(errcode_ret);
+
+    auto glManager = context.GetGLManager();
+    if (!glManager)
+    {
+        return ReportError("Context was not created from a GL context", CL_INVALID_CONTEXT);
+    }
+
+    if (!ValidateMemFlagsGL(flags, ReportError))
+    {
+        return nullptr;
+    }
+
+    mesa_glinterop_export_in glData = {};
+    glData.access = ConvertAccessFlags(flags);
+    glData.target = target;
+    glData.obj = texture;
+    glData.miplevel = miplevel;
+
+    try
+    {
+        if (errcode_ret) *errcode_ret = CL_SUCCESS;
+        auto res = Resource::ImportGLResource(context, flags, glData, errcode_ret);
+        if (!res)
+            return ReportError("Failed to import.", *errcode_ret);
+        return res;
+    }
+    catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
+    catch (_com_error& e)
+    {
+        if (e.Error() == E_INVALIDARG)
+            return ReportError("Invalid texture.", CL_INVALID_GL_OBJECT);
+        return ReportError(nullptr, CL_OUT_OF_RESOURCES);
+    }
+    catch (std::exception& e)
+    {
+        return ReportError(e.what(), CL_OUT_OF_RESOURCES);
+    }
+}
+
+extern CL_API_ENTRY cl_mem CL_API_CALL
+clCreateFromGLRenderbuffer(cl_context   context,
+                           cl_mem_flags flags,
+                           cl_GLuint    renderbuffer,
+                           cl_int *     errcode_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    return clCreateFromGLTexture(context, flags, GL_RENDERBUFFER, 0, renderbuffer, errcode_ret);
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetGLObjectInfo(cl_mem                memobj,
+                  cl_gl_object_type *   gl_object_type,
+                  cl_GLuint *           gl_object_name) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!memobj)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+
+    Resource& resource = *static_cast<Resource*>(memobj);
+    if (!resource.m_GLInfo)
+    {
+        return resource.m_Parent->GetErrorReporter()("Memory object was not imported from GL", CL_INVALID_GL_OBJECT);
+    }
+
+    if (!gl_object_type || !gl_object_name)
+    {
+        return resource.m_Parent->GetErrorReporter()("Null output pointers passed", CL_INVALID_VALUE);
+    }
+    *gl_object_type = resource.m_GLInfo->ObjectType;
+    *gl_object_name = resource.m_GLInfo->ObjectName;
+    return CL_SUCCESS;
+}
+
+extern CL_API_ENTRY cl_int CL_API_CALL
+clGetGLTextureInfo(cl_mem               memobj,
+                   cl_gl_texture_info   param_name,
+                   size_t               param_value_size,
+                   void *               param_value,
+                   size_t *             param_value_size_ret) CL_API_SUFFIX__VERSION_1_0
+{
+    if (!memobj)
+    {
+        return CL_INVALID_MEM_OBJECT;
+    }
+
+    Resource& resource = *static_cast<Resource*>(memobj);
+    if (!resource.m_GLInfo)
+    {
+        return resource.m_Parent->GetErrorReporter()("Memory object was not imported from GL", CL_INVALID_GL_OBJECT);
+    }
+    auto RetValue = [&](auto&& param)
+    {
+        return CopyOutParameter(param, param_value_size, param_value, param_value_size_ret);
+    };
+
+    switch (param_name)
+    {
+    case CL_GL_TEXTURE_TARGET: return RetValue(resource.m_GLInfo->TextureTarget);
+    case CL_GL_MIPMAP_LEVEL: return RetValue(resource.m_GLInfo->MipLevel);
+    }
+    return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
+}
+
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
+clCreateFromGLTexture2D(cl_context      context,
+                        cl_mem_flags    flags,
+                        cl_GLenum       target,
+                        cl_GLint        miplevel,
+                        cl_GLuint       texture,
+                        cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clCreateFromGLTexture(context, flags, target, miplevel, texture, errcode_ret);
+}
+
+extern CL_API_ENTRY CL_API_PREFIX__VERSION_1_1_DEPRECATED cl_mem CL_API_CALL
+clCreateFromGLTexture3D(cl_context      context,
+                        cl_mem_flags    flags,
+                        cl_GLenum       target,
+                        cl_GLint        miplevel,
+                        cl_GLuint       texture,
+                        cl_int *        errcode_ret) CL_API_SUFFIX__VERSION_1_1_DEPRECATED
+{
+    return clCreateFromGLTexture(context, flags, target, miplevel, texture, errcode_ret);
+}
+
+auto Resource::GetUnderlyingResource(D3DDevice* device) -> UnderlyingResource*
 {
     std::lock_guard Lock(m_MultiDeviceLock);
     auto& Entry = m_UnderlyingMap[device];
@@ -788,21 +1019,21 @@ auto Resource::GetUnderlyingResource(Device* device) -> UnderlyingResource*
     return Entry.get();
 }
 
-void Resource::SetActiveDevice(Device* device)
+void Resource::SetActiveDevice(D3DDevice* device)
 {
     std::lock_guard Lock(m_MultiDeviceLock);
     m_ActiveUnderlying = GetUnderlyingResource(device);
     m_CurrentActiveDevice = device;
 }
 
-D3D12TranslationLayer::SRV& Resource::GetSRV(Device* device)
+D3D12TranslationLayer::SRV& Resource::GetSRV(D3DDevice* device)
 {
     auto iter = m_SRVs.find(device);
     assert(iter != m_SRVs.end());
     return iter->second;
 }
 
-D3D12TranslationLayer::UAV& Resource::GetUAV(Device* device)
+D3D12TranslationLayer::UAV& Resource::GetUAV(D3DDevice* device)
 {
     auto iter = m_UAVs.find(device);
     assert(iter != m_UAVs.end());
@@ -811,7 +1042,7 @@ D3D12TranslationLayer::UAV& Resource::GetUAV(Device* device)
 
 Resource* Resource::CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags)
 {
-    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags);
+    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags, std::nullopt);
 }
 
 Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags)
@@ -822,7 +1053,7 @@ Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_regi
 
 Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
 {
-    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags);
+    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags, std::nullopt);
 }
 
 Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
@@ -830,12 +1061,191 @@ Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_f
     return new Resource(ParentBuffer, 0, image_desc.image_width, image_format, image_desc.image_type, flags);
 }
 
-Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags)
+static cl_mem_object_type CLTypeFromGLType(cl_GLuint target)
+{
+    switch (target)
+    {
+    case GL_ARRAY_BUFFER: return CL_MEM_OBJECT_BUFFER;
+    case GL_TEXTURE_1D: return CL_MEM_OBJECT_IMAGE1D;
+    case GL_TEXTURE_1D_ARRAY: return CL_MEM_OBJECT_IMAGE1D_ARRAY;
+    case GL_TEXTURE_BUFFER: return CL_MEM_OBJECT_IMAGE1D_BUFFER;
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case GL_RENDERBUFFER:
+    case GL_TEXTURE_RECTANGLE:
+    case GL_TEXTURE_2D: return CL_MEM_OBJECT_IMAGE2D;
+    case GL_TEXTURE_2D_ARRAY: return CL_MEM_OBJECT_IMAGE2D_ARRAY;
+    case GL_TEXTURE_3D: return CL_MEM_OBJECT_IMAGE3D;
+    default: return 0;
+    }
+}
+
+static cl_gl_object_type CLGLTypeFromGLType(cl_GLuint target)
+{
+    switch (target)
+    {
+    case GL_ARRAY_BUFFER: return CL_GL_OBJECT_BUFFER;
+    case GL_TEXTURE_1D: return CL_GL_OBJECT_TEXTURE1D;
+    case GL_TEXTURE_1D_ARRAY: return CL_GL_OBJECT_TEXTURE1D_ARRAY;
+    case GL_TEXTURE_BUFFER: return CL_GL_OBJECT_TEXTURE_BUFFER;
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case GL_TEXTURE_RECTANGLE:
+    case GL_TEXTURE_2D: return CL_GL_OBJECT_TEXTURE2D;
+    case GL_RENDERBUFFER: return CL_GL_OBJECT_RENDERBUFFER;
+    case GL_TEXTURE_2D_ARRAY: return CL_GL_OBJECT_TEXTURE2D_ARRAY;
+    case GL_TEXTURE_3D: return CL_GL_OBJECT_TEXTURE3D;
+    default: return 0;
+    }
+}
+
+static uint32_t CubeFaceArrayOffset(cl_GLuint target)
+{
+    switch (target)
+    {
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+        return target - GL_TEXTURE_CUBE_MAP_POSITIVE_X;
+    default: return 0;
+    }
+}
+
+Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in, cl_int *error)
+{
+    in.version = 1;
+
+    mesa_glinterop_export_out out = {};
+    out.version = 1;
+
+    d3d12_interop_resource_info d3d12 = {};
+    in.out_driver_data = &d3d12;
+    in.out_driver_data_size = sizeof(d3d12);
+
+    auto glManager = Parent.GetGLManager();
+    switch (glManager->GetResourceData(in, out))
+    {
+    case MESA_GLINTEROP_SUCCESS:
+        if (!d3d12.resource)
+        {
+            if (error) *error = CL_INVALID_GL_OBJECT;
+            return nullptr;
+        }
+        break;
+    case MESA_GLINTEROP_INVALID_MIP_LEVEL:
+        if (error) *error = CL_INVALID_MIP_LEVEL;
+        return nullptr;
+    default:
+        if (error) *error = CL_INVALID_GL_OBJECT;
+        return nullptr;
+    }
+
+    D3D12TranslationLayer::ResourceCreationArgs Args = {};
+    Args.m_bManageResidency = true;
+    Args.m_desc12 = d3d12.resource->GetDesc();
+    Args.m_appDesc.m_ArraySize = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+        1 : Args.m_desc12.DepthOrArraySize;
+    Args.m_appDesc.m_Depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+        Args.m_desc12.DepthOrArraySize : 1;
+    Args.m_appDesc.m_Width = (UINT)Args.m_desc12.Width;
+    Args.m_appDesc.m_Height = Args.m_desc12.Height;
+    Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_UNORDERED_ACCESS | D3D12TranslationLayer::RESOURCE_BIND_SHADER_RESOURCE;
+    if (Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+        Args.m_appDesc.m_bindFlags |= D3D12TranslationLayer::RESOURCE_BIND_CONSTANT_BUFFER;
+    Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_NONE;
+    Args.m_appDesc.m_resourceDimension = Args.m_desc12.Dimension;
+    Args.m_appDesc.m_Format = Args.m_desc12.Format;
+    Args.m_appDesc.m_MipLevels = (UINT8)Args.m_desc12.MipLevels;
+    Args.m_appDesc.m_NonOpaquePlaneCount = 1;
+    Args.m_appDesc.m_Samples = Args.m_desc12.SampleDesc.Count;
+    Args.m_appDesc.m_Quality = Args.m_desc12.SampleDesc.Quality;
+    Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DEFAULT;
+    Args.m_appDesc.m_Subresources = Args.m_appDesc.m_SubresourcesPerPlane =
+        Args.m_appDesc.m_MipLevels * Args.m_appDesc.m_ArraySize;
+    d3d12.resource->GetHeapProperties(&Args.m_heapDesc.Properties, &Args.m_heapDesc.Flags);
+    Args.m_heapDesc.Flags |= D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT;
+    Args.m_PrivateCreateFn = [res = ComPtr<ID3D12Resource>(d3d12.resource)](D3D12TranslationLayer::ResourceCreationArgs const &, ID3D12SwapChainAssistant *, ID3D12Resource **ppOut) mutable
+    {
+        *ppOut = res.Detach();
+    };
+
+    cl_image_desc imageDesc = {};
+    imageDesc.image_array_size = out.view_numlayers ?
+        out.view_numlayers : Args.m_appDesc.m_ArraySize - (out.view_minlayer + CubeFaceArrayOffset(in.target));
+    imageDesc.image_depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
+        (Args.m_desc12.DepthOrArraySize >> out.view_minlevel) : 1;
+    imageDesc.image_height = Args.m_desc12.Height >> out.view_minlevel;
+    imageDesc.image_width = Args.m_desc12.Width >> out.view_minlevel;
+    imageDesc.num_mip_levels = out.view_numlevels ? 
+        out.view_numlevels : Args.m_appDesc.m_MipLevels - out.view_minlevel;
+    imageDesc.num_samples = Args.m_desc12.SampleDesc.Count;
+    imageDesc.image_type = CLTypeFromGLType(in.target);
+    if (!imageDesc.image_type)
+    {
+        // Mesa accepts full cubes and cube arrays, which complicate things.
+        // Reject types that are not in our list.
+        if (error) *error = CL_INVALID_GL_OBJECT;
+        return nullptr;
+    }
+
+    Resource::GLInfo glInfo = {};
+    glInfo.TextureTarget = in.target;
+    glInfo.ObjectType = CLGLTypeFromGLType(in.target);
+    glInfo.MipLevel = in.miplevel;
+    glInfo.ObjectName = in.obj;
+    glInfo.BufferOffset = d3d12.buffer_offset;
+    glInfo.BaseArray = out.view_minlayer + CubeFaceArrayOffset(in.target);
+    if (Args.ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
+    {
+        Resource::ref_ptr buffer(new Resource(Parent, Args, nullptr, out.buf_size, flags, glInfo), adopt_ref{});
+        if (in.target == GL_TEXTURE_BUFFER)
+        {
+            cl_image_format format = GetCLImageFormatForGLFormat(out.internal_format);
+            if (format.image_channel_data_type == 0)
+            {
+                // Couldn't infer a CL format to use
+                if (error) *error = CL_INVALID_IMAGE_FORMAT_DESCRIPTOR;
+                return nullptr;
+            }
+            DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(format);
+            UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
+            return new Resource(*buffer.Get(), 0, out.buf_size / FormatByteSize, format, CL_MEM_OBJECT_IMAGE1D_BUFFER, flags);
+        }
+        return buffer.Detach();
+    }
+    else
+    {
+        cl_image_format format = GetCLImageFormatForDXGIFormat(Args.m_desc12.Format, out.internal_format);
+        if (format.image_channel_data_type == 0)
+        {
+            // Couldn't infer a CL format to use
+            if (error) *error = CL_INVALID_IMAGE_FORMAT_DESCRIPTOR;
+            return nullptr;
+        }
+
+        return new Resource(Parent, Args, nullptr, format, imageDesc, flags, glInfo);
+    }
+}
+
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo)
     : CLChildBase(Parent)
     , m_Flags(flags)
     , m_pHostPointer(pHostPointer)
     , m_Desc(GetBufferDesc(size, CL_MEM_OBJECT_BUFFER))
     , m_CreationArgs(CreationArgs)
+    , m_GLInfo(glInfo)
+    , m_Offset(glInfo.has_value() ? glInfo->BufferOffset : 0)
 {
     if (pHostPointer)
     {
@@ -860,14 +1270,15 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     , m_Flags(flags)
     , m_ParentBuffer(&ParentBuffer)
     , m_Format(image_format)
-    , m_Offset(offset)
+    , m_Offset(offset + ParentBuffer.m_Offset)
     , m_Desc(GetBufferDesc(size, type))
     , m_CreationArgs(ParentBuffer.m_CreationArgs)
+    , m_GLInfo(ParentBuffer.m_GLInfo)
 {
     if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
     {
         DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
-        assert(m_Offset == 0);
+        UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
 
         {
             auto& UAVDescWrapper = m_UAVDesc;
@@ -877,7 +1288,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             UAVDesc.Buffer.CounterOffsetInBytes = 0;
             UAVDesc.Buffer.StructureByteStride = 0;
             UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-            UAVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+            UAVDesc.Buffer.FirstElement = m_Offset / FormatByteSize;
             UAVDesc.Buffer.NumElements = (UINT)size;
 
             UAVDescWrapper.m_D3D11UAVFlags = 0;
@@ -889,7 +1300,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             SRVDesc.Buffer.StructureByteStride = 0;
             SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-            SRVDesc.Buffer.FirstElement = 0; // m_Offset / FormatByteSize;
+            SRVDesc.Buffer.FirstElement = m_Offset / FormatByteSize;
             SRVDesc.Buffer.NumElements = (UINT)size;
         }
     }
@@ -908,13 +1319,14 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     }
 }
 
-Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo)
     : CLChildBase(Parent)
     , m_pHostPointer(pHostPointer)
     , m_Format(image_format)
     , m_Desc(image_desc)
     , m_Flags(flags)
     , m_CreationArgs(Args)
+    , m_GLInfo(glInfo)
 {
     if (pHostPointer)
     {
@@ -926,6 +1338,9 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         memcpy(m_InitialData.get(), pHostPointer, size);
     }
 
+    UINT FirstArraySlice = glInfo.has_value() ? glInfo->BaseArray : 0;
+    UINT MostDetailedMip = glInfo.has_value() ? glInfo->MipLevel : 0;
+
     DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
     {
         auto& UAVDescWrapper = m_UAVDesc;
@@ -934,32 +1349,25 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         switch (image_desc.image_type)
         {
         case CL_MEM_OBJECT_IMAGE1D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
-            UAVDesc.Texture1D.MipSlice = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE1D_ARRAY:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
-            UAVDesc.Texture1DArray.FirstArraySlice = 0;
-            UAVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
-            UAVDesc.Texture1DArray.MipSlice = 0;
+            UAVDesc.Texture1DArray.FirstArraySlice = FirstArraySlice;
+            UAVDesc.Texture1DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
+            UAVDesc.Texture1DArray.MipSlice = MostDetailedMip;
             break;
         case CL_MEM_OBJECT_IMAGE2D:
-            UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-            UAVDesc.Texture2D.MipSlice = 0;
-            UAVDesc.Texture2D.PlaneSlice = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE2D_ARRAY:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
-            UAVDesc.Texture2DArray.FirstArraySlice = 0;
-            UAVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
-            UAVDesc.Texture2DArray.MipSlice = 0;
+            UAVDesc.Texture2DArray.FirstArraySlice = FirstArraySlice;
+            UAVDesc.Texture2DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
+            UAVDesc.Texture2DArray.MipSlice = MostDetailedMip;
             UAVDesc.Texture2DArray.PlaneSlice = 0;
             break;
         case CL_MEM_OBJECT_IMAGE3D:
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
             UAVDesc.Texture3D.FirstWSlice = 0;
             UAVDesc.Texture3D.WSize = (UINT)image_desc.image_depth;
-            UAVDesc.Texture3D.MipSlice = 0;
+            UAVDesc.Texture3D.MipSlice = MostDetailedMip;
             break;
         default: assert(false);
         }
@@ -973,32 +1381,21 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         switch (image_desc.image_type)
         {
         case CL_MEM_OBJECT_IMAGE1D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-            SRVDesc.Texture1D.MipLevels = 1;
-            SRVDesc.Texture1D.MostDetailedMip = 0;
-            SRVDesc.Texture1D.ResourceMinLODClamp = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE1D_ARRAY:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
-            SRVDesc.Texture1DArray.FirstArraySlice = 0;
-            SRVDesc.Texture1DArray.ArraySize = (UINT)image_desc.image_array_size;
+            SRVDesc.Texture1DArray.FirstArraySlice = FirstArraySlice;
+            SRVDesc.Texture1DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
             SRVDesc.Texture1DArray.MipLevels = 1;
-            SRVDesc.Texture1DArray.MostDetailedMip = 0;
+            SRVDesc.Texture1DArray.MostDetailedMip = MostDetailedMip;
             SRVDesc.Texture1DArray.ResourceMinLODClamp = 0;
             break;
         case CL_MEM_OBJECT_IMAGE2D:
-            SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            SRVDesc.Texture2D.MipLevels = 1;
-            SRVDesc.Texture2D.MostDetailedMip = 0;
-            SRVDesc.Texture2D.PlaneSlice = 0;
-            SRVDesc.Texture2D.ResourceMinLODClamp = 0;
-            break;
         case CL_MEM_OBJECT_IMAGE2D_ARRAY:
             SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-            SRVDesc.Texture2DArray.FirstArraySlice = 0;
-            SRVDesc.Texture2DArray.ArraySize = (UINT)image_desc.image_array_size;
+            SRVDesc.Texture2DArray.FirstArraySlice = FirstArraySlice;
+            SRVDesc.Texture2DArray.ArraySize = std::max((UINT)image_desc.image_array_size, 1u);
             SRVDesc.Texture2DArray.MipLevels = 1;
-            SRVDesc.Texture2DArray.MostDetailedMip = 0;
+            SRVDesc.Texture2DArray.MostDetailedMip = MostDetailedMip;
             SRVDesc.Texture2DArray.PlaneSlice = 0;
             SRVDesc.Texture2DArray.ResourceMinLODClamp = 0;
             break;

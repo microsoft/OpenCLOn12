@@ -22,7 +22,7 @@ clCreateKernel(cl_program      program_,
     {
         std::lock_guard Lock(program.m_Lock);
         cl_uint DeviceCountWithProgram = 0, DeviceCountWithKernel = 0;
-        for (auto& Device : program.m_AssociatedDevices)
+        for (auto& [Device, _] : program.m_AssociatedDevices)
         {
             auto& BuildData = program.m_BuildData[Device.Get()];
             if (!BuildData ||
@@ -111,7 +111,7 @@ clCreateKernelsInProgram(cl_program     program_,
 
         {
             std::lock_guard Lock(program.m_Lock);
-            for (auto& Device : program.m_AssociatedDevices)
+            for (auto& [Device, _] : program.m_AssociatedDevices)
             {
                 auto& BuildData = program.m_BuildData[Device.Get()];
                 if (!BuildData ||

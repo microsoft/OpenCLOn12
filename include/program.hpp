@@ -21,11 +21,11 @@ public:
 
     Program(Context& Parent, std::string Source);
     Program(Context& Parent, std::vector<std::byte> IL);
-    Program(Context& Parent, std::vector<Device::ref_ptr_int> Devices);
+    Program(Context& Parent, std::vector<D3DDeviceAndRef> Devices);
     using Callback = void(CL_CALLBACK*)(cl_program, void*);
 
-    cl_int Build(std::vector<Device::ref_ptr_int> Devices, const char* options, Callback pfn_notify, void* user_data);
-    cl_int Compile(std::vector<Device::ref_ptr_int> Devices, const char* options, cl_uint num_input_headers, const cl_program *input_headers, const char**header_include_names, Callback pfn_notify, void* user_data);
+    cl_int Build(std::vector<D3DDeviceAndRef> Devices, const char* options, Callback pfn_notify, void* user_data);
+    cl_int Compile(std::vector<D3DDeviceAndRef> Devices, const char* options, cl_uint num_input_headers, const cl_program *input_headers, const char**header_include_names, Callback pfn_notify, void* user_data);
     cl_int Link(const char* options, cl_uint num_input_programs, const cl_program* input_programs, Callback pfn_notify, void* user_data);
 
     void StoreBinary(Device* Device, unique_spirv OwnedBinary, cl_program_binary_type Type);
@@ -118,6 +118,7 @@ private:
     struct PerDeviceData
     {
         Device* m_Device;
+        D3DDevice *m_D3DDevice;
         cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
         std::string m_BuildLog;
         unique_spirv m_OwnedBinary;
@@ -135,7 +136,7 @@ private:
 
     friend struct Loggers;
 
-    std::vector<Device::ref_ptr_int> m_AssociatedDevices;
+    std::vector<D3DDeviceAndRef> m_AssociatedDevices;
 
     struct CommonOptions
     {
@@ -161,10 +162,10 @@ private:
     struct BuildArgs
     {
         CommonOptions Common;
-        std::vector<Device::ref_ptr_int> BinaryBuildDevices;
+        std::vector<D3DDeviceAndRef> BinaryBuildDevices;
     };
 
-    void AddBuiltinOptions(std::vector<Device::ref_ptr_int> const& devices, CommonOptions& optionsStruct);
+    void AddBuiltinOptions(std::vector<D3DDeviceAndRef> const& devices, CommonOptions& optionsStruct);
     cl_int ParseOptions(const char* optionsStr, CommonOptions& optionsStruct, bool SupportCompilerOptions, bool SupportLinkerOptions);
     cl_int BuildImpl(BuildArgs const& Args);
     cl_int CompileImpl(CompileArgs const& Args);

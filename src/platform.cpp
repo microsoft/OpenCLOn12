@@ -58,6 +58,8 @@ clGetPlatformInfo(cl_platform_id   platform,
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_byte_addressable_store" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_il_program" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_3d_image_writes" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_gl_sharing" },
+            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_gl_event" },
         };
         return CopyOutParameter(extensions, param_value_size, param_value, param_value_size_ret);
     }
@@ -173,17 +175,6 @@ TaskPoolLock Platform::GetTaskPoolLock()
     return lock;
 }
 
-void Platform::FlushAllDevices(TaskPoolLock const& Lock)
-{
-    for (auto& device : m_Devices)
-    {
-        if (device->GetDevice())
-        {
-            device->Flush(Lock);
-        }
-    }
-}
-
 void Platform::DeviceInit()
 {
     std::lock_guard Lock(m_ModuleLock);
@@ -276,16 +267,14 @@ void Platform::UnloadCompiler()
 
 bool Platform::AnyD3DDevicesExist() const noexcept
 {
-    return std::any_of(m_Devices.begin(), m_Devices.end(), [](auto& dev) { return dev->GetDevice(); });
+    return std::any_of(m_Devices.begin(), m_Devices.end(), 
+                       [](std::unique_ptr<Device> const& dev) { return dev->HasD3DDevice(); });
 }
 
 void Platform::CloseCaches()
 {
     for (auto& device : m_Devices)
     {
-        if (device->GetDevice())
-        {
-            device->GetShaderCache().Close();
-        }
+        device->CloseCaches();
     }
 }

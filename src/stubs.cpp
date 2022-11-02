@@ -42,7 +42,7 @@ clSetDefaultDeviceCommandQueue(cl_context           context_,
         return ReportError("Device must not be null", CL_INVALID_DEVICE);
     }
     Device& device = *static_cast<Device*>(device_);
-    if (!context.ValidDeviceForContext(device))
+    if (!context.D3DDeviceForContext(device))
     {
         return ReportError("Device not valid for this context", CL_INVALID_DEVICE);
     }
@@ -131,7 +131,7 @@ clCreateProgramWithBuiltInKernels(cl_context            context_,
         {
             return ReportError("Device list must not contain null entries", CL_INVALID_DEVICE);
         }
-        if (!context.ValidDeviceForContext(*static_cast<Device*>(device_list[i])))
+        if (!context.D3DDeviceForContext(*static_cast<Device*>(device_list[i])))
         {
             return ReportError("Device list contains device that's invalid for context", CL_INVALID_DEVICE);
         }
@@ -328,20 +328,6 @@ clEnqueueSVMMigrateMem(cl_command_queue         command_queue,
         return CL_INVALID_COMMAND_QUEUE;
     }
     return static_cast<CommandQueue*>(command_queue)->GetContext().GetErrorReporter()("Platform does not support SVM", CL_INVALID_OPERATION);
-}
-
-/* Extension function access
- *
- * Returns the extension function address for the given function name,
- * or NULL if a valid function can not be found.  The client must
- * check to make sure the address is not NULL, before using or
- * calling the returned function address.
- */
-extern CL_API_ENTRY void * CL_API_CALL
-clGetExtensionFunctionAddressForPlatform(cl_platform_id platform,
-    const char *   func_name) CL_API_SUFFIX__VERSION_1_2
-{
-    return nullptr;
 }
 
 /* Deprecated OpenCL 1.1 APIs */

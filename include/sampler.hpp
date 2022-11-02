@@ -15,11 +15,11 @@ public:
     };
     Sampler(Context& Parent, Desc const& desc, const cl_sampler_properties *properties);
 
-    D3D12TranslationLayer::Sampler& GetUnderlying(Device*);
+    D3D12TranslationLayer::Sampler& GetUnderlying(D3DDevice*);
 
     const Desc m_Desc;
     const std::vector<cl_sampler_properties> m_Properties;
 private:
     std::mutex m_Lock;
-    std::unordered_map<class Device*, D3D12TranslationLayer::Sampler> m_UnderlyingSamplers;
+    std::unordered_map<class D3DDevice*, D3D12TranslationLayer::Sampler> m_UnderlyingSamplers;
 };

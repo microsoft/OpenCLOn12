@@ -73,7 +73,7 @@ class Task : public CLChildBase<Task, Context, cl_event>
 
 public:
     struct DependencyException {};
-    friend class Device;
+    friend class D3DDevice;
     enum class State
     {
         // API-visible states (sorted in reverse order so CL_COMPLETE == CL_SUCCESS == 0)
@@ -97,9 +97,10 @@ public:
     const cl_command_type m_CommandType;
     const ::ref_ptr_int<class CommandQueue> m_CommandQueue;
     const ::ref_ptr_int<class Device> m_Device;
+    class D3DDevice *const m_D3DDevice;
 
     Task(Context& Parent, cl_command_type command_type, cl_command_queue command_queue);
-    Task(Context& Parent, Device& device);
+    Task(Context& Parent, D3DDevice& device);
     virtual ~Task();
 
     static cl_ulong TimestampToNanoseconds(cl_ulong Ticks, cl_ulong Frequency);
@@ -182,6 +183,7 @@ public:
         cl_uint Depth;
         cl_ushort FirstArraySlice;
         cl_ushort NumArraySlices;
+        cl_uchar FirstMipLevel;
     };
 
     MapTask(Context& Parent, cl_command_queue command_queue, Resource& resource, cl_map_flags flags, cl_command_type command, Args const& args);
