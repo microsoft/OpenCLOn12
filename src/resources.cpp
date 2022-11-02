@@ -1186,7 +1186,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     imageDesc.image_depth = Args.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D ?
         (Args.m_desc12.DepthOrArraySize >> out.view_minlevel) : 1;
     imageDesc.image_height = Args.m_desc12.Height >> out.view_minlevel;
-    imageDesc.image_width = Args.m_desc12.Width >> out.view_minlevel;
+    imageDesc.image_width = (size_t)(Args.m_desc12.Width >> out.view_minlevel);
     imageDesc.num_mip_levels = out.view_numlevels ? 
         out.view_numlevels : Args.m_appDesc.m_MipLevels - out.view_minlevel;
     imageDesc.num_samples = Args.m_desc12.SampleDesc.Count;
@@ -1204,7 +1204,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     glInfo.ObjectType = CLGLTypeFromGLType(in.target);
     glInfo.MipLevel = in.miplevel;
     glInfo.ObjectName = in.obj;
-    glInfo.BufferOffset = d3d12.buffer_offset;
+    glInfo.BufferOffset = (size_t)d3d12.buffer_offset;
     glInfo.BaseArray = out.view_minlayer + CubeFaceArrayOffset(in.target);
     if (Args.ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
     {

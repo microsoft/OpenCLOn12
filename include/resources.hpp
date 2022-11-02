@@ -37,7 +37,7 @@ public:
         cl_GLuint ObjectName;
         cl_GLenum TextureTarget;
         cl_GLint MipLevel;
-        uint64_t BufferOffset;
+        size_t BufferOffset;
         uint32_t BaseArray;
     };
     std::optional<GLInfo> m_GLInfo;
