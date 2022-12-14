@@ -259,6 +259,7 @@ clGetDeviceInfo(cl_device_id    device,
 
         return CL_INVALID_VALUE;
     }
+    catch (_com_error &) { return CL_DEVICE_NOT_AVAILABLE; }
     catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
 }
 
