@@ -342,7 +342,7 @@ D3DDevice &Device::InitD3D(ID3D12Device *pDevice, ID3D12CommandQueue *pQueue)
         m_D3DDevices.back() = new D3DDevice(*this, spD3D12Device.Get(),
                                             pQueue, m_D3D12Options, pDevice != nullptr);
     }
-    catch (...) { m_D3DDevices.pop_back(); }
+    catch (...) { m_D3DDevices.pop_back(); throw; }
 
     g_Platform->DeviceInit();
 
