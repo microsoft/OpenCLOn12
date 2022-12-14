@@ -333,7 +333,7 @@ D3DDevice &Device::InitD3D(ID3D12Device *pDevice, ID3D12CommandQueue *pQueue)
     ComPtr<ID3D12Device> spD3D12Device = pDevice;
     if (!pDevice)
     {
-        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spD3D12Device)));
+        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&spD3D12Device)));
     }
     CacheCaps(Lock, spD3D12Device);
     m_D3DDevices.emplace_back(nullptr);
@@ -582,7 +582,7 @@ void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> 
 
     if (!spDevice)
     {
-        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&spDevice)));
+        THROW_IF_FAILED(D3D12CreateDevice(m_spAdapter.Get(), D3D_FEATURE_LEVEL_1_0_CORE, IID_PPV_ARGS(&spDevice)));
     }
     spDevice->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_Architecture, sizeof(m_Architecture));
     spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
