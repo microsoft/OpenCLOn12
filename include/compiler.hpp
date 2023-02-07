@@ -8,6 +8,8 @@
 #include <variant>
 #include <cstddef>
 
+#include <directx/d3d12.h>
+
 class Logger
 {
 protected:
@@ -160,6 +162,8 @@ public:
         bool lower_int16;
         bool support_global_work_id_offsets;
         bool support_work_group_id_offsets;
+
+        D3D_SHADER_MODEL shader_model;
     };
 
     virtual ~CompiledDxil() = default;

@@ -588,6 +588,21 @@ void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> 
     spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
     spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &m_D3D12Options4, sizeof(m_D3D12Options4));
 
+    D3D_SHADER_MODEL SMTests[] = {
+        D3D_SHADER_MODEL_6_7, D3D_SHADER_MODEL_6_6, D3D_SHADER_MODEL_6_5,
+        D3D_SHADER_MODEL_6_4, D3D_SHADER_MODEL_6_3, D3D_SHADER_MODEL_6_2,
+        D3D_SHADER_MODEL_6_1, D3D_SHADER_MODEL_6_0,
+    };
+    for (auto SM : SMTests)
+    {
+        D3D12_FEATURE_DATA_SHADER_MODEL feature = { SM };
+        if (SUCCEEDED(spDevice->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &feature, sizeof(feature))))
+        {
+            m_ShaderModel = feature.HighestShaderModel;
+            break;
+        }
+    }
+
     m_CapsValid = true;
 }
 

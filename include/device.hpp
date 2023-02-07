@@ -96,6 +96,7 @@ protected:
     D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS4 m_D3D12Options4 = {};
     D3D12_FEATURE_DATA_ARCHITECTURE m_Architecture = {};
+    D3D_SHADER_MODEL m_ShaderModel = D3D_SHADER_MODEL_6_0;
 };
 
 using D3DDeviceAndRef = std::pair<Device::ref_ptr_int, D3DDevice *>;

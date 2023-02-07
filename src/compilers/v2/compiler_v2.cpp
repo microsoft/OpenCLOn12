@@ -7,6 +7,8 @@
 #include "platform.hpp"
 #include "cache.hpp"
 
+#include <dxcapi.h>
+
 template <typename T>
 struct unique_object : public T
 {
@@ -284,6 +286,46 @@ std::unique_ptr<ProgramBinary> CompilerV2::Load(const void *data, size_t size) c
     return std::make_unique<ProgramBinaryV2>(std::move(obj));
 }
 
+static dxil_shader_model TranslateShaderModel(D3D_SHADER_MODEL sm)
+{
+    switch (sm)
+    {
+#define CASE(ver) case D3D_SHADER_MODEL_##ver: return SHADER_MODEL_##ver
+        CASE(6_0);
+        CASE(6_1);
+        CASE(6_2);
+        CASE(6_3);
+        CASE(6_4);
+        CASE(6_5);
+        CASE(6_6);
+        CASE(6_7);
+#undef CASE
+    default: return SHADER_MODEL_6_7;
+    }
+}
+
+static dxil_validator_version GetValidatorVersion(const XPlatHelpers::unique_module &dxil)
+{
+    if (!dxil)
+        return NO_DXIL_VALIDATION;
+
+    auto pfnCreateInstance = dxil.proc_address<decltype(&DxcCreateInstance)>("DxcCreateInstance");
+    ComPtr<IDxcVersionInfo> versionInfo;
+    if (!pfnCreateInstance ||
+        FAILED(pfnCreateInstance(CLSID_DxcValidator, IID_PPV_ARGS(versionInfo.ReleaseAndGetAddressOf()))))
+        return NO_DXIL_VALIDATION;
+
+    UINT32 major, minor;
+    if (FAILED(versionInfo->GetVersion(&major, &minor)))
+        return NO_DXIL_VALIDATION;
+
+    if (major == 1)
+        return (enum dxil_validator_version)(DXIL_VALIDATOR_1_0 + std::min(minor, 7u));
+    if (major > 1)
+        return DXIL_VALIDATOR_1_7;
+    return NO_DXIL_VALIDATION;
+}
+
 std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *conf, Logger const *logger) const
 {
     clc_runtime_kernel_conf conf_impl;
@@ -294,6 +336,9 @@ std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBin
         conf_impl.lower_bit_size = (conf->lower_int16 ? 16 : 0) | (conf->lower_int64 ? 64 : 0);
         conf_impl.support_global_work_id_offsets = conf->support_global_work_id_offsets;
         conf_impl.support_workgroup_id_offsets = conf->support_work_group_id_offsets;
+
+        conf_impl.max_shader_model = TranslateShaderModel(conf->shader_model);
+        conf_impl.validator_version = GetValidatorVersion(g_Platform->GetDXIL());
 
         conf_args.reserve(conf->args.size());
         for (auto& arg : conf->args)
