@@ -753,17 +753,6 @@ void ExecuteKernel::OnComplete()
                         // Pointers are 64bit
                         DataSize = 8;
                         break;
-                    case 'f':
-                    case 'F':
-                    case 'e':
-                    case 'E':
-                    case 'g':
-                    case 'G':
-                    case 'a':
-                    case 'A':
-                        // Give 8 bytes in the data stream for floats
-                        DataSize = 8;
-                        break;
                     }
                 }
 
