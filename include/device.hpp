@@ -69,6 +69,7 @@ public:
     cl_bool IsAvailable() const noexcept;
     cl_ulong GetGlobalMemSize();
     DXCoreHardwareID const& GetHardwareIds() const noexcept;
+    cl_device_type GetType() const noexcept;
     bool IsMCDM() const noexcept;
     bool IsUMA();
     bool SupportsInt16();

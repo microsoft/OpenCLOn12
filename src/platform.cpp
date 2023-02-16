@@ -163,7 +163,7 @@ cl_uint Platform::GetNumDevices() const noexcept
     return (cl_uint)m_Devices.size();
 }
 
-cl_device_id Platform::GetDevice(cl_uint i) const noexcept
+Device *Platform::GetDevice(cl_uint i) const noexcept
 {
     return m_Devices[i].get();
 }

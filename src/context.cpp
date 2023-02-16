@@ -446,10 +446,9 @@ clCreateContextFromType(const cl_context_properties * properties,
     {
         return nullptr;
     }
-    if (device_type != CL_DEVICE_TYPE_GPU &&
-        device_type != CL_DEVICE_TYPE_DEFAULT)
+    if (device_type == CL_DEVICE_TYPE_DEFAULT)
     {
-        return ReportError("This platform only supports GPUs.", CL_INVALID_DEVICE_TYPE);
+        device_type = CL_DEVICE_TYPE_GPU;
     }
 
     std::unique_ptr<GLInteropManager> glManager;
@@ -468,6 +467,10 @@ clCreateContextFromType(const cl_context_properties * properties,
     for (cl_uint i = 0; i < g_Platform->GetNumDevices(); ++i)
     {
         Device* device = static_cast<Device*>(g_Platform->GetDevice(i));
+        if (!(device->GetType() & device_type))
+        {
+            continue;
+        }
         if (!device->IsAvailable())
         {
             return ReportError("Device not available.", CL_DEVICE_NOT_AVAILABLE);
@@ -481,6 +484,11 @@ clCreateContextFromType(const cl_context_properties * properties,
             }
         }
         device_refs.emplace_back(std::make_pair(device, nullptr));
+    }
+
+    if (device_refs.size() == 0)
+    {
+        return ReportError("No devices found.", CL_DEVICE_NOT_FOUND);
     }
 
     try
