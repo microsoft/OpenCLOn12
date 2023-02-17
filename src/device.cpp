@@ -27,20 +27,28 @@ clGetDeviceIDs(cl_platform_id   platform,
     try
     {
         auto pPlatform = Platform::CastFrom(platform);
-        cl_uint NumDevices = 0;
-        if ((device_type & CL_DEVICE_TYPE_GPU) ||
-            device_type == CL_DEVICE_TYPE_DEFAULT)
+        if (device_type == CL_DEVICE_TYPE_DEFAULT)
         {
-            NumDevices += pPlatform->GetNumDevices();
+            device_type = CL_DEVICE_TYPE_GPU;
         }
-
+        
+        cl_uint NumTotalDevices = pPlatform->GetNumDevices();
+        cl_uint NumDevices = 0;
+        for (cl_uint i = 0, output = 0; i < NumTotalDevices; ++i)
+        {
+            Device *device = pPlatform->GetDevice(i);
+            if (device->GetType() & device_type)
+            {
+                NumDevices++;
+                if (output < num_entries)
+                {
+                    devices[i] = device;
+                }
+            }
+        }
         if (num_devices)
         {
             *num_devices = NumDevices;
-        }
-        for (cl_uint i = 0; i < num_entries && i < NumDevices; ++i)
-        {
-            devices[i] = pPlatform->GetDevice(i);
         }
     }
     catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
@@ -79,7 +87,7 @@ clGetDeviceInfo(cl_device_id    device,
     {
         switch (param_name)
         {
-        case CL_DEVICE_TYPE: return RetValue((cl_device_type)CL_DEVICE_TYPE_GPU);
+        case CL_DEVICE_TYPE: return RetValue(pDevice->GetType());
         case CL_DEVICE_VENDOR_ID: return RetValue(pDevice->GetHardwareIds().vendorID);
         case CL_DEVICE_MAX_COMPUTE_UNITS: return RetValue((cl_uint)1);
         case CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS: return RetValue((cl_uint)3);
@@ -392,6 +400,19 @@ cl_ulong Device::GetGlobalMemSize()
 DXCoreHardwareID const& Device::GetHardwareIds() const noexcept
 {
     return m_HWIDs;
+}
+
+cl_device_type Device::GetType() const noexcept
+{
+    if (IsMCDM())
+    {
+        return CL_DEVICE_TYPE_ACCELERATOR;
+    }
+    if (m_HWIDs.deviceID == 0x8c && m_HWIDs.vendorID == 0x1414)
+    {
+        return CL_DEVICE_TYPE_CPU;
+    }
+    return CL_DEVICE_TYPE_GPU;
 }
 
 bool Device::IsMCDM() const noexcept

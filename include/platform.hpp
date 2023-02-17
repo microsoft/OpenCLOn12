@@ -120,7 +120,7 @@ public:
     ~Platform();
 
     cl_uint GetNumDevices() const noexcept;
-    cl_device_id GetDevice(cl_uint i) const noexcept;
+    Device *GetDevice(cl_uint i) const noexcept;
     Compiler *GetCompiler();
     XPlatHelpers::unique_module const& GetDXIL();
     void UnloadCompiler();
