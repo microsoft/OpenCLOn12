@@ -501,7 +501,8 @@ void D3DDevice::ReadyTask(Task* task, TaskPoolLock const& lock)
     assert(task->m_TasksToWaitOn.empty());
 
     task->MigrateResources();
-    if (!task->m_TasksToWaitOn.empty())
+    if (!task->m_TasksToWaitOn.empty() ||
+        task->GetState() != Task::State::Submitted)
     {
         // Need to wait for resources to migrate.
         // Once the migration is done, this task will be readied for real
