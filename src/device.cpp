@@ -544,6 +544,15 @@ void D3DDevice::Flush(TaskPoolLock const&)
     m_RecordingSubmission.reset(new Submission);
 }
 
+void Device::FlushAllDevices(TaskPoolLock const& Lock)
+{
+    std::lock_guard InitLock(m_InitLock);
+    for (auto &d3dDevice : m_D3DDevices)
+    {
+        d3dDevice->Flush(Lock);
+    }
+}
+
 std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
 {
     std::lock_guard PSOCreateLock(m_PSOCreateLock);
@@ -587,13 +596,7 @@ void D3DDevice::ExecuteTasks(Submission& tasks)
         }
 
         // Enqueue another execution task if there's new items ready to go
-        for (auto& task : tasks)
-        {
-            if (task->m_D3DDevice)
-            {
-                task->m_D3DDevice->Flush(Lock);
-            }
-        }
+        g_Platform->FlushAllDevices(Lock);
     }
 }
 

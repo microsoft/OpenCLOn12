@@ -175,6 +175,14 @@ TaskPoolLock Platform::GetTaskPoolLock()
     return lock;
 }
 
+void Platform::FlushAllDevices(TaskPoolLock const& Lock)
+{
+    for (auto &device : m_Devices)
+    {
+        device->FlushAllDevices(Lock);
+    }
+}
+
 void Platform::DeviceInit()
 {
     std::lock_guard Lock(m_ModuleLock);

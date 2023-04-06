@@ -83,6 +83,7 @@ public:
 
     bool HasD3DDevice() const noexcept { return !m_D3DDevices.empty(); }
     void CloseCaches();
+    void FlushAllDevices(TaskPoolLock const& Lock);
 
 protected:
     void CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> spDevice = {});

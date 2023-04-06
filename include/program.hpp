@@ -42,6 +42,7 @@ public:
 
     struct SpecializationKey
     {
+        D3DDevice const* Device;
         union
         {
             struct
@@ -67,9 +68,9 @@ public:
                 unsigned Padding : 27;
             } SamplerArgData;
         } Args[1];
-        static std::unique_ptr<SpecializationKey> Allocate(CompiledDxil::Configuration const& conf);
+        static std::unique_ptr<SpecializationKey> Allocate(D3DDevice const* Device, CompiledDxil::Configuration const& conf);
     private:
-        SpecializationKey(CompiledDxil::Configuration const& conf);
+        SpecializationKey(D3DDevice const* Device, CompiledDxil::Configuration const& conf);
     };
     struct SpecializationKeyHash
     {
