@@ -24,14 +24,15 @@ public:
     {
     }
 
-    void MigrateResources() final {}
-    void RecordImpl() final
+    void MigrateResources() final
     {
         if (!m_ToCrossAdapter)
         {
             m_Resource.SetActiveDevice(m_D3DDevice);
         }
-
+    }
+    void RecordImpl() final
+    {
         m_ImmCtx.GetResourceStateManager().TransitionResource(
             m_Resource.GetUnderlyingResource(m_D3DDevice),
             m_ToCrossAdapter ? D3D12_RESOURCE_STATE_COPY_SOURCE : D3D12_RESOURCE_STATE_COPY_DEST);

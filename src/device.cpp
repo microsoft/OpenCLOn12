@@ -501,7 +501,8 @@ void D3DDevice::ReadyTask(Task* task, TaskPoolLock const& lock)
     assert(task->m_TasksToWaitOn.empty());
 
     task->MigrateResources();
-    if (!task->m_TasksToWaitOn.empty())
+    if (!task->m_TasksToWaitOn.empty() ||
+        task->GetState() != Task::State::Submitted)
     {
         // Need to wait for resources to migrate.
         // Once the migration is done, this task will be readied for real
@@ -541,6 +542,15 @@ void D3DDevice::Flush(TaskPoolLock const&)
     spHandler.release();
 
     m_RecordingSubmission.reset(new Submission);
+}
+
+void Device::FlushAllDevices(TaskPoolLock const& Lock)
+{
+    std::lock_guard InitLock(m_InitLock);
+    for (auto &d3dDevice : m_D3DDevices)
+    {
+        d3dDevice->Flush(Lock);
+    }
 }
 
 std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
@@ -586,13 +596,7 @@ void D3DDevice::ExecuteTasks(Submission& tasks)
         }
 
         // Enqueue another execution task if there's new items ready to go
-        for (auto& task : tasks)
-        {
-            if (task->m_D3DDevice)
-            {
-                task->m_D3DDevice->Flush(Lock);
-            }
-        }
+        g_Platform->FlushAllDevices(Lock);
     }
 }
 

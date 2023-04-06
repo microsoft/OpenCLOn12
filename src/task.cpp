@@ -502,7 +502,9 @@ void Task::AddDependencies(const cl_event* event_wait_list, cl_uint num_events_i
                 {
                     throw DependencyException {};
                 }
-                if ((cl_int)task->GetState() > CL_COMPLETE)
+                if (task->m_D3DDevice != m_D3DDevice ||
+                    task->GetState() == Task::State::Queued ||
+                    task->GetState() == Task::State::Submitted)
                 {
                     auto insertRet = task->m_TasksWaitingOnThis.insert(this);
                     if (insertRet.second)
@@ -576,9 +578,28 @@ void Task::Submit()
     FireNotifications();
 }
 
-void Task::Ready(TaskPoolLock const&)
+void Task::Ready(TaskPoolLock const& lock)
 {
     m_State = State::Ready;
+    for (auto &task : m_TasksWaitingOnThis)
+    {
+        assert(task->m_CommandQueue.Get() || task->m_D3DDevice);
+        if (task->m_D3DDevice != m_D3DDevice)
+        {
+            continue;
+        }
+
+        auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
+                                     [this](ref_ptr_int const &p) { return p.Get() == this; });
+        assert(newEnd != task->m_TasksToWaitOn.end());
+        task->m_TasksToWaitOn.erase(newEnd, task->m_TasksToWaitOn.end());
+
+        if (task->m_TasksToWaitOn.empty() &&
+            task->m_State == State::Submitted)
+        {
+            task->m_D3DDevice->ReadyTask(task.Get(), lock);
+        }
+    }
 }
 
 void Task::Started(TaskPoolLock const &)
@@ -590,7 +611,10 @@ void Task::Started(TaskPoolLock const &)
 void Task::Complete(cl_int error, TaskPoolLock const& lock)
 {
     assert(error <= 0);
-    assert(m_State != State::Complete);
+    if (m_State <= State::Complete)
+    {
+        return;
+    }
     m_State = (State)error;
 
     if (m_CommandQueue.Get())
@@ -617,8 +641,11 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
         }
     }
 
-    // Perform any on-complete type work, such as CPU copies of memory
-    OnComplete();
+    if (error >= 0)
+    {
+        // Perform any on-complete type work, such as CPU copies of memory
+        OnComplete();
+    }
 
     FireNotifications();
 
@@ -640,7 +667,11 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
 
             auto newEnd = std::remove_if(task->m_TasksToWaitOn.begin(), task->m_TasksToWaitOn.end(),
                 [this](ref_ptr_int const& p) { return p.Get() == this; });
-            assert(newEnd != task->m_TasksToWaitOn.end());
+            if (newEnd == task->m_TasksToWaitOn.end())
+            {
+                continue;
+            }
+
             task->m_TasksToWaitOn.erase(newEnd, task->m_TasksToWaitOn.end());
 
             if (task->m_TasksToWaitOn.empty() &&

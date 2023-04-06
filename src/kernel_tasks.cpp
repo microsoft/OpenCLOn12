@@ -16,17 +16,18 @@ extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 constexpr uint32_t PrintfBufferInitialData[PrintfBufferSize / sizeof(uint32_t)] = { sizeof(uint32_t) * 2, PrintfBufferSize };
 
-auto Program::SpecializationKey::Allocate(CompiledDxil::Configuration const& conf) -> std::unique_ptr<SpecializationKey>
+auto Program::SpecializationKey::Allocate(D3DDevice const* Device, CompiledDxil::Configuration const& conf) -> std::unique_ptr<SpecializationKey>
 {
     uint32_t NumAllocatedArgs = conf.args.size() ? (uint32_t)conf.args.size() - 1 : 0;
     std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(
         sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs)));
-    new (bits.get()) SpecializationKey(conf);
+    new (bits.get()) SpecializationKey(Device, conf);
     return bits;
 }
 
-Program::SpecializationKey::SpecializationKey(CompiledDxil::Configuration const& conf)
+Program::SpecializationKey::SpecializationKey(D3DDevice const* Device, CompiledDxil::Configuration const& conf)
 {
+    this->Device = Device;
     ConfigData.Bits.LocalSize[0] = conf.local_size[0];
     ConfigData.Bits.LocalSize[1] = conf.local_size[1];
     ConfigData.Bits.LocalSize[2] = conf.local_size[2];
@@ -61,6 +62,7 @@ Program::SpecializationKey::SpecializationKey(CompiledDxil::Configuration const&
 size_t Program::SpecializationKeyHash::operator()(std::unique_ptr<Program::SpecializationKey> const& ptr) const
 {
     size_t val = std::hash<uint64_t>()(ptr->ConfigData.Value);
+    D3D12TranslationLayer::hash_combine(val, std::hash<const void *>()(ptr->Device));
     for (uint32_t i = 0; i < ptr->NumArgs; ++i)
     {
         D3D12TranslationLayer::hash_combine(val, ptr->Args[i].LocalArgSize);
@@ -243,7 +245,7 @@ public:
         config.support_work_group_id_offsets = numIterations != 1;
         std::copy(std::begin(localSize), std::end(localSize), config.local_size);
         config.args = kernel.m_ArgMetadataToCompiler;
-        auto SpecKey = Program::SpecializationKey::Allocate(config);
+        auto SpecKey = Program::SpecializationKey::Allocate(m_D3DDevice, config);
         
         m_Specialized = kernel.m_Parent->FindExistingSpecialization(m_Device.Get(), kernel.m_Name, SpecKey);
 
