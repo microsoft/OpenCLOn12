@@ -22,7 +22,6 @@
 //    whenever the device is ready to execute more work. Note that from the API there
 //    is no distinction between the submitted and ready states.
 //    Therefore, this state is more like a pseudo-state that only exists in theory.
-//    This implementation does not have an explicit notion of this state.
 // 4. Once the device has started working on a given task, it enters the 'running' state.
 // 5. Once the device finishes all work associated with the task, but not necessarily
 //    work that was submitted to a device-side queue by the task, it enters the 'ended' state.
@@ -46,21 +45,24 @@
 // - The task has a list of all other tasks that it is dependent on, as well as a list of tasks
 //   that are dependent on it.
 // --- The list of backward dependencies is pruned as dependencies are satisfied.
-// --- The list of forwards dependencies is cleared upon task completion.
-// - If a task is submitted to an in-order command queue (TBD whether out-of-order is even supported),
-//   then the task immediately preceeding it in the queue is added as a dependency.
+// --- The list of forwards dependencies is cleared upon task completion/readiness.
+// - If a task is submitted to an in-order command queue, then the task immediately preceeding
+//   it in the queue is added as a dependency.
 // - When a command queue is flushed, all tasks in the queue are submitted to the device and become 'submitted'.
 // --- Note that the command queue needs to keep track of what tasks it has submitted but are not yet
 //     complete, for the purposes of implementing 'finish', markers, and barriers, as well as specifically
 //     the last task that was submitted for in-order queues.
 // - Tasks that are submitted with no dependencies are considered 'ready'. Ready tasks are added to a list.
+// --- When a task becomes ready, any other tasks that depend on it that can execute on the same device will also
+//     be marked ready. Technically, this is a violation of the CL spec for events, because it means that given task A
+//     and task B, where B depends on A, both A and B can be considered 'running' at the same time. The CL spec explicitly
+//     says that an event should only be marked running when previous events are 'complete', but this seems like a more
+//     desireable design than the one imposed by the spec.
 // --- At the end of the flush operation, a work item is created for a worker thread to execute all ready tasks.
 // --- After recording all ready tasks into a command list, the command list is submitted, and the thread waits for it to complete.
+//     All tasks that were part of the command list are considered to be running at this point.
 // --- Then, all tasks that were part of that command list are marked complete. This enables new tasks to be marked ready.
 // --- If there are any newly ready tasks, then another worker thread work item is created to execute those.
-// --- Note that no barriers are required between tasks recorded into a single command list, because they have no dependencies on each other.
-// --- This model is more conformant, and enables latency-hiding for tasks which require additional shader compilations,
-//     but will result in less overall throughput.
 
 class Task : public CLChildBase<Task, Context, cl_event>
 {
