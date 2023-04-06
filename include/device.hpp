@@ -39,7 +39,7 @@ protected:
     friend class Device;
 
     void ExecuteTasks(Submission& tasks);
-    unsigned m_ContextCount = 0;
+    unsigned m_ContextCount = 1;
     const bool m_IsImportedDevice;
 
     Device &m_Parent;
