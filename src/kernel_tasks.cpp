@@ -297,6 +297,29 @@ public:
     }
 };
 
+static void simpleFactorize(uint32_t num, std::vector<uint32_t> &factor)
+{
+    static uint32_t primes[] = {    // except 2
+    3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101,
+    107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199
+    };
+    while ((num & 1) == 0) {
+        num = num >> 1;
+        factor.push_back(2);
+    }
+    for (auto p : primes) {
+        if (num / 2 < p)
+            break;
+        while (num % p == 0) {
+            num /= p;
+            factor.push_back(p);
+        }
+    }
+    if (num != 1) {
+        factor.push_back(num);
+    }
+}
+
 extern CL_API_ENTRY cl_int CL_API_CALL
 clEnqueueNDRangeKernel(cl_command_queue command_queue,
     cl_kernel        kernel_,
@@ -430,22 +453,40 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     for (cl_uint i = 0; i < work_dim; ++i)
     {
         DispatchDimensions[i] = (uint32_t)(global_work_size[i] / LocalSizes[i]);
-        if (!RequiredDims)
+    }
+    if (!RequiredDims && local_work_size == nullptr) {
+        // If we can adjust localsize, we bump up localsize by multiplying them by factors.
+        std::vector<uint32_t> factors[3];
+        for (cl_uint i = 0; i < work_dim; ++i)
         {
-            // Try to expand local size to avoid having to loop Dispatches
-            while (DispatchDimensions[i] > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
-            {
+            simpleFactorize(DispatchDimensions[i], factors[i]);
+        }
+        while (!factors[0].empty() || !factors[1].empty() || !factors[2].empty()) {
+            // try to take factors evenly/balanced across the dimensions.
+            for (cl_uint i = 0; i < work_dim; ++i) {
+                if (factors[i].empty())
+                    continue;
+                uint16_t f = static_cast<uint16_t>(factors[i].back());
+                factors[i].pop_back();
+
+                // Try to expand local size to avoid having to loop Dispatches
                 auto OldLocalSize = LocalSizes[i];
-                LocalSizes[i] *= 2;
+                LocalSizes[i] *= f;
                 if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP ||
                     LocalSizes[i] > MaxDims[i] ||
                     global_work_size[i] % LocalSizes[i] != 0)
                 {
                     LocalSizes[i] = OldLocalSize;
-                    break;
+                    continue;
                 }
-                DispatchDimensions[i] /= 2;
+                DispatchDimensions[i] /= f;
             }
+        }
+    }
+    for (cl_uint i = 0; i < work_dim; ++i)
+    {
+        if (DispatchDimensions[i] > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) {
+            return ReportError("global_work_size doesn't fit into D3D12 dispatch max thread groups per dim.", CL_INVALID_GLOBAL_WORK_SIZE);
         }
     }
 
