@@ -16,7 +16,7 @@ file(GLOB_RECURSE EXTERNAL_INC external/*.h external/*.hpp)
 FetchContent_Declare(
     d3d12translationlayer
     GIT_REPOSITORY https://github.com/microsoft/D3D12TranslationLayer.git
-    GIT_TAG        a20773a9579b4010ea1da6cddea6bf8be213752b
+    GIT_TAG        e77b6a16a64dd584772f2b0123209cd3f96d81ce
 )
 FetchContent_MakeAvailable(d3d12translationlayer)
 
