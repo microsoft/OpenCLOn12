@@ -77,6 +77,7 @@ public:
 
     std::string GetDeviceName() const;
     LUID GetAdapterLuid() const;
+    D3D_SHADER_MODEL GetShaderModel() const { return m_ShaderModel; }
 
     D3DDevice &InitD3D(ID3D12Device *device = nullptr, ID3D12CommandQueue *queue = nullptr);
     void ReleaseD3D(D3DDevice &device);
