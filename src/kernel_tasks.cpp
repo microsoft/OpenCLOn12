@@ -241,7 +241,7 @@ public:
         CompiledDxil::Configuration config = {};
         config.lower_int64 = true;
         config.lower_int16 = !m_Device->SupportsInt16();
-        config.shader_model = Device.GetParent().m_ShaderModel;
+        config.shader_model = Device.GetParent().GetShaderModel();
         config.support_global_work_id_offsets = std::any_of(std::begin(offset), std::end(offset), [](cl_uint v) { return v != 0; });
         config.support_work_group_id_offsets = numIterations != 1;
         std::copy(std::begin(localSize), std::end(localSize), config.local_size);
