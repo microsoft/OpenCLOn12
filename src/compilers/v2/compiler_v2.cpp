@@ -235,6 +235,8 @@ std::unique_ptr<ProgramBinary> CompilerV2::Compile(CompileArgs const& args, Logg
     args_impl.spirv_version = CLC_SPIRV_VERSION_MAX;
     args_impl.allowed_spirv_extensions = nullptr;
 
+    args_impl.address_bits = 64;
+
     auto logger_impl = ConvertLogger(logger);
     if (!CompileImpl(&args_impl, &logger_impl, &obj))
         return nullptr;
