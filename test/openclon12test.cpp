@@ -33,10 +33,11 @@ std::pair<cl::Context, cl::Device> GetWARPContext()
     }
 
     std::vector<cl::Device> devices;
-    platforms[0].getDevices(CL_DEVICE_TYPE_GPU, &devices);
-    if (devices.size() < 2)
+    platforms[0].getDevices(CL_DEVICE_TYPE_CPU, &devices);
+    if (devices.size() == 0)
     {
         ADD_FAILURE() << "Unexpected device count";
+        return {};
     }
 
     cl::Device device;
@@ -54,6 +55,7 @@ std::pair<cl::Context, cl::Device> GetWARPContext()
     if (!device())
     {
         ADD_FAILURE() << "Couldn't find WARP";
+        return {};
     }
 
     cl_context_properties context_props[] = { CL_CONTEXT_PLATFORM, (cl_context_properties)platforms[0](), 0 };
@@ -74,6 +76,10 @@ TEST(OpenCLOn12, Basic)
 TEST(OpenCLOn12, SimpleKernel)
 {
     auto&& [context, device] = GetWARPContext();
+    if (!context.get())
+    {
+        return;
+    }
     cl::CommandQueue queue(context, device);
 
     const char* kernel_source =
@@ -105,6 +111,10 @@ TEST(OpenCLOn12, SimpleKernel)
 TEST(OpenCLOn12, SimpleImages)
 {
     auto&& [context, device] = GetWARPContext();
+    if (!context.get())
+    {
+        return;
+    }
     cl::CommandQueue queue(context, device);
 
     const char* kernel_source =
@@ -151,6 +161,10 @@ TEST(OpenCLOn12, SimpleImages)
 TEST(OpenCLOn12, LargeDispatch)
 {
     auto&& [context, device] = GetWARPContext();
+    if (!context.get())
+    {
+        return;
+    }
     cl::CommandQueue queue(context, device);
 
     const char* kernel_source =
@@ -192,6 +206,10 @@ TEST(OpenCLOn12, LargeDispatch)
 TEST(OpenCLOn12, Printf)
 {
     auto&& [context, device] = GetWARPContext();
+    if (!context.get())
+    {
+        return;
+    }
     cl::CommandQueue queue(context, device);
 
     const char* kernel_source =
@@ -214,6 +232,10 @@ TEST(OpenCLOn12, Printf)
 TEST(OpenCLOn12, RecursiveFlush)
 {
     auto&& [context, device] = GetWARPContext();
+    if (!context.get())
+    {
+        return;
+    }
     cl::CommandQueue queue1(context, device);
     cl::CommandQueue queue2(context, device);
 
@@ -317,6 +339,10 @@ TEST(OpenCLOn12, SPIRV)
     };
 
     auto&& [context, device] = GetWARPContext();
+    if (!context.get())
+    {
+        return;
+    }
     cl::CommandQueue queue(context, device);
 
     std::vector<char> IL(spirv, std::end(spirv));
