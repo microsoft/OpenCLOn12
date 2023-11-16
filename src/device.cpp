@@ -42,7 +42,7 @@ clGetDeviceIDs(cl_platform_id   platform,
                 NumDevices++;
                 if (output < num_entries)
                 {
-                    devices[i] = device;
+                    devices[output++] = device;
                 }
             }
         }
@@ -611,6 +611,7 @@ void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> 
     }
     spDevice->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, &m_Architecture, sizeof(m_Architecture));
     spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Options, sizeof(m_D3D12Options));
+    spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &m_D3D12Options1, sizeof(m_D3D12Options1));
     spDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS4, &m_D3D12Options4, sizeof(m_D3D12Options4));
 
     D3D_SHADER_MODEL SMTests[] = {
