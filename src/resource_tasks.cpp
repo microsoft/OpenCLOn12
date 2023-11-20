@@ -331,10 +331,9 @@ cl_int clEnqueueWriteBufferRectImpl(cl_command_queue    command_queue,
     {
         host_row_pitch = region[0];
     }
-    else if (host_row_pitch > resource.m_Desc.image_width ||
-             host_row_pitch < region[0])
+    else if (host_row_pitch < region[0])
     {
-        return ReportError("host_row_pitch must be 0 or between region[0] and the buffer size.", CL_INVALID_VALUE);
+        return ReportError("host_row_pitch must be 0 or greater than region[0].", CL_INVALID_VALUE);
     }
 
     size_t SliceSizeInBytes = (buffer_offset[1] + region[1] - 1) * buffer_row_pitch + buffer_offset[0] + region[0];
@@ -359,10 +358,9 @@ cl_int clEnqueueWriteBufferRectImpl(cl_command_queue    command_queue,
     {
         host_slice_pitch = ReqHostSlicePitch;
     }
-    else if (host_slice_pitch > resource.m_Desc.image_width ||
-             host_slice_pitch < ReqHostSlicePitch)
+    else if (host_slice_pitch < ReqHostSlicePitch)
     {
-        return ReportError("host_slice_pitch must be 0 or between (region[0] * buffer_row_pitch) and the buffer size.", CL_INVALID_VALUE);
+        return ReportError("host_slice_pitch must be 0 or greater than (region[0] * buffer_row_pitch).", CL_INVALID_VALUE);
     }
 
     size_t ResourceSizeInBytes = (buffer_offset[2] + region[2] - 1) * buffer_slice_pitch + SliceSizeInBytes;
