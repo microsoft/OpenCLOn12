@@ -78,6 +78,14 @@ public:
     std::string GetDeviceName() const;
     LUID GetAdapterLuid() const;
     D3D_SHADER_MODEL GetShaderModel() const { return m_ShaderModel; }
+    std::pair<cl_uint, cl_uint> GetWaveSizes() const
+    {
+        if (!m_D3D12Options1.WaveOps)
+        {
+            return { 32, 64 };
+        }
+        return { m_D3D12Options1.WaveLaneCountMin, m_D3D12Options1.WaveLaneCountMax };
+    }
 
     D3DDevice &InitD3D(ID3D12Device *device = nullptr, ID3D12CommandQueue *queue = nullptr);
     void ReleaseD3D(D3DDevice &device);
@@ -97,6 +105,7 @@ protected:
     std::mutex m_InitLock;
     bool m_CapsValid = false;
     D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options = {};
+    D3D12_FEATURE_DATA_D3D12_OPTIONS1 m_D3D12Options1 = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS4 m_D3D12Options4 = {};
     D3D12_FEATURE_DATA_ARCHITECTURE m_Architecture = {};
     D3D_SHADER_MODEL m_ShaderModel = D3D_SHADER_MODEL_6_0;

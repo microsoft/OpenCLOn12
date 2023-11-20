@@ -358,13 +358,6 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     std::array<uint32_t, 3> DispatchDimensions = { 1, 1, 1 };
     std::array<uint16_t, 3> LocalSizes = { 1, 1, 1 };
     auto RequiredDims = kernel.GetRequiredLocalDims();
-    auto DimsHint = kernel.GetLocalDimsHint();
-    const std::array<uint16_t, 3> AutoDims[3] =
-    {
-        { 64, 1, 1 },
-        { 8, 8, 1 },
-        { 4, 4, 4 }
-    };
     const std::array<uint16_t, 3> MaxDims =
     {
         D3D12_CS_THREAD_GROUP_MAX_X,
@@ -380,7 +373,7 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
         }
 
         LocalSize = local_work_size ? (uint16_t)local_work_size[i] :
-            (DimsHint ? DimsHint[i] : AutoDims[work_dim - 1][i]);
+            (RequiredDims ? RequiredDims[i] : 1);
         if (RequiredDims)
         {
             if (RequiredDims[i] != LocalSize)
@@ -396,17 +389,14 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
                 return ReportError("local_work_size exceeds max in one dimension.", CL_INVALID_WORK_ITEM_SIZE);
             }
         }
-        else
-        {
-            while (global_work_size[i] % LocalSize != 0 ||
-                   LocalSize > MaxDims[i])
-            {
-                // TODO: Better backoff algorithm
-                LocalSize /= 2;
-            }
-        }
     }
-    if (RequiredDims)
+
+    for (cl_uint i = 0; i < work_dim; ++i)
+    {
+        DispatchDimensions[i] = (uint32_t)(global_work_size[i] / LocalSizes[i]);
+    }
+
+    if (RequiredDims || local_work_size)
     {
         if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
         {
@@ -415,37 +405,84 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
     }
     else
     {
-        cl_uint dimension = work_dim - 1;
-        while ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
-        {
-            // Find a dimension to shorten
-            // TODO: Better backoff algorithm
-            if (LocalSizes[dimension] > 1)
-            {
-                LocalSizes[dimension] /= 2;
-            }
-            dimension = (dimension == 0) ? work_dim - 1 : dimension - 1;
-        }
-    }
+        // Try to partition this thread count into groups that fall between the min and max wave size.
+        // Don't overshoot the max wave size, since threads in a group need to be scheduled together,
+        // which can limit how many groups can run in parallel.
+        std::pair<cl_uint, cl_uint> WaveSizes = queue.GetDevice().GetWaveSizes();
+        cl_uint ThreadsInGroup = 1;
+        // No device has a wave size > 128
+        static constexpr uint16_t Primes[] =
+        { 2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43,
+          47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101,
+          107, 109, 113, 127 };
+        const uint16_t *FactorizationProgress[3] = { Primes, Primes, Primes };
 
-    for (cl_uint i = 0; i < work_dim; ++i)
-    {
-        DispatchDimensions[i] = (uint32_t)(global_work_size[i] / LocalSizes[i]);
-        if (!RequiredDims)
+        bool Progress;
+        do
         {
-            // Try to expand local size to avoid having to loop Dispatches
-            while (DispatchDimensions[i] > D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+            Progress = false;
+            for (cl_uint dimension = 0; dimension < work_dim; ++dimension)
             {
-                auto OldLocalSize = LocalSizes[i];
-                LocalSizes[i] *= 2;
-                if ((uint64_t)LocalSizes[0] * (uint64_t)LocalSizes[1] * (uint64_t)LocalSizes[2] > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP ||
-                    LocalSizes[i] > MaxDims[i] ||
-                    global_work_size[i] % LocalSizes[i] != 0)
+                // Find the next factor that divides the dispatch size, for this dimension
+                while (FactorizationProgress[dimension] != std::end(Primes))
                 {
-                    LocalSizes[i] = OldLocalSize;
+                    uint16_t Factor = *FactorizationProgress[dimension];
+                    if (DispatchDimensions[dimension] < Factor ||
+                        // Allow thread group size to increase past the max only if we're already at the minimum 
+                        // and it will help to decrease how many dispatches we need to loop
+                        (ThreadsInGroup * Factor > WaveSizes.second &&
+                         ThreadsInGroup < WaveSizes.first &&
+                         DispatchDimensions[dimension] <= D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) ||
+                        // Unless it would cause us to exceed the max thread group size
+                        ThreadsInGroup * Factor > D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP ||
+                        LocalSizes[dimension] * Factor > MaxDims[dimension])
+                    {
+                        // No more factors in the list will ever match, this dimension is done
+                        FactorizationProgress[dimension] = std::end(Primes);
+                        break;
+                    }
+                    if (DispatchDimensions[dimension] % Factor == 0)
+                    {
+                        // Match
+                        break;
+                    }
+                    ++FactorizationProgress[dimension];
+                }
+                // This dimension is done
+                if (FactorizationProgress[dimension] == std::end(Primes))
+                {
+                    continue;
+                }
+
+                // Expand the local size
+                uint16_t Factor = *FactorizationProgress[dimension];
+                LocalSizes[dimension] *= Factor;
+                ThreadsInGroup *= Factor;
+                DispatchDimensions[dimension] /= Factor;
+                Progress = true;
+
+                // Stop if we hit the minimum wave size exactly, or once we exceed the min/max size
+                if ((ThreadsInGroup == WaveSizes.first || ThreadsInGroup > WaveSizes.second) &&
+                    DispatchDimensions[dimension] <= D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION)
+                {
+                    Progress = false;
                     break;
                 }
-                DispatchDimensions[i] /= 2;
+            }
+        } while (Progress);
+
+        // If we're not going to launch even a single full wave, and the dispatch size for a dimension
+        // can be used as a group size, then do so.
+        // This means remaining dispatch dimensions are a prime number > 128 in all dimensions.
+        for (cl_uint dimension = 0; dimension < work_dim && ThreadsInGroup < WaveSizes.first; ++dimension)
+        {
+            if (DispatchDimensions[dimension] > 1 &&
+                DispatchDimensions[dimension] <= D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP &&
+                (cl_uint)DispatchDimensions[dimension] * ThreadsInGroup <= D3D12_CS_THREAD_GROUP_MAX_THREADS_PER_GROUP)
+            {
+                LocalSizes[dimension] *= (uint16_t)DispatchDimensions[dimension];
+                ThreadsInGroup *= DispatchDimensions[dimension];
+                DispatchDimensions[dimension] = 1;
             }
         }
     }
