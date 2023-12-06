@@ -291,7 +291,7 @@ clEnqueueMarkerWithWaitList(cl_command_queue  command_queue,
 
     try
     {
-        std::unique_ptr<Task> task(new Marker(context, command_queue));
+        std::unique_ptr<Task> task(new DummyTask(context, CL_COMMAND_MARKER, command_queue));
 
         auto Lock = g_Platform->GetTaskPoolLock();
         if (num_events_in_wait_list)
@@ -347,7 +347,7 @@ clEnqueueBarrierWithWaitList(cl_command_queue  command_queue,
 
     try
     {
-        std::unique_ptr<Task> task(new Barrier(context, command_queue));
+        std::unique_ptr<Task> task(new DummyTask(context, CL_COMMAND_BARRIER, command_queue));
 
         auto Lock = g_Platform->GetTaskPoolLock();
         if (num_events_in_wait_list)
@@ -724,12 +724,7 @@ UserEvent::UserEvent(Context& Parent)
     Submit();
 }
 
-Marker::Marker(Context & Parent, cl_command_queue command_queue)
-    : Task(Parent, CL_COMMAND_MARKER, command_queue)
-{
-}
-
-Barrier::Barrier(Context & Parent, cl_command_queue command_queue)
-    : Task(Parent, CL_COMMAND_BARRIER, command_queue)
+DummyTask::DummyTask(Context & Parent, cl_command_type type, cl_command_queue command_queue)
+    : Task(Parent, type, command_queue)
 {
 }

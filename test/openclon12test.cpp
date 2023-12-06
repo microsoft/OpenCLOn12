@@ -106,6 +106,14 @@ TEST(OpenCLOn12, SimpleKernel)
     {
         EXPECT_EQ(result[i], i);
     }
+
+    queue.enqueueNDRangeKernel(kernel, 1, 0);
+    queue.enqueueReadBuffer(buffer, true, 0, sizeof(result), result);
+
+    for (uint32_t i = 0; i < width; ++i)
+    {
+        EXPECT_EQ(result[i], i);
+    }
 }
 
 TEST(OpenCLOn12, SimpleImages)

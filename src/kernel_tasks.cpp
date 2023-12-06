@@ -487,9 +487,13 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
         }
     }
 
+    bool IsEmptyDispatch = DispatchDimensions[0] == 0 || DispatchDimensions[1] == 0 || DispatchDimensions[2] == 0;
+
     try
     {
-        std::unique_ptr<Task> task(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes, work_dim));
+        std::unique_ptr<Task> task(IsEmptyDispatch ?
+            (Task*)(new DummyTask(context, CL_COMMAND_NDRANGE_KERNEL, command_queue)) :
+            (Task*)(new ExecuteKernel(kernel, command_queue, DispatchDimensions, GlobalWorkItemOffsets, LocalSizes, work_dim)));
 
         auto Lock = g_Platform->GetTaskPoolLock();
         task->AddDependencies(event_wait_list, num_events_in_wait_list, Lock);

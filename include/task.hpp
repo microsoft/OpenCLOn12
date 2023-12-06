@@ -148,20 +148,10 @@ private:
     void MigrateResources() final { }
 };
 
-class Marker : public Task
+class DummyTask : public Task
 {
 public:
-    Marker(Context& Parent, cl_command_queue command_queue);
-
-private:
-    void RecordImpl() final { }
-    void MigrateResources() final { }
-};
-
-class Barrier : public Task
-{
-public:
-    Barrier(Context& Parent, cl_command_queue command_queue);
+    DummyTask(Context& Parent, cl_command_type type, cl_command_queue command_queue);
 
 private:
     void RecordImpl() final { }
