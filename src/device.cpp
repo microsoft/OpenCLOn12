@@ -27,11 +27,6 @@ clGetDeviceIDs(cl_platform_id   platform,
     try
     {
         auto pPlatform = Platform::CastFrom(platform);
-        if (device_type == CL_DEVICE_TYPE_DEFAULT)
-        {
-            device_type = CL_DEVICE_TYPE_GPU;
-        }
-        
         cl_uint NumTotalDevices = pPlatform->GetNumDevices();
         cl_uint NumDevices = 0;
         for (cl_uint i = 0, output = 0; i < NumTotalDevices; ++i)
@@ -404,15 +399,16 @@ DXCoreHardwareID const& Device::GetHardwareIds() const noexcept
 
 cl_device_type Device::GetType() const noexcept
 {
+    cl_device_type Default = m_DefaultDevice ? CL_DEVICE_TYPE_DEFAULT : 0;
     if (IsMCDM())
     {
-        return CL_DEVICE_TYPE_ACCELERATOR;
+        return CL_DEVICE_TYPE_ACCELERATOR | Default;
     }
     if (m_HWIDs.deviceID == 0x8c && m_HWIDs.vendorID == 0x1414)
     {
-        return CL_DEVICE_TYPE_CPU;
+        return CL_DEVICE_TYPE_CPU | Default;
     }
-    return CL_DEVICE_TYPE_GPU;
+    return CL_DEVICE_TYPE_GPU | Default;
 }
 
 bool Device::IsMCDM() const noexcept

@@ -89,6 +89,7 @@ public:
 
     D3DDevice &InitD3D(ID3D12Device *device = nullptr, ID3D12CommandQueue *queue = nullptr);
     void ReleaseD3D(D3DDevice &device);
+    void SetDefaultDevice() { m_DefaultDevice = true; }
 
     bool HasD3DDevice() const noexcept { return !m_D3DDevices.empty(); }
     void CloseCaches();
@@ -104,6 +105,7 @@ protected:
     // Lazy-initialized
     std::mutex m_InitLock;
     bool m_CapsValid = false;
+    bool m_DefaultDevice = false;
     D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Options = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS1 m_D3D12Options1 = {};
     D3D12_FEATURE_DATA_D3D12_OPTIONS4 m_D3D12Options4 = {};

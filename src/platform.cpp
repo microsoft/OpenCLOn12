@@ -154,6 +154,7 @@ Platform::Platform(cl_icd_dispatch* dispatch)
     {
         m_Devices.resize(1);
     }
+    m_Devices[0]->SetDefaultDevice();
 }
 
 Platform::~Platform() = default;
