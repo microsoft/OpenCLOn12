@@ -350,7 +350,10 @@ void Scheduler::Shutdown() noexcept
     // won't modify this - they're already past the point where that's possible.
     for (auto& t : m_ExitingThreads)
     {
-        t.join();
+        if (t.get_id() != std::this_thread::get_id())
+        {
+            t.join();
+        }
     }
 }
 
