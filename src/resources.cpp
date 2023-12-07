@@ -18,7 +18,8 @@ constexpr cl_mem_flags ValidMemFlags =
     CL_MEM_COPY_HOST_PTR |
     CL_MEM_HOST_WRITE_ONLY |
     CL_MEM_HOST_READ_ONLY |
-    CL_MEM_HOST_NO_ACCESS;
+    CL_MEM_HOST_NO_ACCESS |
+    CL_MEM_KERNEL_READ_AND_WRITE;
 
 constexpr cl_mem_flags DeviceReadWriteFlagsMask =
     CL_MEM_READ_WRITE |
@@ -192,7 +193,7 @@ clCreateBufferWithProperties(cl_context   context_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return Resource::CreateBuffer(context, Args, host_ptr, flags);
+        return Resource::CreateBuffer(context, Args, host_ptr, flags, properties);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (_com_error& e)
@@ -252,7 +253,7 @@ clCreateSubBuffer(cl_mem                   buffer_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return Resource::CreateSubBuffer(buffer, region, flags);
+        return Resource::CreateSubBuffer(buffer, region, flags, nullptr);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception& e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -444,7 +445,7 @@ clCreateImageWithProperties(cl_context              context_,
     {
         if (image_desc->buffer != nullptr)
         {
-            return ReportError("Only specify buffer when image_type is CL_MEM_OBJECT_IMAGE1D_BUFFER.", CL_INVALID_IMAGE_DESCRIPTOR);
+            return ReportError("Only specify buffer when image_type is CL_MEM_OBJECT_IMAGE1D_BUFFER.", CL_INVALID_OPERATION);
         }
     }
 
@@ -453,7 +454,7 @@ clCreateImageWithProperties(cl_context              context_,
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
         if (image_desc->image_type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
         {
-            return Resource::CreateImage1DBuffer(*static_cast<Resource*>(image_desc->buffer), *image_format, *image_desc, flags);
+            return Resource::CreateImage1DBuffer(*static_cast<Resource*>(image_desc->buffer), *image_format, *image_desc, flags, properties);
         }
         else
         {
@@ -476,7 +477,7 @@ clCreateImageWithProperties(cl_context              context_,
                 (flags & (CL_MEM_READ_WRITE | CL_MEM_WRITE_ONLY)))
                 Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
-            return Resource::CreateImage(context, Args, host_ptr, *image_format, *image_desc, flags);
+            return Resource::CreateImage(context, Args, host_ptr, *image_format, *image_desc, flags, properties);
         }
     }
     catch (std::bad_alloc &) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
@@ -720,8 +721,10 @@ clGetMemObjectInfo(cl_mem           memobj,
     case CL_MEM_CONTEXT: return RetValue(&resource.m_Parent.get());
     case CL_MEM_ASSOCIATED_MEMOBJECT: return RetValue(resource.m_ParentBuffer.Get());
     case CL_MEM_OFFSET: return RetValue(resource.m_Offset);
-    case CL_MEM_USES_SVM_POINTER: return RetValue((bool)CL_FALSE);
-    case CL_MEM_PROPERTIES: return RetValue(nullptr);
+    case CL_MEM_USES_SVM_POINTER: return RetValue((cl_bool)CL_FALSE);
+    case CL_MEM_PROPERTIES: return CopyOutParameterImpl(resource.m_Properties.data(),
+                                                        resource.m_Properties.size() * sizeof(resource.m_Properties[0]),
+                                                        param_value_size, param_value, param_value_size_ret);
     }
     return resource.m_Parent->GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);
 }
@@ -1040,25 +1043,25 @@ D3D12TranslationLayer::UAV& Resource::GetUAV(D3DDevice* device)
     return iter->second;
 }
 
-Resource* Resource::CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags)
+Resource* Resource::CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags, const cl_mem_properties *properties)
 {
-    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags, std::nullopt);
+    return new Resource(Parent, Args, pHostPointer, Args.m_appDesc.m_Width, flags, std::nullopt, properties);
 }
 
-Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags)
+Resource* Resource::CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags, const cl_mem_properties *properties)
 {
     cl_image_format image_format = {};
-    return new Resource(ParentBuffer, region.origin, region.size, image_format, CL_MEM_OBJECT_BUFFER, flags);
+    return new Resource(ParentBuffer, region.origin, region.size, image_format, CL_MEM_OBJECT_BUFFER, flags, properties);
 }
 
-Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
+Resource* Resource::CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, const cl_mem_properties *properties)
 {
-    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags, std::nullopt);
+    return new Resource(Parent, Args, pHostPointer, image_format, image_desc, flags, std::nullopt, properties);
 }
 
-Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags)
+Resource* Resource::CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, const cl_mem_properties *properties)
 {
-    return new Resource(ParentBuffer, 0, image_desc.image_width, image_format, image_desc.image_type, flags);
+    return new Resource(ParentBuffer, 0, image_desc.image_width, image_format, image_desc.image_type, flags, properties);
 }
 
 static cl_mem_object_type CLTypeFromGLType(cl_GLuint target)
@@ -1208,7 +1211,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
     glInfo.BaseArray = out.view_minlayer + CubeFaceArrayOffset(in.target);
     if (Args.ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
     {
-        Resource::ref_ptr buffer(new Resource(Parent, Args, nullptr, out.buf_size, flags, glInfo), adopt_ref{});
+        Resource::ref_ptr buffer(new Resource(Parent, Args, nullptr, out.buf_size, flags, glInfo, nullptr), adopt_ref{});
         if (in.target == GL_TEXTURE_BUFFER)
         {
             cl_image_format format = GetCLImageFormatForGLFormat(out.internal_format);
@@ -1220,7 +1223,7 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
             }
             DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(format);
             UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
-            return new Resource(*buffer.Get(), 0, out.buf_size / FormatByteSize, format, CL_MEM_OBJECT_IMAGE1D_BUFFER, flags);
+            return new Resource(*buffer.Get(), 0, out.buf_size / FormatByteSize, format, CL_MEM_OBJECT_IMAGE1D_BUFFER, flags, nullptr);
         }
         return buffer.Detach();
     }
@@ -1234,11 +1237,11 @@ Resource *Resource::ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_g
             return nullptr;
         }
 
-        return new Resource(Parent, Args, nullptr, format, imageDesc, flags, glInfo);
+        return new Resource(Parent, Args, nullptr, format, imageDesc, flags, glInfo, nullptr);
     }
 }
 
-Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo, const cl_mem_properties *properties)
     : CLChildBase(Parent)
     , m_Flags(flags)
     , m_pHostPointer(pHostPointer)
@@ -1246,6 +1249,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
     , m_CreationArgs(CreationArgs)
     , m_GLInfo(glInfo)
     , m_Offset(glInfo.has_value() ? glInfo->BufferOffset : 0)
+    , m_Properties(PropertiesToVector(properties))
 {
     if (pHostPointer)
     {
@@ -1264,7 +1268,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
     UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
 }
 
-Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags)
+Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags, const cl_mem_properties *properties)
     : CLChildBase(ParentBuffer.m_Parent.get())
     , m_pHostPointer(ParentBuffer.m_pHostPointer && type == CL_MEM_OBJECT_BUFFER ? reinterpret_cast<char*>(ParentBuffer.m_pHostPointer) + offset : nullptr)
     , m_Flags(flags)
@@ -1274,6 +1278,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     , m_Desc(GetBufferDesc(size, type))
     , m_CreationArgs(ParentBuffer.m_CreationArgs)
     , m_GLInfo(ParentBuffer.m_GLInfo)
+    , m_Properties(PropertiesToVector(properties))
 {
     if (type == CL_MEM_OBJECT_IMAGE1D_BUFFER)
     {
@@ -1319,7 +1324,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     }
 }
 
-Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo)
+Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs const& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo, const cl_mem_properties *properties)
     : CLChildBase(Parent)
     , m_pHostPointer(pHostPointer)
     , m_Format(image_format)
@@ -1327,6 +1332,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
     , m_Flags(flags)
     , m_CreationArgs(Args)
     , m_GLInfo(glInfo)
+    , m_Properties(PropertiesToVector(properties))
 {
     if (pHostPointer)
     {

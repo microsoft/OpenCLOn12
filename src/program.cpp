@@ -943,10 +943,10 @@ void Program::AddBuiltinOptions(std::vector<D3DDeviceAndRef> const& devices, Com
     if (std::all_of(devices.begin(), devices.end(), [](D3DDeviceAndRef const& d) { return !d.first->IsMCDM(); }))
     {
         optionsStruct.Features.images = true;
-        if (!std::all_of(devices.begin(), devices.end(), [](D3DDeviceAndRef const &d) { return d.first->SupportsTypedUAVLoad(); }))
+        optionsStruct.Features.images_write_3d = true;
+        if (std::all_of(devices.begin(), devices.end(), [](D3DDeviceAndRef const &d) { return d.first->SupportsTypedUAVLoad(); }))
         {
             optionsStruct.Features.images_read_write = true;
-            optionsStruct.Features.images_write_3d = true;
         }
     }
 }
@@ -1091,6 +1091,7 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
             Compiler::CompileArgs args = {};
             args.program_source = m_Source.c_str();
             args.cmdline_args.reserve(Args.Common.Args.size());
+            args.features = Args.Common.Features;
             for (auto& def : Args.Common.Args)
             {
                 args.cmdline_args.push_back(def.c_str());
@@ -1185,6 +1186,7 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
             args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
         }
         args.program_source = m_Source.c_str();
+        args.features = Args.Common.Features;
 
         object = pCompiler->Compile(args, loggers);
     }

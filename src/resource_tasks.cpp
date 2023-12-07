@@ -2536,7 +2536,7 @@ public:
         cl_mem_flags stagingFlags = CL_MEM_ALLOC_HOST_PTR;
         if (resource.m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
         {
-            m_MappableResource.Attach(Resource::CreateBuffer(Parent, Args, nullptr, stagingFlags));
+            m_MappableResource.Attach(Resource::CreateBuffer(Parent, Args, nullptr, stagingFlags, nullptr));
         }
         else
         {
@@ -2547,7 +2547,7 @@ public:
             NewDesc.image_array_size = args.NumArraySlices;
             NewDesc.image_row_pitch = 0;
             NewDesc.image_slice_pitch = 0;
-            m_MappableResource.Attach(Resource::CreateImage(Parent, Args, nullptr, resource.m_Format, NewDesc, stagingFlags));
+            m_MappableResource.Attach(Resource::CreateImage(Parent, Args, nullptr, resource.m_Format, NewDesc, stagingFlags, nullptr));
         }
 
         m_MappableResource->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);

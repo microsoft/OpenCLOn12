@@ -37,21 +37,8 @@ clSetDefaultDeviceCommandQueue(cl_context           context_,
     }
     Context& context = *static_cast<Context*>(context_);
     auto ReportError = context.GetErrorReporter();
-    if (!device_)
-    {
-        return ReportError("Device must not be null", CL_INVALID_DEVICE);
-    }
-    Device& device = *static_cast<Device*>(device_);
-    if (!context.D3DDeviceForContext(device))
-    {
-        return ReportError("Device not valid for this context", CL_INVALID_DEVICE);
-    }
-    if (!command_queue)
-    {
-        return ReportError("Queue must not be null", CL_INVALID_COMMAND_QUEUE);
-    }
     // We don't support creating on-device queues so it's impossible to call this correctly
-    return ReportError("Queue is not an on-device queue", CL_INVALID_COMMAND_QUEUE);
+    return ReportError("Platform does not support device enqueue", CL_INVALID_OPERATION);
 }
 
 extern CL_API_ENTRY cl_mem CL_API_CALL

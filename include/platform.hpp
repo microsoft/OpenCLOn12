@@ -11,6 +11,7 @@
 #define CL_USE_DEPRECATED_OPENCL_2_2_APIS
 
 #define CL_TARGET_OPENCL_VERSION 300
+#define CLON12_SUPPORT_3_0 1
 
 #include <D3D12TranslationLayerDependencyIncludes.h>
 #include <D3D12TranslationLayerIncludes.h>
@@ -111,7 +112,8 @@ public:
                                               "cl_khr_local_int32_extended_atomics "
                                               "cl_khr_byte_addressable_store "
                                               "cl_khr_il_program "
-                                              "cl_khr_3d_image_writes "
+                                              // Not guaranteed to be supported by all devices
+                                              // "cl_khr_3d_image_writes "
                                               "cl_khr_gl_sharing "
                                               "cl_khr_gl_event ";
     static constexpr const char* ICDSuffix = "oclon12";
@@ -316,7 +318,7 @@ TProperties const* FindProperty(const TProperties* Props, TProperties value)
 }
 
 // Helpers for property getters
-inline cl_int CopyOutParameterImpl(const void* pValue, size_t ValueSize, size_t InputValueSize, void* pOutValue, size_t* pOutValueSize)
+inline cl_int CopyOutParameterImpl(const void* pValue, size_t ValueSize, size_t& InputValueSize, void*& pOutValue, size_t* pOutValueSize, bool append = false)
 {
     if (InputValueSize && InputValueSize < ValueSize)
     {
@@ -325,31 +327,42 @@ inline cl_int CopyOutParameterImpl(const void* pValue, size_t ValueSize, size_t 
     if (InputValueSize)
     {
         memcpy(pOutValue, pValue, ValueSize);
+        pOutValue = (byte *)pOutValue + ValueSize;
+        InputValueSize -= ValueSize;
     }
     if (pOutValueSize)
     {
-        *pOutValueSize = ValueSize;
+        *pOutValueSize = append ? (*pOutValueSize + ValueSize) : ValueSize;
     }
     return CL_SUCCESS;
 }
 template <typename T>
-inline cl_int CopyOutParameter(T value, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
+inline cl_int CopyOutParameter(T value, size_t& param_value_size, void*& param_value, size_t* param_value_size_ret, bool append = false)
 {
-    return CopyOutParameterImpl(&value, sizeof(T), param_value_size, param_value, param_value_size_ret);
+    return CopyOutParameterImpl(&value, sizeof(T), param_value_size, param_value, param_value_size_ret, append);
 }
 template <typename T, size_t size>
-inline cl_int CopyOutParameter(const T(&value)[size], size_t param_value_size, void* param_value, size_t* param_value_size_ret)
+inline cl_int CopyOutParameter(const T(&value)[size], size_t& param_value_size, void*& param_value, size_t* param_value_size_ret, bool append = false)
 {
-    return CopyOutParameterImpl(&value, sizeof(value), param_value_size, param_value, param_value_size_ret);
+    return CopyOutParameterImpl(&value, sizeof(value), param_value_size, param_value, param_value_size_ret, append);
 }
-inline cl_int CopyOutParameter(const char* value, size_t param_value_size, void* param_value, size_t* param_value_size_ret)
+inline cl_int CopyOutParameter(const char* value, size_t& param_value_size, void*& param_value, size_t* param_value_size_ret, bool append = false)
 {
-    return CopyOutParameterImpl(value, strlen(value) + 1, param_value_size, param_value, param_value_size_ret);
+    if (append)
+    {
+        // Overwrite the null terminator from the previous string
+        if (param_value) param_value = (byte *)param_value - 1;
+        if (param_value_size_ret) *param_value_size_ret -= 1;
+        if (param_value_size) param_value_size += 1;
+    }
+    return CopyOutParameterImpl(value, strlen(value) + 1, param_value_size, param_value, param_value_size_ret, append);
 }
-inline cl_int CopyOutParameter(nullptr_t, size_t param_value_size, void* param_value, size_t *param_value_size_ret)
+inline cl_int CopyOutParameter(nullptr_t, size_t& param_value_size, void*& param_value, size_t *param_value_size_ret, bool append = false)
 {
-    return CopyOutParameterImpl(nullptr, 0, param_value_size, param_value, param_value_size_ret);
+    return CopyOutParameterImpl(nullptr, 0, param_value_size, param_value, param_value_size_ret, append);
 }
+
+
 
 inline bool IsZeroOrPow2(cl_bitfield bits)
 {

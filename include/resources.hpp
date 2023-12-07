@@ -29,6 +29,7 @@ public:
     const size_t m_Offset = 0;
     const cl_image_format m_Format = {};
     const cl_image_desc m_Desc;
+    std::vector<cl_mem_properties> const m_Properties;
     D3D12TranslationLayer::ResourceCreationArgs m_CreationArgs;
 
     struct GLInfo
@@ -42,10 +43,10 @@ public:
     };
     std::optional<GLInfo> m_GLInfo;
 
-    static Resource* CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags);
-    static Resource* CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags);
-    static Resource* CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
-    static Resource* CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags);
+    static Resource* CreateBuffer(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, cl_mem_flags flags, const cl_mem_properties* properties);
+    static Resource* CreateSubBuffer(Resource& ParentBuffer, const cl_buffer_region& region, cl_mem_flags flags, const cl_mem_properties *properties);
+    static Resource* CreateImage(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs& Args, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, const cl_mem_properties *properties);
+    static Resource* CreateImage1DBuffer(Resource& ParentBuffer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, const cl_mem_properties *properties);
     static Resource *ImportGLResource(Context &Parent, cl_mem_flags flags, mesa_glinterop_export_in &in, cl_int *error);
 
     UnderlyingResource* GetUnderlyingResource(D3DDevice*);
@@ -84,9 +85,9 @@ protected:
     mutable std::mutex m_DestructorLock;
     std::vector<DestructorCallback> m_DestructorCallbacks;
 
-    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo);
-    Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags);
-    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo);
+    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, size_t size, cl_mem_flags flags, std::optional<GLInfo> glInfo, const cl_mem_properties *properties);
+    Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags, const cl_mem_properties *properties);
+    Resource(Context& Parent, decltype(m_CreationArgs) const& CreationArgs, void* pHostPointer, const cl_image_format& image_format, const cl_image_desc& image_desc, cl_mem_flags flags, std::optional<GLInfo> glInfo, const cl_mem_properties *properties);
 
     static cl_image_desc GetBufferDesc(size_t size, cl_mem_object_type type);
     void UploadInitialData(Task* triggeringTask);

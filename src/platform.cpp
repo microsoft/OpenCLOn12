@@ -15,6 +15,10 @@ clGetPlatformInfo(cl_platform_id   platform,
     {
         return CL_INVALID_VALUE;
     }
+    if (platform != g_Platform)
+    {
+        return CL_INVALID_PLATFORM;
+    }
 
     if (param_name == CL_PLATFORM_HOST_TIMER_RESOLUTION)
     {
@@ -57,9 +61,10 @@ clGetPlatformInfo(cl_platform_id   platform,
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_local_int32_extended_atomics" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_byte_addressable_store" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_il_program" },
-            { CL_MAKE_VERSION(1, 0, 0), "cl_khr_3d_image_writes" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_gl_sharing" },
             { CL_MAKE_VERSION(1, 0, 0), "cl_khr_gl_event" },
+            // TODO: Maybe loop over devices to see if they're all GPUs?
+            // { CL_MAKE_VERSION(1, 0, 0), "cl_khr_3d_image_writes" },
         };
         return CopyOutParameter(extensions, param_value_size, param_value, param_value_size_ret);
     }

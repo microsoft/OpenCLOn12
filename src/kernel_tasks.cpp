@@ -374,20 +374,17 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
 
         LocalSize = local_work_size ? (uint16_t)local_work_size[i] :
             (RequiredDims ? RequiredDims[i] : 1);
-        if (RequiredDims)
+        if (RequiredDims && local_work_size && RequiredDims[i] != local_work_size[i])
         {
-            if (RequiredDims[i] != LocalSize)
-            {
-                return ReportError("local_work_size does not match required size declared by kernel.", CL_INVALID_WORK_GROUP_SIZE);
-            }
-            if (global_work_size[i] % LocalSize != 0)
-            {
-                return ReportError("local_work_size must evenly divide the global_work_size.", CL_INVALID_WORK_GROUP_SIZE);
-            }
-            if (LocalSize > MaxDims[i])
-            {
-                return ReportError("local_work_size exceeds max in one dimension.", CL_INVALID_WORK_ITEM_SIZE);
-            }
+            return ReportError("local_work_size does not match required size declared by kernel.", CL_INVALID_WORK_GROUP_SIZE);
+        }
+        if (global_work_size[i] % LocalSize != 0)
+        {
+            return ReportError("local_work_size must evenly divide the global_work_size.", CL_INVALID_WORK_GROUP_SIZE);
+        }
+        if (LocalSize > MaxDims[i])
+        {
+            return ReportError("local_work_size exceeds max in one dimension.", CL_INVALID_WORK_ITEM_SIZE);
         }
     }
 
