@@ -109,8 +109,9 @@ private:
 
     struct KernelData
     {
-        KernelData(unique_dxil d) : m_GenericDxil(std::move(d)) {}
+        KernelData(ProgramBinary::Kernel meta, unique_dxil d) : m_Meta(meta), m_GenericDxil(std::move(d)) {}
 
+        ProgramBinary::Kernel m_Meta;
         unique_dxil m_GenericDxil;
         std::unordered_map<std::unique_ptr<SpecializationKey>, SpecializationValue,
             SpecializationKeyHash, SpecializationKeyEqual> m_SpecializationCache;

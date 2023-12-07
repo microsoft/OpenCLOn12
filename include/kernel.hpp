@@ -16,6 +16,7 @@ private:
 
     std::vector<std::byte> m_KernelArgsCbData;
     std::vector<CompiledDxil::Configuration::Arg> m_ArgMetadataToCompiler;
+    std::vector<bool> m_ArgsSet;
 
     // These are weak references for the API kernel object, however
     // these will be converted into strong references by an *execution*
@@ -35,12 +36,15 @@ private:
     friend extern CL_API_ENTRY cl_int CL_API_CALL clGetKernelWorkGroupInfo(cl_kernel, cl_device_id, cl_kernel_work_group_info, size_t, void*, size_t*);
 
 public:
-    Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxil);
+    Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxil, ProgramBinary::Kernel const& meta);
     Kernel(Kernel const&);
     ~Kernel();
 
     cl_int SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value);
+    bool AllArgsSet() const;
 
     uint16_t const* GetRequiredLocalDims() const;
     uint16_t const* GetLocalDimsHint() const;
+
+    const ProgramBinary::Kernel m_Meta;
 };

@@ -77,6 +77,7 @@ public:
 private:
     unique_obj m_Object;
     unique_object<clc_parsed_spirv> m_Parsed;
+    bool m_bParsed = false;
 
 public:
     ProgramBinaryV2(unique_obj obj);
@@ -443,7 +444,7 @@ ProgramBinaryV2::ProgramBinaryV2(unique_obj obj)
 
 bool ProgramBinaryV2::Parse(Logger const *logger)
 {
-    if (m_Parsed.num_kernels || m_Parsed.num_spec_constants)
+    if (m_bParsed)
         return true;
 
     clc_logger logger_impl;
@@ -528,7 +529,8 @@ bool ProgramBinaryV2::Parse(Logger const *logger)
             assert(emplaceRet.second);
         }
     }
-
+    
+    m_bParsed = true;
     return true;
 }
 

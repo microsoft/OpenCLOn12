@@ -355,6 +355,11 @@ clEnqueueNDRangeKernel(cl_command_queue command_queue,
         }
     }
 
+    if (!kernel.AllArgsSet())
+    {
+        return ReportError("Cannot enqueue a kernel before all args are set.", CL_INVALID_KERNEL_ARGS);
+    }
+
     std::array<uint32_t, 3> DispatchDimensions = { 1, 1, 1 };
     std::array<uint16_t, 3> LocalSizes = { 1, 1, 1 };
     auto RequiredDims = kernel.GetRequiredLocalDims();

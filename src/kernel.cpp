@@ -18,6 +18,7 @@ clCreateKernel(cl_program      program_,
     Program& program = *static_cast<Program*>(program_);
     auto ReportError = program.GetContext().GetErrorReporter(errcode_ret);
     const CompiledDxil* kernel = nullptr;
+    const ProgramBinary::Kernel *meta = nullptr;
 
     {
         std::lock_guard Lock(program.m_Lock);
@@ -66,6 +67,7 @@ clCreateKernel(cl_program      program_,
                 }
             }
             kernel = iter->second.m_GenericDxil.get();
+            meta = &iter->second.m_Meta;
             if (!kernel)
             {
                 return ReportError("Kernel failed to compile.", CL_OUT_OF_RESOURCES);
@@ -84,7 +86,7 @@ clCreateKernel(cl_program      program_,
     try
     {
         if (errcode_ret) *errcode_ret = CL_SUCCESS;
-        return new Kernel(program, kernel_name, *kernel);
+        return new Kernel(program, kernel_name, *kernel, *meta);
     }
     catch (std::bad_alloc&) { return ReportError(nullptr, CL_OUT_OF_HOST_MEMORY); }
     catch (std::exception & e) { return ReportError(e.what(), CL_OUT_OF_RESOURCES); }
@@ -276,16 +278,18 @@ static cl_filter_mode CLFilterModeFromSpirv(unsigned filter_mode)
     return filter_mode + CL_FILTER_NEAREST;
 }
 
-Kernel::Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxil)
+Kernel::Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxil, ProgramBinary::Kernel const& spirv_meta)
     : CLChildBase(Parent)
     , m_Dxil(Dxil)
     , m_Name(name)
     , m_ShaderDecls(DeclsFromMetadata(Dxil.GetMetadata()))
+    , m_Meta(spirv_meta)
 {
     m_UAVs.resize(m_ShaderDecls.m_UAVDecls.size());
     m_SRVs.resize(m_ShaderDecls.m_ResourceDecls.size());
     m_Samplers.resize(m_ShaderDecls.m_NumSamplers);
     m_ArgMetadataToCompiler.resize(Dxil.GetMetadata().args.size());
+    m_ArgsSet.resize(Dxil.GetMetadata().args.size());
     for (cl_uint i = 0; i < Dxil.GetMetadata().args.size(); ++i)
     {
         auto& meta = Dxil.GetMetadata().args[i];
@@ -336,6 +340,8 @@ Kernel::Kernel(Kernel const& other)
     , m_KernelArgsCbData(other.m_KernelArgsCbData)
     , m_ConstSamplers(other.m_ConstSamplers)
     , m_InlineConsts(other.m_InlineConsts)
+    , m_Meta(other.m_Meta)
+    , m_ArgsSet(other.m_ArgsSet)
 {
     m_Parent->KernelCreated();
 }
@@ -485,7 +491,13 @@ cl_int Kernel::SetArg(cl_uint arg_index, size_t arg_size, const void* arg_value)
         break;
     }
 
+    m_ArgsSet[arg_index] = true;
     return CL_SUCCESS;
+}
+
+bool Kernel::AllArgsSet() const
+{
+    return std::all_of(m_ArgsSet.begin(), m_ArgsSet.end(), [](bool b) { return b; });
 }
 
 uint16_t const* Kernel::GetRequiredLocalDims() const
@@ -526,7 +538,49 @@ clGetKernelInfo(cl_kernel       kernel_,
     case CL_KERNEL_REFERENCE_COUNT: return RetValue(kernel.GetRefCount());
     case CL_KERNEL_CONTEXT: return RetValue((cl_context)&kernel.m_Parent->m_Parent.get());
     case CL_KERNEL_PROGRAM: return RetValue((cl_program)&kernel.m_Parent.get());
-    case CL_KERNEL_ATTRIBUTES: return RetValue("");
+    case CL_KERNEL_ATTRIBUTES:
+    {
+        if (kernel.m_Parent->m_Source.empty())
+        {
+            // For kernels not created from OpenCL C source and the clCreateProgramWithSource API call the string returned from this query will be empty.
+            return RetValue("");
+        }
+        std::string result;
+        char tempBuf[64];
+        if (kernel.m_Meta.vec_hint_size)
+        {
+            sprintf_s(tempBuf, "vec_type_hint(%s%d) ",
+                      [](ProgramBinary::Kernel::VecHintType type) {
+                          using T = decltype(type);
+                          switch (type)
+                          {
+                          case T::Char: return "uchar";
+                          case T::Short: return "ushort";
+                          case T::Int: return "uint";
+                          case T::Long: return "ulong";
+                          case T::Half: return "half";
+                          case T::Float: return "float";
+                          case T::Double: return "double";
+                          default: return "";
+                          }
+                      }(kernel.m_Meta.vec_hint_type),
+                      kernel.m_Meta.vec_hint_size);
+            result += tempBuf;
+        }
+        auto ReqLocalSize = kernel.GetRequiredLocalDims();
+        if (ReqLocalSize)
+        {
+            sprintf_s(tempBuf, "reqd_work_group_size(%d,%d,%d) ", ReqLocalSize[0], ReqLocalSize[1], ReqLocalSize[2]);
+            result += tempBuf;
+        }
+        auto LocalSizeHint = kernel.GetLocalDimsHint();
+        if (LocalSizeHint)
+        {
+            sprintf_s(tempBuf, "work_group_size_hint(%d,%d,%d) ", LocalSizeHint[0], LocalSizeHint[1], LocalSizeHint[2]);
+            result += tempBuf;
+        }
+        return RetValue(result.c_str());
+    }
     }
 
     return kernel.m_Parent->GetContext().GetErrorReporter()("Unknown param_name", CL_INVALID_VALUE);

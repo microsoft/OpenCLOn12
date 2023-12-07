@@ -1350,7 +1350,9 @@ void Program::PerDeviceData::CreateKernels(Program& program)
     for (auto& kernelMeta : kernels)
     {
         auto name = kernelMeta.name;
-        auto& kernel = m_Kernels.emplace(name, unique_dxil{}).first->second;
+        auto& kernel = m_Kernels.emplace(std::piecewise_construct,
+                                         std::forward_as_tuple(name),
+                                         std::forward_as_tuple(kernelMeta, unique_dxil{})).first->second;
         kernel.m_GenericDxil = pCompiler->GetKernel(name, *m_OwnedBinary, nullptr /*configuration*/, &loggers);
         if (kernel.m_GenericDxil)
             kernel.m_GenericDxil->Sign();
