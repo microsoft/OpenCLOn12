@@ -9,8 +9,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-file(GLOB_RECURSE SRC CONFIGURE_DEPENDS src/*.cpp src/*.def)
-file(GLOB_RECURSE INC include/*.h include/*.hpp)
+file(GLOB_RECURSE MAIN_SRC CONFIGURE_DEPENDS src/openclon12/*.cpp src/compilers/*.cpp src/openclon12/*.def)
+file(GLOB_RECURSE MAIN_INC src/openclon12/*.h src/openclon12/*.hpp)
 file(GLOB_RECURSE EXTERNAL_INC external/*.h external/*.hpp)
 
 FetchContent_Declare(
@@ -37,9 +37,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(wil)
 
-add_library(openclon12 SHARED ${SRC} ${INC} ${EXTERNAL_INC})
+add_library(openclon12 SHARED ${MAIN_SRC} ${MAIN_INC} ${EXTERNAL_INC})
 target_include_directories(openclon12
-    PRIVATE include
+    PRIVATE src/openclon12
     PRIVATE external
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(openclon12

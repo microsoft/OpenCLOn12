@@ -44,7 +44,7 @@ using Microsoft::WRL::ComPtr;
 #include <wil/result_macros.h>
 #include "XPlatHelpers.h"
 
-#include <Scheduler.hpp>
+#include <scheduler.hpp>
 
 #include <TraceLoggingProvider.h>
 TRACELOGGING_DECLARE_PROVIDER(g_hOpenCLOn12Provider);

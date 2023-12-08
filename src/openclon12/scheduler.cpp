@@ -1,6 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#include "Scheduler.hpp"
+#include "scheduler.hpp"
 
 #ifdef _WIN32
 #include <assert.h>
