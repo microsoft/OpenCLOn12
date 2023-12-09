@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <functional>
+
 class CThreadPoolWork
 {
     friend class CThreadPool;

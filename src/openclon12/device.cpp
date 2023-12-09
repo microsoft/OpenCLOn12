@@ -338,10 +338,6 @@ Device::~Device() = default;
 static ImmCtx::CreationArgs GetImmCtxCreationArgs()
 {
     ImmCtx::CreationArgs Args = {};
-    Args.CreatesAndDestroysAreMultithreaded = true;
-    Args.RenamingIsMultithreaded = true;
-    Args.UseResidencyManagement = true;
-    Args.UseThreadpoolForPSOCreates = true;
     Args.CreatorID = __uuidof(OpenCLOn12CreatorID);
     return Args;
 }

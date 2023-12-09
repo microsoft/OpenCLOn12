@@ -581,8 +581,8 @@ void ExecuteKernel::RecordImpl()
 
     auto& ImmCtx = Device.ImmCtx();
     ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
-    ImmCtx.SetShaderResources<D3D12TranslationLayer::e_CS>(0, (UINT)m_SRVs.size(), m_SRVs.data());
-    ImmCtx.SetSamplers<D3D12TranslationLayer::e_CS>(0, (UINT)m_Samplers.size(), m_Samplers.data());
+    ImmCtx.SetShaderResources(0, (UINT)m_SRVs.size(), m_SRVs.data());
+    ImmCtx.SetSamplers(0, (UINT)m_Samplers.size(), m_Samplers.data());
     ImmCtx.SetPipelineState(m_Specialized->m_PSO.get());
 
     // Fill out offsets that'll be read by the kernel for local arg pointers, based on the offsets
@@ -619,7 +619,7 @@ void ExecuteKernel::RecordImpl()
                 UINT DimsY = (y == numYIterations - 1) ? (m_DispatchDims[1] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numYIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
                 UINT DimsZ = (z == numZIterations - 1) ? (m_DispatchDims[2] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numZIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
 
-                ImmCtx.SetConstantBuffers<D3D12TranslationLayer::e_CS>(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
+                ImmCtx.SetConstantBuffers(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
                 ImmCtx.Dispatch(DimsX, DimsY, DimsZ);
 
                 m_CBOffsets[m_Kernel->m_Dxil.GetMetadata().work_properties_cbv_id] += WorkPropertiesChunkSize / 16;

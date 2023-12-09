@@ -794,14 +794,6 @@ namespace D3D12TranslationLayer
             pManager->GetGraphicsCommandList()->ResourceBarrier(Count, pBarriers);
             break;
 
-        case COMMAND_LIST_TYPE::VIDEO_DECODE:
-            pManager->GetVideoDecodeCommandList()->ResourceBarrier(Count, pBarriers);
-            break;
-
-        case COMMAND_LIST_TYPE::VIDEO_PROCESS:
-            pManager->GetVideoProcessCommandList()->ResourceBarrier(Count, pBarriers);
-            break;
-
         default:
             static_assert((UINT)COMMAND_LIST_TYPE::MAX_VALID == 3, "Need to update switch/case.");
             assert(false);

@@ -27,16 +27,16 @@ namespace D3D12TranslationLayer
 
         ~Fence();
 
-        UINT64 TRANSLATION_API GetCompletedValue() const { return m_spFence->GetCompletedValue(); }
-        void TRANSLATION_API Signal(UINT64 Value) const { ThrowFailure(m_spFence->Signal(Value)); }
-        HRESULT TRANSLATION_API SetEventOnCompletion(UINT64 Value, HANDLE hEvent) const { return m_spFence->SetEventOnCompletion(Value, hEvent); }
-        HRESULT TRANSLATION_API CreateSharedHandle(
+        UINT64  GetCompletedValue() const { return m_spFence->GetCompletedValue(); }
+        void  Signal(UINT64 Value) const { ThrowFailure(m_spFence->Signal(Value)); }
+        HRESULT  SetEventOnCompletion(UINT64 Value, HANDLE hEvent) const { return m_spFence->SetEventOnCompletion(Value, hEvent); }
+        HRESULT  CreateSharedHandle(
             _In_opt_ const SECURITY_ATTRIBUTES *pAttributes,
             _In_ DWORD dwAccess,
             _In_opt_ LPCWSTR lpName,
             _Out_ HANDLE *pHandle);
 
-        bool TRANSLATION_API IsMonitored() const;
+        bool  IsMonitored() const;
         bool DeferredWaits() const { return m_bDeferredWaits; }
         ID3D12Fence1* Get() const { return m_spFence.get(); }
 

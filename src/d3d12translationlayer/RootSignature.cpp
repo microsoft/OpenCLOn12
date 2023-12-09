@@ -21,19 +21,6 @@ namespace D3D12TranslationLayer
         ThrowFailure(m_pParent->m_pDevice12->CreateRootSignature(m_pParent->GetNodeMask(), pBlob, BlobSize, IID_PPV_ARGS(GetForCreate())));
     }
 
-    D3D12_SHADER_VISIBILITY GetShaderVisibility(EShaderStage stage)
-    {
-        switch (stage)
-        {
-        case e_VS: return D3D12_SHADER_VISIBILITY_VERTEX;
-        case e_PS: return D3D12_SHADER_VISIBILITY_PIXEL;
-        case e_GS: return D3D12_SHADER_VISIBILITY_GEOMETRY;
-        case e_HS: return D3D12_SHADER_VISIBILITY_HULL;
-        case e_DS: return D3D12_SHADER_VISIBILITY_DOMAIN;
-        default: return D3D12_SHADER_VISIBILITY_ALL;
-        }
-    }
-
     void RootSignatureDesc::GetAsD3D12Desc(VersionedRootSignatureDescWithStorage& Storage, ImmediateContext* pParent) const
     {
         const bool bGraphics = (m_Flags & Compute) == 0;
@@ -67,7 +54,7 @@ namespace D3D12TranslationLayer
         {
             ASSUME(bGraphics || i == 0);
             EShaderStage StageEnum = bGraphics ? (EShaderStage)i : e_CS;
-            auto Visibility = GetShaderVisibility(StageEnum);
+            auto Visibility = D3D12_SHADER_VISIBILITY_ALL;
             ShaderStage const& Stage = m_ShaderStages[i];
 
             bCB14 |= Stage.IsCB14();

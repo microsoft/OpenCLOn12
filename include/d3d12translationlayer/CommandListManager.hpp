@@ -64,8 +64,6 @@ namespace D3D12TranslationLayer
         ID3D12SharingContract* GetSharingContract() { return m_pSharingContract.get(); }
         Fence* GetFence() { return &m_Fence; }
 
-        ID3D12VideoDecodeCommandList2* GetVideoDecodeCommandList(ID3D12CommandList *pCommandList = nullptr) { return  m_type == COMMAND_LIST_TYPE::VIDEO_DECODE ? static_cast<ID3D12VideoDecodeCommandList2 * const>(pCommandList ? pCommandList : m_pCommandList.get()) : nullptr;  }
-        ID3D12VideoProcessCommandList2* GetVideoProcessCommandList(ID3D12CommandList *pCommandList = nullptr) { return  m_type == COMMAND_LIST_TYPE::VIDEO_PROCESS ? static_cast<ID3D12VideoProcessCommandList2 * const>(pCommandList ? pCommandList : m_pCommandList.get()) : nullptr; }
         ID3D12GraphicsCommandList* GetGraphicsCommandList(ID3D12CommandList *pCommandList = nullptr) { return  m_type == COMMAND_LIST_TYPE::GRAPHICS ? static_cast<ID3D12GraphicsCommandList * const>(pCommandList ? pCommandList : m_pCommandList.get()) : nullptr; }
 
         bool WaitForFenceValueInternal(bool IsImmediateContextThread, UINT64 FenceValue);

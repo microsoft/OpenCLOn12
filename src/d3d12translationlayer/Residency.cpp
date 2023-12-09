@@ -79,11 +79,10 @@ void Internal::LRUCache::TrimAgedAllocations(UINT64 FenceValues[], std::vector<I
     }
 }
 
-HRESULT ResidencyManager::Initialize(UINT DeviceNodeIndex, IDXCoreAdapter *ParentAdapterDXCore, IDXGIAdapter3 *ParentAdapterDXGI)
+HRESULT ResidencyManager::Initialize(UINT DeviceNodeIndex, IDXCoreAdapter *ParentAdapterDXCore)
 {
     NodeIndex = DeviceNodeIndex;
     AdapterDXCore = ParentAdapterDXCore;
-    AdapterDXGI = ParentAdapterDXGI;
 
     if (FAILED(ImmCtx.m_pDevice12->QueryInterface(&Device)))
     {
@@ -289,33 +288,17 @@ static void GetDXCoreBudget(IDXCoreAdapter *AdapterDXCore, UINT NodeIndex, DXCor
     [[maybe_unused]] HRESULT hr = AdapterDXCore->QueryState(DXCoreAdapterState::AdapterMemoryBudget, &InputParams, InfoOut);
     assert(SUCCEEDED(hr));
 }
-static void GetDXGIBudget(IDXGIAdapter3 *AdapterDXGI, UINT NodeIndex, DXGI_QUERY_VIDEO_MEMORY_INFO *InfoOut, DXGI_MEMORY_SEGMENT_GROUP Segment)
-{
-    [[maybe_unused]] HRESULT hr = AdapterDXGI->QueryVideoMemoryInfo(NodeIndex, Segment, InfoOut);
-    assert(SUCCEEDED(hr));
-}
 
 void ResidencyManager::GetCurrentBudget(UINT64 Timestamp, DXCoreAdapterMemoryBudget* InfoOut)
 {
     if (Timestamp - LastBudgetTimestamp >= BudgetQueryPeriodTicks)
     {
         LastBudgetTimestamp = Timestamp;
-        if (AdapterDXCore)
-        {
-            DXCoreAdapterMemoryBudget Local, Nonlocal;
-            GetDXCoreBudget(AdapterDXCore, NodeIndex, &Local, DXCoreSegmentGroup::Local);
-            GetDXCoreBudget(AdapterDXCore, NodeIndex, &Nonlocal, DXCoreSegmentGroup::NonLocal);
-            CachedBudget.currentUsage = Local.currentUsage + Nonlocal.currentUsage;
-            CachedBudget.budget = Local.budget + Nonlocal.budget;
-        }
-        else
-        {
-            DXGI_QUERY_VIDEO_MEMORY_INFO Local, Nonlocal;
-            GetDXGIBudget(AdapterDXGI, NodeIndex, &Local, DXGI_MEMORY_SEGMENT_GROUP_LOCAL);
-            GetDXGIBudget(AdapterDXGI, NodeIndex, &Nonlocal, DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL);
-            CachedBudget.currentUsage = Local.CurrentUsage + Nonlocal.CurrentUsage;
-            CachedBudget.budget = Local.Budget + Nonlocal.Budget;
-        }
+        DXCoreAdapterMemoryBudget Local, Nonlocal;
+        GetDXCoreBudget(AdapterDXCore, NodeIndex, &Local, DXCoreSegmentGroup::Local);
+        GetDXCoreBudget(AdapterDXCore, NodeIndex, &Nonlocal, DXCoreSegmentGroup::NonLocal);
+        CachedBudget.currentUsage = Local.currentUsage + Nonlocal.currentUsage;
+        CachedBudget.budget = Local.budget + Nonlocal.budget;
     }
     *InfoOut = CachedBudget;
 }

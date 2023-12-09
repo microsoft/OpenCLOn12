@@ -8,9 +8,4 @@ namespace D3D12TranslationLayer
     {
         m_pParent->AddObjectToDeferredDeletionQueue(pObject, m_LastUsedCommandListID, m_bWaitForCompletionRequired);
     }
-
-    void BatchedDeviceChild::ProcessBatch()
-    {
-        m_Parent.ProcessBatch();
-    }
 };

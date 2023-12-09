@@ -33,7 +33,7 @@ Fence::~Fence()
     AddToDeferredDeletionQueue(m_spFence);
 }
 
-HRESULT TRANSLATION_API Fence::CreateSharedHandle(
+HRESULT  Fence::CreateSharedHandle(
     _In_opt_ const SECURITY_ATTRIBUTES *pAttributes,
     _In_ DWORD dwAccess,
     _In_opt_ LPCWSTR lpName,
@@ -42,7 +42,7 @@ HRESULT TRANSLATION_API Fence::CreateSharedHandle(
     return m_pParent->m_pDevice12->CreateSharedHandle(m_spFence.get(), pAttributes, dwAccess, lpName, pHandle);
 }
 
-bool TRANSLATION_API Fence::IsMonitored() const
+bool  Fence::IsMonitored() const
 {
     return (m_spFence->GetCreationFlags() & D3D12_FENCE_FLAG_NON_MONITORED) == 0;
 }

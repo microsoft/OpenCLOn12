@@ -138,35 +138,12 @@ namespace D3D12TranslationLayer
 
         m_pParent->m_pDevice12.get()->CreateUnorderedAccessView(
             m_pResource->GetUnderlyingResource(),
-            p11on12UAV->m_pCounterResource.get(),
+            nullptr,
             &Desc,
             m_Descriptor
             );
 
         m_ViewUniqueness = m_pResource->GetUniqueness<UnorderedAccessViewType>();
-        return S_OK;
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    // Specialized because no underlying D3D12 video views
-    template<>
-    inline HRESULT View<VideoDecoderOutputViewType>::RefreshUnderlying() noexcept
-    {
-        m_ViewUniqueness = m_pResource->GetUniqueness<VideoDecoderOutputViewType>();
-        return S_OK;
-    }
-
-    template<>
-    inline HRESULT View<VideoProcessorInputViewType>::RefreshUnderlying() noexcept
-    {
-        m_ViewUniqueness = m_pResource->GetUniqueness<VideoProcessorInputViewType>();
-        return S_OK;
-    }
-
-    template<>
-    inline HRESULT View<VideoProcessorOutputViewType>::RefreshUnderlying() noexcept
-    {
-        m_ViewUniqueness = m_pResource->GetUniqueness<VideoProcessorOutputViewType>();
         return S_OK;
     }
 
@@ -205,67 +182,6 @@ namespace D3D12TranslationLayer
     View<TIface>::~View() noexcept
     {
         m_pParent->GetViewAllocator<TIface>().FreeHeapSlot(m_Descriptor, m_DescriptorHeapIndex);
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    // Specialized because no underlying D3D12 video views
-    template<>
-    inline View<VideoDecoderOutputViewType>::View(ImmediateContext* pDevice, const typename TDesc12 &Desc, Resource &ViewResource) noexcept(false)
-        : ViewBase(pDevice,
-            &ViewResource,
-            CViewSubresourceSubset(Desc,
-                (UINT8)ViewResource.AppDesc()->MipLevels(),
-                (UINT16)ViewResource.AppDesc()->ArraySize(),
-                (UINT8)ViewResource.AppDesc()->NonOpaquePlaneCount() * ViewResource.SubresourceMultiplier())),
-        m_Desc(Desc),
-        m_BindRefs(0)
-    {
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<>
-    inline View<VideoDecoderOutputViewType>::~View() noexcept
-    {
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<>
-    inline View<VideoProcessorInputViewType>::View(ImmediateContext* pDevice, const typename TDesc12 &Desc, Resource &ViewResource) noexcept(false)
-        : ViewBase(pDevice,
-            &ViewResource,
-            CViewSubresourceSubset(Desc,
-                (UINT8)ViewResource.AppDesc()->MipLevels(),
-                (UINT16)ViewResource.AppDesc()->ArraySize(),
-                (UINT8)ViewResource.AppDesc()->NonOpaquePlaneCount() * ViewResource.SubresourceMultiplier())),
-        m_Desc(Desc),
-        m_BindRefs(0)
-    {
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<>
-    inline View<VideoProcessorInputViewType>::~View() noexcept
-    {
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<>
-    inline View<VideoProcessorOutputViewType>::View(ImmediateContext* pDevice, const typename TDesc12 &Desc, Resource &ViewResource) noexcept(false)
-        : ViewBase(pDevice,
-            &ViewResource,
-            CViewSubresourceSubset(Desc,
-                (UINT8)ViewResource.AppDesc()->MipLevels(),
-                (UINT16)ViewResource.AppDesc()->ArraySize(),
-                (UINT8)ViewResource.AppDesc()->NonOpaquePlaneCount() * ViewResource.SubresourceMultiplier())),
-        m_Desc(Desc),
-        m_BindRefs(0)
-    {
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<>
-    inline View<VideoProcessorOutputViewType>::~View() noexcept
-    {
     }
 
 };

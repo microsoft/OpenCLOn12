@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <bitset>
+
 namespace D3D12TranslationLayer
 {
     class Resource;
@@ -37,9 +39,6 @@ namespace D3D12TranslationLayer
     enum class RenderTargetViewType {};
     enum class DepthStencilViewType {};
     enum class UnorderedAccessViewType {};
-    enum class VideoDecoderOutputViewType {};
-    enum class VideoProcessorInputViewType {};
-    enum class VideoProcessorOutputViewType {};
 
     template< class TIface >
     struct CViewMapper;
@@ -69,9 +68,6 @@ namespace D3D12TranslationLayer
     DECLARE_VIEW_MAPPER(RenderTargetView, RENDER_TARGET_VIEW_DESC, D3D12_RENDER_TARGET_VIEW_DESC);
     DECLARE_VIEW_MAPPER(DepthStencilView, DEPTH_STENCIL_VIEW_DESC, D3D12_DEPTH_STENCIL_VIEW_DESC);
     DECLARE_VIEW_MAPPER(UnorderedAccessView, UNORDERED_ACCESS_VIEW_DESC, D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER);
-    DECLARE_VIEW_MAPPER1(VideoDecoderOutputView, VIDEO_DECODER_OUTPUT_VIEW_DESC_INTERNAL, VIDEO_DECODER_OUTPUT_VIEW_DESC_INTERNAL);
-    DECLARE_VIEW_MAPPER1(VideoProcessorInputView, VIDEO_PROCESSOR_INPUT_VIEW_DESC_INTERNAL, VIDEO_PROCESSOR_INPUT_VIEW_DESC_INTERNAL);
-    DECLARE_VIEW_MAPPER1(VideoProcessorOutputView, VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_INTERNAL, VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_INTERNAL);
 #undef DECLARE_VIEW_MAPPER
 
     template <class TIface> struct CViewBindingsMapper { using Type = CViewBindingsImpl<1, 1>; };
@@ -167,9 +163,6 @@ namespace D3D12TranslationLayer
     typedef View<RenderTargetViewType> TRTV;
     typedef View<DepthStencilViewType> TDSV;
     typedef View<UnorderedAccessViewType> TUAV;
-    typedef View<VideoDecoderOutputViewType> TVDOV;
-    typedef View<VideoProcessorInputViewType> TVPIV;
-    typedef View<VideoProcessorOutputViewType> TVPOV;
 
     // Counter and Append UAVs have an additional resource allocated
     // to hold the counter value
@@ -188,15 +181,8 @@ namespace D3D12TranslationLayer
 
         static UAV *CreateView(ImmediateContext* pDevice, const TTranslationLayerDesc &Desc, Resource &ViewResource) noexcept(false) { return new UAV(pDevice, Desc, ViewResource); }
 
-        void EnsureCounterResource() noexcept(false);
-
-        void UpdateCounterValue(UINT Value);
-
-        void CopyCounterToBuffer(ID3D12Resource* pDst, UINT DstOffset) noexcept;
-
     public:
         UINT m_D3D11UAVFlags;
-        D3D12TranslationLayer::unique_comptr<ID3D12Resource> m_pCounterResource;
     };
 
     class CDescriptorHeapManager;
@@ -214,7 +200,4 @@ namespace D3D12TranslationLayer
     typedef TSRV SRV;
     typedef TRTV RTV;
     typedef TDSV DSV;
-    typedef TVDOV VDOV;
-    typedef TVPIV VPIV;
-    typedef TVPOV VPOV;
 };

@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <map>
+
 namespace D3D12TranslationLayer
 {
     struct ResourceCacheEntry

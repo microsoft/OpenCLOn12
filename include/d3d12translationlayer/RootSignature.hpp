@@ -110,45 +110,11 @@ namespace D3D12TranslationLayer
 
         UINT m_NumSRVSpacesUsed[5];
 
-        template <int N>
-        static Flags ComputeFlags(bool bRequiresBufferOutOfBoundsHandling, std::array<SShaderDecls const*, N> const& shaders)
-        {
-            UINT flags =
-                ((N == 1) ? Compute : 0) |
-                (bRequiresBufferOutOfBoundsHandling ? RequiresBufferOutOfBoundsHandling : 0);
-            for (SShaderDecls const* pShader : shaders)
-            {
-                if (pShader && pShader->m_bUsesInterfaces)
-                {
-                    flags |= UsesShaderInterfaces;
-                    break;
-                }
-            }
-            return (Flags)flags;
-        }
-
-        RootSignatureDesc(SShaderDecls const* pVS, SShaderDecls const* pPS, SShaderDecls const* pGS, SShaderDecls const* pHS, SShaderDecls const* pDS, bool bRequiresBufferOutOfBoundsHandling)
-            : m_ShaderStages{
-                { ShaderStage(pPS) },
-                { ShaderStage(pVS) },
-                { ShaderStage(pGS) },
-                { ShaderStage(pHS) },
-                { ShaderStage(pDS) } }
-            , m_UAVBucket(NonCBBindingCountToBucket(NumUAVBindings(pVS, pPS, pGS, pHS, pDS)))
-            , m_Flags(ComputeFlags<5>(bRequiresBufferOutOfBoundsHandling, std::array<SShaderDecls const*, 5>{ pPS, pVS, pGS, pHS, pDS }))
-            , m_NumSRVSpacesUsed{
-                pPS ? pPS->m_NumSRVSpacesUsed : 1u,
-                pVS ? pVS->m_NumSRVSpacesUsed : 1u,
-                pGS ? pGS->m_NumSRVSpacesUsed : 1u,
-                pHS ? pHS->m_NumSRVSpacesUsed : 1u,
-                pDS ? pDS->m_NumSRVSpacesUsed : 1u }
-        {
-        }
-        RootSignatureDesc(SShaderDecls const* pCS, bool bRequiresBufferOutOfBoundsHandling)
+        RootSignatureDesc(SShaderDecls const* pCS)
             : m_ShaderStages{
                 { ShaderStage(pCS) } }
                 , m_UAVBucket(NonCBBindingCountToBucket(pCS ? (UINT)pCS->m_UAVDecls.size() : 0u))
-            , m_Flags(ComputeFlags<1>(bRequiresBufferOutOfBoundsHandling, std::array<SShaderDecls const*, 1>{ pCS }))
+            , m_Flags(Compute)
             , m_NumSRVSpacesUsed{ pCS ? pCS->m_NumSRVSpacesUsed : 1u }
         {
         }
@@ -172,14 +138,7 @@ namespace D3D12TranslationLayer
         template <EShaderStage s> ShaderStage const& GetShaderStage() const
         {
             static_assert(s < ShaderStageCount);
-            if constexpr (s == e_CS)
-            {
-                return m_ShaderStages[0];
-            }
-            else
-            {
-                return m_ShaderStages[(UINT)s];
-            }
+            return m_ShaderStages[0];
         }
 
     private:

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <memory>
+#include <set>
 
 //================================================================================================
 // Allocator classes must implement:

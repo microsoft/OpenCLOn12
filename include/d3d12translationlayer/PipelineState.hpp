@@ -7,7 +7,6 @@ namespace D3D12TranslationLayer
     class RootSignature;
     enum EPipelineType
     {
-        e_Draw = 0,
         e_Dispatch
     };
 
@@ -79,12 +78,6 @@ namespace D3D12TranslationLayer
     public:
         EPipelineType GetPipelineStateType() { return m_PipelineStateType; }
 
-        const D3D12_GRAPHICS_PIPELINE_STATE_DESC &GetGraphicsDesc()
-        {
-            assert(m_PipelineStateType == e_Draw);
-            return Graphics.m_Desc;
-        }
-
         const D3D12_COMPUTE_PIPELINE_STATE_DESC &GetComputeDesc()
         {
             assert(m_PipelineStateType == e_Dispatch);
@@ -92,38 +85,14 @@ namespace D3D12TranslationLayer
         }
 
         template<EShaderStage Shader>
-        SShaderDecls *GetShader() { 
-            switch (Shader)
-            {
-            case e_PS:
-                return Graphics.pPixelShader;
-            case e_VS:
-                return Graphics.pVertexShader;
-            case e_GS:
-                return Graphics.pGeometryShader;
-            case e_HS:
-                return Graphics.pHullShader;
-            case e_DS:
-                return Graphics.pDomainShader;
-            case e_CS:
-                return Compute.pComputeShader;
-            default:
-                assert(false);
-                return nullptr;
-            }
-        }
+        SShaderDecls *GetShader() { return Compute.pComputeShader; }
         RootSignature* GetRootSignature() { return m_pRootSignature; }
 
-        PipelineState(ImmediateContext *pContext, const GRAPHICS_PIPELINE_STATE_DESC &desc);
         PipelineState(ImmediateContext *pContext, const COMPUTE_PIPELINE_STATE_DESC &desc);
         ~PipelineState();
 
         ID3D12PipelineState* GetForUse(COMMAND_LIST_TYPE CommandListType)
         {
-            if (m_ThreadpoolWork)
-            {
-                m_ThreadpoolWork.Wait(false);
-            }
             return DeviceChildImpl::GetForUse(CommandListType);
         }
 
@@ -132,27 +101,12 @@ namespace D3D12TranslationLayer
         RootSignature* const m_pRootSignature;
         union
         {
-            struct Graphics 
-            {
-                D3D12_GRAPHICS_PIPELINE_STATE_DESC m_Desc;
-                Shader* pVertexShader;
-                Shader* pPixelShader;
-                Shader* pGeometryShader;
-                Shader* pDomainShader;
-                Shader* pHullShader;
-            } Graphics;
-
             struct Compute
             {
                 D3D12_COMPUTE_PIPELINE_STATE_DESC m_Desc;
                 Shader* pComputeShader;
             } Compute;
         };
-        std::unique_ptr<D3D12_INPUT_ELEMENT_DESC[]> spInputElements;
-        std::unique_ptr<D3D12_SO_DECLARATION_ENTRY[]> spSODecls;
-        UINT SOStrides[D3D12_SO_STREAM_COUNT];
-
-        CThreadPoolWork m_ThreadpoolWork;
 
         template<EPipelineType Type>
         void Create();

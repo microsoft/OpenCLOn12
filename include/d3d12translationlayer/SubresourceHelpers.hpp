@@ -12,20 +12,10 @@ namespace D3D12TranslationLayer
         CSubresourceSubset() noexcept {}
         explicit CSubresourceSubset(UINT8 NumMips, UINT16 NumArraySlices, UINT8 NumPlanes, UINT8 FirstMip = 0, UINT16 FirstArraySlice = 0, UINT8 FirstPlane = 0) noexcept;
         explicit CSubresourceSubset(const CBufferView&);
-        explicit CSubresourceSubset(const D3D11_SHADER_RESOURCE_VIEW_DESC1&) noexcept;
-        explicit CSubresourceSubset(const D3D11_UNORDERED_ACCESS_VIEW_DESC1&) noexcept;
-        explicit CSubresourceSubset(const D3D11_RENDER_TARGET_VIEW_DESC1&) noexcept;
-        explicit CSubresourceSubset(const D3D11_DEPTH_STENCIL_VIEW_DESC&) noexcept;
         explicit CSubresourceSubset(const D3D12_SHADER_RESOURCE_VIEW_DESC&) noexcept;
         explicit CSubresourceSubset(const D3D12_UNORDERED_ACCESS_VIEW_DESC&) noexcept;
         explicit CSubresourceSubset(const D3D12_RENDER_TARGET_VIEW_DESC&) noexcept;
         explicit CSubresourceSubset(const D3D12_DEPTH_STENCIL_VIEW_DESC&) noexcept;
-        explicit CSubresourceSubset(const D3D11_VIDEO_DECODER_OUTPUT_VIEW_DESC&, DXGI_FORMAT ResourceFormat) noexcept;
-        explicit CSubresourceSubset(const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC&, DXGI_FORMAT ResourceFormat) noexcept;
-        explicit CSubresourceSubset(const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC&, DXGI_FORMAT ResourceFormat) noexcept;
-        explicit CSubresourceSubset(const VIDEO_DECODER_OUTPUT_VIEW_DESC_INTERNAL&) noexcept;
-        explicit CSubresourceSubset(const VIDEO_PROCESSOR_INPUT_VIEW_DESC_INTERNAL&) noexcept;
-        explicit CSubresourceSubset(const VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_INTERNAL&) noexcept;
 
         SIZE_T DoesNotOverlap(const CSubresourceSubset&) const noexcept;
         UINT Mask() const noexcept; // Only useable/used when the result will fit in 32 bits.
@@ -105,17 +95,10 @@ namespace D3D12TranslationLayer
         CViewSubresourceSubset() {}
         explicit CViewSubresourceSubset(CSubresourceSubset const& Subresources, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
         explicit CViewSubresourceSubset(const CBufferView&);
-        CViewSubresourceSubset(const D3D11_SHADER_RESOURCE_VIEW_DESC1& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
-        CViewSubresourceSubset(const D3D11_UNORDERED_ACCESS_VIEW_DESC1& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
-        CViewSubresourceSubset(const D3D11_RENDER_TARGET_VIEW_DESC1& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
-        CViewSubresourceSubset(const D3D11_DEPTH_STENCIL_VIEW_DESC& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
         CViewSubresourceSubset(const D3D12_SHADER_RESOURCE_VIEW_DESC& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
         CViewSubresourceSubset(const D3D12_UNORDERED_ACCESS_VIEW_DESC& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
         CViewSubresourceSubset(const D3D12_RENDER_TARGET_VIEW_DESC& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
         CViewSubresourceSubset(const D3D12_DEPTH_STENCIL_VIEW_DESC& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount, DepthStencilMode DSMode = ReadOrWrite);
-        CViewSubresourceSubset(const VIDEO_DECODER_OUTPUT_VIEW_DESC_INTERNAL& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
-        CViewSubresourceSubset(const VIDEO_PROCESSOR_INPUT_VIEW_DESC_INTERNAL& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
-        CViewSubresourceSubset(const VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_INTERNAL& Desc, UINT8 MipLevels, UINT16 ArraySize, UINT8 PlaneCount);
 
         template<typename T>
         static CViewSubresourceSubset FromView(const T* pView);
@@ -172,83 +155,6 @@ namespace D3D12TranslationLayer
         CViewSubresourceSubset const& m_Subresources;
         UINT16 m_CurrentArraySlice;
         UINT8 m_CurrentPlaneSlice;
-    };
-
-    // Some helpers for tiled resource "flow" calculations to determine which subresources are affected by a tiled operation
-    void CalcNewTileCoords(D3D11_TILED_RESOURCE_COORDINATE &Coord, UINT &NumTiles, D3D11_SUBRESOURCE_TILING const& SubresourceTiling);
-
-    class CTileSubresourceSubset
-    {
-    public:
-        CTileSubresourceSubset(const D3D11_TILED_RESOURCE_COORDINATE& StartCoord, const D3D11_TILE_REGION_SIZE& Region, D3D11_RESOURCE_DIMENSION ResDim,
-            _In_reads_(NumStandardMips) const D3D11_SUBRESOURCE_TILING* pSubresourceTilings, UINT MipLevels, UINT NumStandardMips);
-
-        class CIterator;
-        CIterator begin() const;
-        CIterator end() const;
-
-    protected:
-        UINT CalcSubresource(UINT SubresourceIdx) const;
-
-    protected:
-        bool m_bTargetingArraySlices;
-        UINT m_FirstSubresource;
-        UINT m_NumSubresourcesOrArraySlices;
-        UINT m_MipsPerSlice;
-    };
-
-    class CTileSubresourceSubset::CIterator
-    {
-    public:
-        CIterator(CTileSubresourceSubset const& TileSubset, UINT SubresourceIdx);
-        CIterator& operator++();
-        CIterator& operator--();
-
-        bool operator==(CIterator const& other) const;
-        bool operator!=(CIterator const& other) const;
-
-        UINT operator*() const;
-
-    private:
-        CTileSubresourceSubset const& m_TileSubset;
-        UINT m_SubresourceIdx;
-    };
-
-    template< bool Supported>
-    struct ConvertToDescV1Support
-    {
-        static const bool supported = Supported;
-    };
-
-    typedef ConvertToDescV1Support<false> ConvertToDescV1NotSupported;
-    typedef ConvertToDescV1Support<true> ConvertToDescV1Supported;
-
-    template <typename TDescV1>
-    struct DescToViewDimension : ConvertToDescV1NotSupported
-    {
-        static const UINT dimensionTexture2D = 0;
-        static const UINT dimensionTexture2DArray = 0;
-    };
-
-    template <>
-    struct DescToViewDimension< D3D11_SHADER_RESOURCE_VIEW_DESC1 > : ConvertToDescV1Supported
-    {
-        static const D3D11_SRV_DIMENSION dimensionTexture2D = D3D11_SRV_DIMENSION_TEXTURE2D;
-        static const D3D11_SRV_DIMENSION dimensionTexture2DArray = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-    };
-
-    template <>
-    struct DescToViewDimension< D3D11_RENDER_TARGET_VIEW_DESC1 > : ConvertToDescV1Supported
-    {
-        static const D3D11_RTV_DIMENSION dimensionTexture2D = D3D11_RTV_DIMENSION_TEXTURE2D;
-        static const D3D11_RTV_DIMENSION dimensionTexture2DArray = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
-    };
-
-    template <>
-    struct DescToViewDimension< D3D11_UNORDERED_ACCESS_VIEW_DESC1 > : ConvertToDescV1Supported
-    {
-        static const D3D11_UAV_DIMENSION dimensionTexture2D = D3D11_UAV_DIMENSION_TEXTURE2D;
-        static const D3D11_UAV_DIMENSION dimensionTexture2DArray = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
     };
 
     template< typename T >

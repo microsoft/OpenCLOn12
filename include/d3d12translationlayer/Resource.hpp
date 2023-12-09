@@ -43,11 +43,10 @@ namespace D3D12TranslationLayer
 
     enum MAP_TYPE
     {
-        MAP_TYPE_READ = 1,
-        MAP_TYPE_WRITE = 2,
-        MAP_TYPE_READWRITE = 3,
-        MAP_TYPE_WRITE_DISCARD = 4,
-        MAP_TYPE_WRITE_NOOVERWRITE = 5,
+        MAP_TYPE_READ,
+        MAP_TYPE_WRITE,
+        MAP_TYPE_READWRITE,
+        MAP_TYPE_WRITE_NOOVERWRITE,
     };
 
     enum class DeferredDestructionType
@@ -401,8 +400,8 @@ namespace D3D12TranslationLayer
         volatile UINT m_RefCount = 0;
 
     public:
-        static TRANSLATION_API unique_comptr<Resource> CreateResource(ImmediateContext* pDevice, ResourceCreationArgs& createArgs, ResourceAllocationContext threadingContext) noexcept(false);
-        static TRANSLATION_API unique_comptr<Resource> OpenResource(ImmediateContext* pDevice,
+        static  unique_comptr<Resource> CreateResource(ImmediateContext* pDevice, ResourceCreationArgs& createArgs, ResourceAllocationContext threadingContext) noexcept(false);
+        static  unique_comptr<Resource> OpenResource(ImmediateContext* pDevice,
             ResourceCreationArgs& createArgs,
             _In_ IUnknown *pResource,
             DeferredDestructionType deferredDestructionType,
@@ -475,8 +474,6 @@ namespace D3D12TranslationLayer
         inline float GetMinLOD() { return m_MinLOD; }
 
         inline void SetWaitForCompletionRequired(bool value) { m_bWaitForCompletionRequired = value; }
-        void ClearInputBindings();
-        void ClearOutputBindings();
 
         UINT GetCommandListTypeMaskFromUsed()
         {
@@ -560,11 +557,7 @@ namespace D3D12TranslationLayer
 
             if (m_creationArgs.m_heapType == AllocatorHeapType::None)
             {
-                if (IsDecoderCompressedBuffer())
-                {
-                    return AllocatorHeapType::Decoder;
-                }
-                else if (AppDesc()->CPUAccessFlags() & RESOURCE_CPU_ACCESS_READ)
+                if (AppDesc()->CPUAccessFlags() & RESOURCE_CPU_ACCESS_READ)
                 {
                     return AllocatorHeapType::Readback;
                 }
@@ -585,11 +578,6 @@ namespace D3D12TranslationLayer
             return m_creationArgs.m_desc12.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && m_creationArgs.IsShared() && AppDesc()->CPUAccessFlags();
         }
 
-        bool IsDecoderCompressedBuffer()
-        {
-            return Parent()->ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER && (AppDesc()->BindFlags() &  RESOURCE_BIND_DECODER);
-        }
-
         bool OwnsReadbackHeap()
         {
             // These are cases where we can't suballocate out of larger heaps because resource transitions can only be done on heap granularity 
@@ -597,16 +585,8 @@ namespace D3D12TranslationLayer
             // 
             // Note: We don't need to do this for dynamic write-only buffers because those buffers always stay in GENRIC_READ and only transition 
             // at copies (and transition back to GENERIC read directly afterwards) 
-            if (IsDecoderCompressedBuffer())
-            {
-                return false;
-            }
-            else
-            {
-                return AppDesc()->BindFlags() &  RESOURCE_BIND_DECODER ||
-                       m_creationArgs.m_heapDesc.Properties.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE ||
-                       (AppDesc()->Usage() == RESOURCE_USAGE_DYNAMIC && Parent()->ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER && (AppDesc()->CPUAccessFlags() & RESOURCE_CPU_ACCESS_READ) != 0);
-            }
+            return m_creationArgs.m_heapDesc.Properties.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE ||
+                   (AppDesc()->Usage() == RESOURCE_USAGE_DYNAMIC && Parent()->ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER && (AppDesc()->CPUAccessFlags() & RESOURCE_CPU_ACCESS_READ) != 0);
         }
 
     private:
@@ -727,12 +707,6 @@ namespace D3D12TranslationLayer
             }
         }
 
-        void UnBindAsRTV();
-        void UnBindAsDSV();
-        void UnBindAsSRV();
-        void UnBindAsCBV();
-        void UnBindAsVB();
-        void UnBindAsIB();
         float m_MinLOD;
 
         ResourceCreationArgs m_creationArgs;

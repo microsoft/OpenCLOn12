@@ -41,7 +41,7 @@ namespace D3D12TranslationLayer
     //==================================================================================================================================
     //----------------------------------------------------------------------------------------------------------------------------------
 
-    void TRANSLATION_API Resource::Create(ResourceAllocationContext threadingContext)  noexcept(false)
+    void  Resource::Create(ResourceAllocationContext threadingContext)  noexcept(false)
     {
         SetWaitForCompletionRequired(true);
 
@@ -60,11 +60,6 @@ namespace D3D12TranslationLayer
         {
             // Stream-output only supported in default heaps
             assert(!m_creationArgs.m_bBoundForStreamOut);
-
-            if (IsDecoderCompressedBuffer())
-            {
-                m_Identity->m_MaxOutstandingResources = MAX_OUTSTANDING_DECODER_COMPRESSED_BUFFERS;
-            }
 
             m_Identity->m_suballocation = m_pParent->AcquireSuballocatedHeapForResource(this, threadingContext);
             for (auto& placement : m_SubresourcePlacement)
@@ -638,7 +633,7 @@ namespace D3D12TranslationLayer
         if (!m_Identity->m_bOwnsUnderlyingResource)
         {
             CCurrentResourceState::ExclusiveState State = { 0ull, GetDefaultPoolState(GetAllocatorHeapType()),
-                GetAllocatorHeapType() == AllocatorHeapType::Decoder ? COMMAND_LIST_TYPE::VIDEO_DECODE : COMMAND_LIST_TYPE::GRAPHICS };
+                COMMAND_LIST_TYPE::GRAPHICS };
             m_Identity->m_currentState.SetExclusiveResourceState(State);
         }
 
@@ -862,148 +857,6 @@ namespace D3D12TranslationLayer
                 return D3D12_HEAP_TYPE_UPLOAD;
 
             return D3D12_HEAP_TYPE_DEFAULT;
-        }
-    }
-
-    // This should only ever be called by 9on12 because of how the 9 runtime
-    // doesn't unbind things before it deletes them.
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::ClearInputBindings()
-    {
-        UnBindAsCBV();
-        UnBindAsSRV();
-        UnBindAsVB();
-        UnBindAsIB();
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::ClearOutputBindings()
-    {
-        UnBindAsRTV();
-        UnBindAsDSV();
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::UnBindAsRTV()
-    {
-        if (m_currentBindings.IsBoundAsRenderTarget())
-        {
-            auto unbindLambda = [=](UINT, UINT slot) { m_pParent->ClearRTVBinding(slot); };
-            UnbindList<RenderTargetViewType>(m_currentBindings.GetRenderTargetList(), unbindLambda);
-        }
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::UnBindAsDSV()
-    {
-        if (m_currentBindings.IsBoundAsDepthStencil())
-        {
-            m_pParent->ClearDSVBinding();
-        }
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::UnBindAsCBV()
-    {
-        Resource *nullCB[] = { nullptr };
-        for (UINT stage = 0; stage < ShaderStageCount; ++stage)
-        {
-            auto& bindings = m_currentBindings.m_ConstantBufferBindings[stage];
-            for (UINT slot = 0; bindings.any(); ++slot)
-            {
-                if (!bindings.test(slot))
-                {
-                    continue;
-                }
-                switch (stage)
-                {
-                    case e_PS:
-                        m_pParent->SetConstantBuffers<e_PS>(slot, 1, nullCB, nullptr, nullptr);
-                        break;
-                    case e_VS:
-                        m_pParent->SetConstantBuffers<e_VS>(slot, 1, nullCB, nullptr, nullptr);
-                        break;
-                    case e_GS:
-                        m_pParent->SetConstantBuffers<e_GS>(slot, 1, nullCB, nullptr, nullptr);
-                        break;
-                    case e_HS:
-                        m_pParent->SetConstantBuffers<e_HS>(slot, 1, nullCB, nullptr, nullptr);
-                        break;
-                    case e_DS:
-                        m_pParent->SetConstantBuffers<e_DS>(slot, 1, nullCB, nullptr, nullptr);
-                        break;
-                    case e_CS:
-                        m_pParent->SetConstantBuffers<e_CS>(slot, 1, nullCB, nullptr, nullptr);
-                        break;
-                    default:
-                        assert(false);
-                }
-            }
-        }
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::UnBindAsSRV()
-    {
-        SRV *pNullSRV = nullptr;
-        if (m_currentBindings.IsBoundAsShaderResource())
-        {
-            auto unbindLambda = [=](UINT stage, UINT slot)
-            {
-                switch (stage)
-                {
-                case e_PS:
-                    m_pParent->SetShaderResources<e_PS>(slot, 1, &pNullSRV);
-                    break;
-                case e_VS:
-                    m_pParent->SetShaderResources<e_VS>(slot, 1, &pNullSRV);
-                    break;
-                case e_GS:
-                    m_pParent->SetShaderResources<e_GS>(slot, 1, &pNullSRV);
-                    break;
-                case e_HS:
-                    m_pParent->SetShaderResources<e_HS>(slot, 1, &pNullSRV);
-                    break;
-                case e_DS:
-                    m_pParent->SetShaderResources<e_DS>(slot, 1, &pNullSRV);
-                    break;
-                case e_CS:
-                    m_pParent->SetShaderResources<e_CS>(slot, 1, &pNullSRV);
-                    break;
-                default:
-                    assert(false);
-                }
-            };
-            UnbindList<ShaderResourceViewType>(m_currentBindings.GetShaderResourceList(), unbindLambda);
-        }
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::UnBindAsVB()
-    {
-        UINT& vbBindings = m_currentBindings.GetVertexBufferBindings();
-        if (vbBindings)
-        {
-            for (UINT8 i = 0; i < D3D12_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT; i++)
-            {
-                UINT32 bit = (1 << i);
-                if (vbBindings & bit)
-                {
-                    m_pParent->ClearVBBinding(i);
-
-                    vbBindings &= ~(bit);
-                }
-                if (vbBindings == 0) { break; }
-            }
-        }
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::UnBindAsIB()
-    {
-        if (m_currentBindings.IsBoundAsIndexBuffer())
-        {
-            m_pParent->IaSetIndexBuffer(nullptr, DXGI_FORMAT_UNKNOWN, 0);
         }
     }
 

@@ -121,7 +121,6 @@ public:
     static BOOL                                 NonOpaquePlanar(DXGI_FORMAT Format);
     static BOOL                                 YUV(DXGI_FORMAT Format);
     static BOOL                                 Opaque(DXGI_FORMAT Format) { return Format == DXGI_FORMAT_420_OPAQUE; }
-    static void                                 GetTileShape(D3D11_TILE_SHAPE* pTileShape, DXGI_FORMAT Format, D3D11_RESOURCE_DIMENSION Dimension, UINT SampleCount);
     static bool                                 FamilySupportsStencil(DXGI_FORMAT Format);
     static void                                 GetYCbCrChromaSubsampling(DXGI_FORMAT Format, _Out_ UINT& HorizontalSubsampling, _Out_ UINT& VerticalSubsampling);
     static UINT                                 NonOpaquePlaneCount(DXGI_FORMAT Format);

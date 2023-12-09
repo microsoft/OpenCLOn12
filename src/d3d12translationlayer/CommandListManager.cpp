@@ -31,17 +31,13 @@ namespace D3D12TranslationLayer
         , m_MaxAllocatedUploadHeapSpacePerCommandList(cMaxAllocatedUploadHeapSpacePerCommandList)
     {
         ResetCommandListTrackingData();
-
-        m_MaxAllocatedUploadHeapSpacePerCommandList = min(m_MaxAllocatedUploadHeapSpacePerCommandList,
-            m_pParent->m_CreationArgs.MaxAllocatedUploadHeapSpacePerCommandList);
         
         if (!m_pCommandQueue)
         {
             D3D12_COMMAND_QUEUE_DESC queue = {};
             queue.Type = GetD3D12CommandListType(m_type);
             queue.NodeMask = m_pParent->GetNodeMask();
-            queue.Flags = m_pParent->m_CreationArgs.DisableGPUTimeout ?
-                D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT : D3D12_COMMAND_QUEUE_FLAG_NONE;
+            queue.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
             CComPtr<ID3D12Device9> spDevice9;
             if (SUCCEEDED(m_pParent->m_pDevice12->QueryInterface(&spDevice9)))
             {
@@ -117,15 +113,6 @@ namespace D3D12TranslationLayer
             // If the GPU is idle, submit work to keep it busy
             if (m_Fence.GetCompletedValue() == m_commandListID - 1)
             {
-                if (g_hTracelogging)
-                {
-                    TraceLoggingWrite(g_hTracelogging,
-                                      "OpportunisticFlush",
-                                      TraceLoggingUInt32(m_NumCommands, "NumCommands"),
-                                      TraceLoggingUInt32(m_NumDraws, "NumDraws"),
-                                      TraceLoggingUInt32(m_NumDispatches, "NumDispatches"),
-                                      TraceLoggingUInt64(m_UploadHeapSpaceAllocated, "UploadHeapSpaceAllocated"));
-                }
                 SubmitCommandListImpl();
             }
         }
@@ -222,15 +209,6 @@ namespace D3D12TranslationLayer
     //----------------------------------------------------------------------------------------------------------------------------------
     void CommandListManager::SubmitCommandListImpl() // throws
     {
-        // Walk through the list of active queries
-        // and notify them that the command list is being submitted
-        for (LIST_ENTRY *pListEntry = m_pParent->m_ActiveQueryList.Flink; pListEntry != &m_pParent->m_ActiveQueryList; pListEntry = pListEntry->Flink)
-        {
-            Async* pAsync = CONTAINING_RECORD(pListEntry, Async, m_ActiveQueryListEntry);
-
-            pAsync->Suspend();
-        }
-
         CloseCommandList(m_pCommandList.get()); // throws
 
         m_pResidencySet->Close();
@@ -243,15 +221,6 @@ namespace D3D12TranslationLayer
         SubmitFence();
 
         PrepareNewCommandList();
-
-        // Walk through the list of active queries
-        // and notify them that a new command list has been prepared
-        for (LIST_ENTRY *pListEntry = m_pParent->m_ActiveQueryList.Flink; pListEntry != &m_pParent->m_ActiveQueryList; pListEntry = pListEntry->Flink)
-        {
-            Async* pAsync = CONTAINING_RECORD(pListEntry, Async, m_ActiveQueryListEntry);
-
-            pAsync->Resume();
-        }
 
 #if DBG
         if (m_pParent->DebugFlags() & Debug_WaitOnFlush)
@@ -284,18 +253,6 @@ namespace D3D12TranslationLayer
                 break;
             }
 
-            case COMMAND_LIST_TYPE::VIDEO_DECODE:
-            {
-                ThrowFailure(GetVideoDecodeCommandList(m_pCommandList.get())->Reset(m_pCommandAllocator.get()));
-                break;
-            }
-
-            case COMMAND_LIST_TYPE::VIDEO_PROCESS:
-            {
-                ThrowFailure(GetVideoProcessCommandList(m_pCommandList.get())->Reset(m_pCommandAllocator.get()));
-                break;
-            }
-
             default:
             {
                 ThrowFailure(E_UNEXPECTED);
@@ -318,7 +275,6 @@ namespace D3D12TranslationLayer
                 ID3D12DescriptorHeap* pHeaps[2] = { m_pParent->m_ViewHeap.m_pDescriptorHeap.get(), m_pParent->m_SamplerHeap.m_pDescriptorHeap.get() };
                 // Sampler heap is null for compute-only devices; don't include it in the count.
                 pGraphicsCommandList->SetDescriptorHeaps(m_pParent->ComputeOnly() ? 1 : 2, pHeaps);
-                m_pParent->SetScissorRectsHelper();
                 break;
             }
 
@@ -347,18 +303,6 @@ namespace D3D12TranslationLayer
             case COMMAND_LIST_TYPE::GRAPHICS:
             {
                 ThrowFailure(GetGraphicsCommandList(pCommandList)->Close());
-                break;
-            }
-
-            case COMMAND_LIST_TYPE::VIDEO_DECODE:
-            {
-                ThrowFailure(GetVideoDecodeCommandList(pCommandList)->Close());
-                break;
-            }
-
-            case COMMAND_LIST_TYPE::VIDEO_PROCESS:
-            {
-                ThrowFailure(GetVideoProcessCommandList(pCommandList)->Close());
                 break;
             }
 
@@ -539,14 +483,7 @@ namespace D3D12TranslationLayer
 
     D3D12_COMMAND_LIST_TYPE CommandListManager::GetD3D12CommandListType(COMMAND_LIST_TYPE type)
     {
-        if (ComputeOnly())
-        {
-            return D3D12_COMMAND_LIST_TYPE_COMPUTE;
-        }
-        else
-        {
-            return D3D12TypeMap[(UINT)type];
-        }
+        return D3D12_COMMAND_LIST_TYPE_COMPUTE;
     }
 
 }

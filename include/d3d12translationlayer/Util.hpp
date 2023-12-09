@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <mutex>
+#include <optional>
+
 namespace D3D12TranslationLayer
 {
 #define ASSUME( _exp ) { assert( _exp ); __analysis_assume( _exp ); __assume( _exp ); }
@@ -32,20 +35,12 @@ namespace D3D12TranslationLayer
         None,
         Upload,
         Readback,
-        Decoder,
     };
 
     inline COMMAND_LIST_TYPE CommandListType(AllocatorHeapType HeapType)
     {
-        if (HeapType == AllocatorHeapType::Decoder)
-        {
-            return COMMAND_LIST_TYPE::VIDEO_DECODE;
-        }
-        else
-        {
-            assert(HeapType != AllocatorHeapType::None);
-            return COMMAND_LIST_TYPE::GRAPHICS;
-        }
+        assert(HeapType != AllocatorHeapType::None);
+        return COMMAND_LIST_TYPE::GRAPHICS;
     }
 
     inline D3D12_HEAP_TYPE GetD3D12HeapType(AllocatorHeapType HeapType)
@@ -57,7 +52,6 @@ namespace D3D12TranslationLayer
             return D3D12_HEAP_TYPE_READBACK;
 
         case AllocatorHeapType::Upload:
-        case AllocatorHeapType::Decoder:
         default:
             return D3D12_HEAP_TYPE_UPLOAD;
         }
@@ -245,17 +239,11 @@ namespace D3D12TranslationLayer
 
     enum EShaderStage : UINT8
     {
-        e_PS,
-        e_VS,
-        e_GS,
-        e_HS,
-        e_DS,
         e_CS,
         ShaderStageCount,
 
         // For UAVs, the EShaderStage enum is used for array indices.
-        e_Graphics = 0,
-        e_Compute = 1,
+        e_Compute = 0,
         UAVStageCount
     };
 
@@ -492,7 +480,6 @@ namespace D3D12TranslationLayer
             return D3D12_RESOURCE_STATE_GENERIC_READ;
         case AllocatorHeapType::Readback:
             return D3D12_RESOURCE_STATE_COPY_DEST;
-        case AllocatorHeapType::Decoder:
         default:
             return D3D12_RESOURCE_STATE_COMMON;
         }

@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <deque>
+#include <functional>
+#include <queue>
+
 namespace D3D12TranslationLayer
 {
 class Resource;
@@ -549,92 +553,29 @@ enum EDirtyBits : UINT64
     // Reassert bits are set on command list boundaries, on graphics/compute boundaries, and after dirty processing
     e_PipelineStateDirty  = 0x1,
 
-    // Heap-based bindings:
-    // Dirty bits are set when API bindings change, or on command list boundaries (to enable optimizations),
-    //  and causes heap slots to be allocated, and descriptors to be copied
-    // Reassert bits are set after dirty processing
-    e_VSShaderResourcesDirty      = 0x4,
-    e_VSConstantBuffersDirty      = 0x8,
-    e_VSSamplersDirty             = 0x10,
-
-    e_PSShaderResourcesDirty      = 0x20,
-    e_PSConstantBuffersDirty      = 0x40,
-    e_PSSamplersDirty             = 0x80,
-
-    e_GSShaderResourcesDirty      = 0x100,
-    e_GSConstantBuffersDirty      = 0x200,
-    e_GSSamplersDirty             = 0x400,
-
-    e_HSShaderResourcesDirty      = 0x800,
-    e_HSConstantBuffersDirty      = 0x1000,
-    e_HSSamplersDirty             = 0x2000,
-
-    e_DSShaderResourcesDirty      = 0x4000,
-    e_DSConstantBuffersDirty      = 0x8000,
-    e_DSSamplersDirty             = 0x10000,
-
     e_CSShaderResourcesDirty      = 0x20000,
     e_CSConstantBuffersDirty      = 0x40000,
     e_CSSamplersDirty             = 0x80000,
 
-    e_UnorderedAccessViewsDirty   = 0x100000,
     e_CSUnorderedAccessViewsDirty = 0x200000,
 
-    // Non-heap-based (graphics) bindings:
-    // Dirty bits are not used
-    // Reassert bits are set on command list boundaries, prevent incremental bindings, and cause the full binding space to be set on PreDraw
-    //  Note: incremental bindings only applies to VB and SO
-    e_RenderTargetsDirty          = 0x400000,
-    e_StreamOutputDirty           = 0x800000,
-    e_VertexBuffersDirty          = 0x1000000,
-    e_IndexBufferDirty            = 0x2000000,
-
-    // Fixed-function knobs:
-    // Dirty bits are not used
-    // Reassert bits are set on command list boundaries, are unset during update DDI invocations, and cause the ImmCtx pipeline state to be applied
-    e_BlendFactorDirty            = 0x4000000,
-    e_StencilRefDirty             = 0x8000000,
-    e_PrimitiveTopologyDirty      = 0x10000000,
-    e_ViewportsDirty              = 0x20000000,
-    e_ScissorRectsDirty           = 0x40000000,
-    e_PredicateDirty              = 0x80000000,
-
-    e_FirstDraw                   = 0x100000000,
     e_FirstDispatch               = 0x200000000,
-    
-    e_GraphicsRootSignatureDirty  = 0x400000000,
+
     e_ComputeRootSignatureDirty   = 0x800000000,
 
-    // Bit combinations
-    e_VSBindingsDirty             = e_VSShaderResourcesDirty | e_VSConstantBuffersDirty | e_VSSamplersDirty,
-    e_PSBindingsDirty             = e_PSShaderResourcesDirty | e_PSConstantBuffersDirty | e_PSSamplersDirty,
-    e_GSBindingsDirty             = e_GSShaderResourcesDirty | e_GSConstantBuffersDirty | e_GSSamplersDirty,
-    e_HSBindingsDirty             = e_HSShaderResourcesDirty | e_HSConstantBuffersDirty | e_HSSamplersDirty,
-    e_DSBindingsDirty             = e_DSShaderResourcesDirty | e_DSConstantBuffersDirty | e_DSSamplersDirty,
-
     // Combinations of Heap-based bindings, by pipeline type
-    e_GraphicsBindingsDirty       = e_VSBindingsDirty | e_PSBindingsDirty | e_GSBindingsDirty | e_DSBindingsDirty | e_HSBindingsDirty | e_UnorderedAccessViewsDirty,
     e_ComputeBindingsDirty        = e_CSShaderResourcesDirty | e_CSConstantBuffersDirty | e_CSSamplersDirty | e_CSUnorderedAccessViewsDirty,
 
     // Combinations of heap-based bindings, by heap type
-    e_ViewsDirty                  = e_VSShaderResourcesDirty | e_VSConstantBuffersDirty |
-                                    e_PSShaderResourcesDirty | e_PSConstantBuffersDirty |
-                                    e_GSShaderResourcesDirty | e_GSConstantBuffersDirty |
-                                    e_HSShaderResourcesDirty | e_HSConstantBuffersDirty |
-                                    e_DSShaderResourcesDirty | e_DSConstantBuffersDirty |
+    e_ViewsDirty                  = 
                                     e_CSShaderResourcesDirty | e_CSConstantBuffersDirty | 
-                                    e_UnorderedAccessViewsDirty | e_CSUnorderedAccessViewsDirty,
-    e_SamplersDirty               = e_VSSamplersDirty | e_PSSamplersDirty | e_GSSamplersDirty | e_HSSamplersDirty | e_DSSamplersDirty | e_CSSamplersDirty,
+                                    e_CSUnorderedAccessViewsDirty,
+    e_SamplersDirty               = e_CSSamplersDirty,
 
     // All heap-based bindings
-    e_HeapBindingsDirty           = e_GraphicsBindingsDirty | e_ComputeBindingsDirty,
-
-    // (Mostly) graphics-only bits, except for predicate
-    e_NonHeapBindingsDirty        = e_RenderTargetsDirty | e_StreamOutputDirty | e_VertexBuffersDirty | e_IndexBufferDirty,
-    e_FixedFunctionDirty          = e_BlendFactorDirty | e_StencilRefDirty | e_PrimitiveTopologyDirty | e_ViewportsDirty | e_ScissorRectsDirty | e_PredicateDirty,
+    e_HeapBindingsDirty           = e_ComputeBindingsDirty,
 
     // All state bits by pipeline type
-    e_GraphicsStateDirty          = e_PipelineStateDirty | e_GraphicsBindingsDirty | e_NonHeapBindingsDirty | e_FixedFunctionDirty | e_FirstDraw | e_GraphicsRootSignatureDirty,
     e_ComputeStateDirty           = e_PipelineStateDirty | e_ComputeBindingsDirty | e_FirstDispatch | e_ComputeRootSignatureDirty,
 
     // Accumulations of state bits set on command list boundaries and initialization
@@ -643,7 +584,7 @@ enum EDirtyBits : UINT64
     // to setup initial descriptor tables
     e_DirtyOnNewCommandList       = 0,
     e_DirtyOnFirstCommandList     = e_HeapBindingsDirty,
-    e_ReassertOnNewCommandList    = e_GraphicsStateDirty | e_ComputeStateDirty,
+    e_ReassertOnNewCommandList    = e_ComputeStateDirty,
 };
 
 class ImmediateContext;
@@ -806,58 +747,7 @@ public:
     void InitLock() { m_CS.EnsureLock(); }
 };
 
-enum ResourceInfoType
-{
-    TiledPoolType,
-    ResourceType
-};
-
-struct ResourceInfo
-{
-    union
-    {
-        struct
-        {
-            D3D12_HEAP_DESC m_HeapDesc;
-        } TiledPool;
-
-        struct {
-            D3D12_RESOURCE_DESC m_ResourceDesc;
-            D3D11_RESOURCE_FLAGS m_Flags11;
-            D3D12_HEAP_FLAGS m_HeapFlags;
-            D3D12_HEAP_PROPERTIES m_HeapProps;
-        } Resource;
-    };
-    ResourceInfoType m_Type;
-    bool m_bShared;
-    bool m_bNTHandle;
-    bool m_bSynchronized;
-    bool m_bAllocatedBy9on12;
-    HANDLE m_GDIHandle;
-};
-
 using RenameResourceSet = std::deque<unique_comptr<Resource>>;
-
-struct PresentSurface
-{
-    PresentSurface() : m_pResource(nullptr), m_subresource(0) {}
-    PresentSurface(Resource* pResource, UINT subresource = 0) : m_pResource(pResource), m_subresource(subresource) {}
-
-    Resource* m_pResource;
-    UINT m_subresource;
-};
-
-struct PresentCBArgs
-{
-    _In_ ID3D12CommandQueue* pGraphicsCommandQueue;
-    _In_ ID3D12CommandList* pGraphicsCommandList;
-    _In_reads_(numSrcSurfaces) const PresentSurface* pSrcSurfaces;
-    UINT numSrcSurfaces;
-    _In_opt_ Resource* pDest;
-    UINT flipInterval;
-    UINT vidPnSourceId;
-    _In_ D3DKMT_PRESENT* pKMTPresent;
-};
 
 class ImmediateContext
 {
@@ -865,11 +755,7 @@ public:
     // D3D12 objects
     // TODO: const
     const unique_comptr<ID3D12Device> m_pDevice12;
-#if DYNAMIC_LOAD_DXCORE
-    XPlatHelpers::unique_module m_DXCore;
-#endif
     unique_comptr<IDXCoreAdapter> m_pDXCoreAdapter;
-    unique_comptr<IDXGIAdapter3> m_pDXGIAdapter;
     unique_comptr<ID3D12Device1> m_pDevice12_1;
     unique_comptr<ID3D12Device2> m_pDevice12_2; // TODO: Instead of adding more next time, replace
     unique_comptr<ID3D12CompatibilityDevice> m_pCompatDevice;
@@ -883,21 +769,7 @@ private:
 
     // It is important that the deferred deletion queue manager gets destroyed last, place solely strict dependencies above.
     COptLockedContainer<DeferredDeletionQueueManager> m_DeferredDeletionQueueManager;
-
-    // Must be initialized before BindingTracker logic for m_CurrentState
-    D3D_FEATURE_LEVEL m_FeatureLevel;
 public:
-
-    class CDisablePredication
-    {
-    public:
-        CDisablePredication(ImmediateContext* pParent);
-        ~CDisablePredication();
-
-    private:
-        ImmediateContext* m_pParent;
-    };
-
     friend class Query;
     friend class CommandListManager;
 
@@ -906,18 +778,7 @@ public:
     public:
         CreationArgs() { ZeroMemory(this, sizeof(*this)); }
         
-        UINT RequiresBufferOutOfBoundsHandling : 1;
-        UINT CreatesAndDestroysAreMultithreaded : 1;
-        UINT RenamingIsMultithreaded : 1;
-        UINT UseThreadpoolForPSOCreates : 1;
-        UINT UseRoundTripPSOs : 1;
-        UINT UseResidencyManagement : 1;
-        UINT DisableGPUTimeout : 1;
-        UINT IsXbox : 1;
-        UINT AdjustYUY2BlitCoords : 1;
         GUID CreatorID;
-        DWORD MaxAllocatedUploadHeapSpacePerCommandList;
-        DWORD MaxSRVHeapSize;
     };
 
     ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTIONS& caps,
@@ -928,9 +789,6 @@ public:
     UINT64 DebugFlags() { return m_DebugFlags; }
 #endif
     CreationArgs m_CreationArgs;
-
-    bool RequiresBufferOutofBoundsHandling() { return m_CreationArgs.RequiresBufferOutOfBoundsHandling; }
-    bool IsXbox() { return m_CreationArgs.IsXbox; } // Currently only accurate with D3D11.
 
     CommandListManager *GetCommandListManager(COMMAND_LIST_TYPE type) noexcept;
     ID3D12CommandList *GetCommandList(COMMAND_LIST_TYPE type) noexcept;
@@ -954,14 +812,11 @@ public:
     bool WaitForFenceValue(COMMAND_LIST_TYPE type, UINT64 FenceValue, bool DoNotWait);
 
     ID3D12GraphicsCommandList *GetGraphicsCommandList() noexcept;
-    ID3D12VideoDecodeCommandList2 *GetVideoDecodeCommandList() noexcept;
-    ID3D12VideoProcessCommandList2 *GetVideoProcessCommandList() noexcept;
     void AdditionalCommandsAdded(COMMAND_LIST_TYPE type) noexcept;
     void UploadHeapSpaceAllocated(COMMAND_LIST_TYPE type, UINT64 HeapSize) noexcept;
 
     unique_comptr<ID3D12Resource> AllocateHeap(UINT64 HeapSize, UINT64 alignment, AllocatorHeapType heapType) noexcept(false);
-
-    void InitializeVideo(ID3D12VideoDevice **ppVideoDevice);
+    void ClearState() noexcept;
 
     void AddObjectToResidencySet(Resource *pResource, COMMAND_LIST_TYPE commandListType);
     void AddResourceToDeferredDeletionQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired, std::vector<DeferredWait> deferredWaits);
@@ -1078,7 +933,6 @@ public:
     void FinalizeUpdateSubresources(Resource* pDst, PreparedUpdateSubresourcesOperation const& PreparedStorage, _In_reads_opt_(2) D3D12_PLACED_SUBRESOURCE_FOOTPRINT const* LocalPlacementDescs);
 
     void CopyAndConvertSubresourceRegion(Resource* pDst, UINT DstSubresource, Resource* pSrc, UINT SrcSubresource, UINT dstX, UINT dstY, UINT dstZ, const D3D12_BOX* pSrcBox) noexcept;
-    bool CreatesAndDestroysAreMultithreaded() const noexcept { return m_CreationArgs.CreatesAndDestroysAreMultithreaded; }
 
     void UAVBarrier() noexcept;
 
@@ -1099,8 +953,6 @@ public:
     void ClearRTVBinding(UINT slot);
     void ClearVBBinding(UINT slot);
 
-    void SetPredicationInternal(Query*, BOOL);
-
     void WriteToSubresource(Resource* DstResource, UINT DstSubresource, _In_opt_ const D3D11_BOX* pDstBox, 
                             const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch);
     void ReadFromSubresource(void* pDstData, UINT DstRowPitch, UINT DstDepthPitch,
@@ -1110,173 +962,55 @@ public:
 
 public:
     PipelineState* GetPipelineState();
-    void TRANSLATION_API SetPipelineState(PipelineState* pPipeline);
-
-    void TRANSLATION_API Draw(UINT, UINT );
-    void TRANSLATION_API DrawInstanced(UINT, UINT, UINT, UINT);
-
-    void TRANSLATION_API DrawIndexed(UINT, UINT, INT );
-    void TRANSLATION_API DrawIndexedInstanced(UINT, UINT, UINT, INT, UINT );
-    void TRANSLATION_API DrawAuto();
-    void TRANSLATION_API DrawIndexedInstancedIndirect(Resource*, UINT );
-    void TRANSLATION_API DrawInstancedIndirect(Resource*, UINT );
+    void SetPipelineState(PipelineState* pPipeline);
     
-    void TRANSLATION_API Dispatch( UINT, UINT, UINT );
-    void TRANSLATION_API DispatchIndirect(Resource*, UINT );
+    void Dispatch( UINT, UINT, UINT );
 
     // Returns if any work was actually submitted
-    bool TRANSLATION_API Flush(UINT commandListMask);
+    bool Flush(UINT commandListMask);
 
-    void TRANSLATION_API IaSetTopology(D3D12_PRIMITIVE_TOPOLOGY);
-    void TRANSLATION_API IaSetVertexBuffers( UINT, __in_range(0, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT) UINT, Resource* const*, const UINT*, const UINT* );
-    void TRANSLATION_API IaSetIndexBuffer( Resource*, DXGI_FORMAT, UINT );
+    void SetShaderResources( UINT, __in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT) UINT, SRV* const* );
+    void SetSamplers( UINT, __in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT) UINT, Sampler* const* );
+    void SetConstantBuffers( UINT, __in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_HW_SLOT_COUNT) UINT Buffers, Resource* const*, __in_ecount_opt(Buffers) CONST UINT* pFirstConstant, __in_ecount_opt(Buffers) CONST UINT* pNumConstants);
 
-    template<EShaderStage eShader>
-    void TRANSLATION_API SetShaderResources( UINT, __in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT) UINT, SRV* const* );
-    template<EShaderStage eShader>
-    void TRANSLATION_API SetSamplers( UINT, __in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT) UINT, Sampler* const* );
-    template<EShaderStage eShader>
-    void TRANSLATION_API SetConstantBuffers( UINT, __in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_HW_SLOT_COUNT) UINT Buffers, Resource* const*, __in_ecount_opt(Buffers) CONST UINT* pFirstConstant, __in_ecount_opt(Buffers) CONST UINT* pNumConstants);
+    void CsSetUnorderedAccessViews(UINT, __in_range(0, D3D11_1_UAV_SLOT_COUNT) UINT NumViews, __in_ecount(NumViews) UAV* const*, __in_ecount(NumViews) CONST UINT* );
 
-    void TRANSLATION_API SoSetTargets(_In_range_(0, 4) UINT NumTargets, _In_range_(0, 4) UINT, _In_reads_(NumTargets) Resource* const*, _In_reads_(NumTargets) const UINT* );
-    void TRANSLATION_API OMSetRenderTargets(__in_ecount(NumRTVs) RTV* const* pRTVs, __in_range(0, 8) UINT NumRTVs, __in_opt DSV *);
-    void TRANSLATION_API OMSetUnorderedAccessViews(UINT, __in_range(0, D3D11_1_UAV_SLOT_COUNT) UINT NumViews, __in_ecount(NumViews) UAV* const*, __in_ecount(NumViews) CONST UINT* );
-    void TRANSLATION_API CsSetUnorderedAccessViews(UINT, __in_range(0, D3D11_1_UAV_SLOT_COUNT) UINT NumViews, __in_ecount(NumViews) UAV* const*, __in_ecount(NumViews) CONST UINT* );
+    void QueryEnd(Async*);
+    bool QueryGetData(Async*, void*, UINT, bool DoNotFlush, bool AsyncGetData = false);
 
-    void TRANSLATION_API OMSetStencilRef( UINT );
-    void TRANSLATION_API OMSetBlendFactor(const FLOAT[4]);
-
-    void TRANSLATION_API SetViewport(UINT slot, const D3D12_VIEWPORT*);
-    void TRANSLATION_API SetNumViewports(UINT num);
-    void TRANSLATION_API SetScissorRect(UINT slot, const D3D12_RECT*);
-    void TRANSLATION_API SetNumScissorRects(UINT num);
-    void TRANSLATION_API SetScissorRectEnable(BOOL);
-
-    void TRANSLATION_API ClearRenderTargetView(RTV *, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects);
-    void TRANSLATION_API ClearDepthStencilView(DSV *, UINT, FLOAT, UINT8, UINT NumRects, const D3D12_RECT *pRects);
-    void TRANSLATION_API ClearUnorderedAccessViewUint(UAV *, CONST UINT[4], UINT NumRects, const D3D12_RECT *pRects);
-    void TRANSLATION_API ClearUnorderedAccessViewFloat(UAV *, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects);
-    void TRANSLATION_API ClearResourceWithNoRenderTarget(Resource* pResource, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects, UINT Subresource, UINT BaseSubresource, DXGI_FORMAT ClearFormat);
-    void TRANSLATION_API ClearVideoDecoderOutputView(VDOV *, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects);
-    void TRANSLATION_API ClearVideoProcessorInputView(VPIV *, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects);
-    void TRANSLATION_API ClearVideoProcessorOutputView(VPOV *, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects);
-
-    void TRANSLATION_API DiscardView(ViewBase* pView, const D3D12_RECT*, UINT);
-    void TRANSLATION_API DiscardResource(Resource* pResource, const D3D12_RECT*, UINT);
-
-    void TRANSLATION_API GenMips(SRV *, D3D12_FILTER_TYPE FilterType);
-
-    void TRANSLATION_API QueryBegin( Async* );
-    void TRANSLATION_API QueryEnd(Async*);
-    bool TRANSLATION_API QueryGetData(Async*, void*, UINT, bool DoNotFlush, bool AsyncGetData = false);
-    void TRANSLATION_API SetPredication(Query*, BOOL);
-
-    bool TRANSLATION_API Map(_In_ Resource* pResource, _In_ UINT Subresource, _In_ MAP_TYPE MapType, _In_ bool DoNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, _Out_ MappedSubresource* pMappedSubresource);
-    void TRANSLATION_API Unmap(Resource*, UINT, MAP_TYPE, _In_opt_ const D3D12_BOX *pReadWriteRange);
+    bool Map(_In_ Resource* pResource, _In_ UINT Subresource, _In_ MAP_TYPE MapType, _In_ bool DoNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, _Out_ MappedSubresource* pMappedSubresource);
+    void Unmap(Resource*, UINT, MAP_TYPE, _In_opt_ const D3D12_BOX *pReadWriteRange);
 
     bool SynchronizeForMap(Resource* pResource, UINT Subresource, MAP_TYPE MapType, bool DoNotWait);
-    bool TRANSLATION_API MapUnderlying(Resource*, UINT, MAP_TYPE, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
-    bool TRANSLATION_API MapUnderlyingSynchronize(Resource*, UINT, MAP_TYPE, bool, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
+    bool MapUnderlying(Resource*, UINT, MAP_TYPE, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
+    bool MapUnderlyingSynchronize(Resource*, UINT, MAP_TYPE, bool, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
 
-    bool TRANSLATION_API MapDiscardBuffer( Resource* pResource, UINT Subresource, MAP_TYPE, bool, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
-    bool TRANSLATION_API MapDynamicTexture( Resource* pResource, UINT Subresource, MAP_TYPE, bool, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
-    bool TRANSLATION_API MapDefault(Resource*pResource, UINT Subresource, MAP_TYPE, bool doNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource*);
-    void TRANSLATION_API UnmapDefault( Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange);
-    void TRANSLATION_API UnmapUnderlyingSimple( Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange);
-    void TRANSLATION_API UnmapUnderlyingStaging( Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange);
-    void TRANSLATION_API UnmapDynamicTexture( Resource*pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange, bool bUploadMappedContents);
+    bool MapDynamicTexture( Resource* pResource, UINT Subresource, MAP_TYPE, bool, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* );
+    bool MapDefault(Resource*pResource, UINT Subresource, MAP_TYPE, bool doNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource*);
+    void UnmapDefault( Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange);
+    void UnmapUnderlyingSimple( Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange);
+    void UnmapUnderlyingStaging( Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange);
+    void UnmapDynamicTexture( Resource*pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange, bool bUploadMappedContents);
 
-    Resource* TRANSLATION_API CreateRenameCookie(Resource* pResource, ResourceAllocationContext threadingContext);
-    void TRANSLATION_API Rename(Resource* pResource, Resource* pRenameResource);
-    void TRANSLATION_API RenameViaCopy(Resource* pResource, Resource* pRenameResource, UINT DirtyPlaneMask);
-    void TRANSLATION_API DeleteRenameCookie(Resource* pRenameResource);
+    void ResourceCopy( Resource*, Resource* );
+    void ResourceResolveSubresource( Resource*, UINT, Resource*, UINT, DXGI_FORMAT );
 
-    void TRANSLATION_API ClearInputBindings(Resource* pResource);
-    void TRANSLATION_API ClearOutputBindings(Resource* pResource);
+    void ResourceCopyRegion( Resource*, UINT, UINT, UINT, UINT, Resource*, UINT, const D3D12_BOX*);
+    void ResourceUpdateSubresourceUP( Resource*, UINT, _In_opt_ const D3D12_BOX*, _In_ const VOID*, UINT, UINT);
 
-    void TRANSLATION_API ResourceCopy( Resource*, Resource* );
-    void TRANSLATION_API ResourceResolveSubresource( Resource*, UINT, Resource*, UINT, DXGI_FORMAT );
+    HRESULT GetDeviceState();
 
-    void TRANSLATION_API SetResourceMinLOD( Resource*, FLOAT );
+    HRESULT CheckFormatSupport(_Out_ D3D12_FEATURE_DATA_FORMAT_SUPPORT& formatData);
+    void CheckMultisampleQualityLevels(DXGI_FORMAT, UINT, D3D12_MULTISAMPLE_QUALITY_LEVEL_FLAGS, _Out_ UINT*);
+    void CheckFeatureSupport(D3D12_FEATURE Feature, _Inout_updates_bytes_(FeatureSupportDataSize)void* pFeatureSupportData, UINT FeatureSupportDataSize);
 
-    void TRANSLATION_API CopyStructureCount( Resource*, UINT, UAV* );
-    
-    void TRANSLATION_API ResourceCopyRegion( Resource*, UINT, UINT, UINT, UINT, Resource*, UINT, const D3D12_BOX*);
-    void TRANSLATION_API ResourceUpdateSubresourceUP( Resource*, UINT, _In_opt_ const D3D12_BOX*, _In_ const VOID*, UINT, UINT);
+    void Signal(_In_ Fence* pFence, UINT64 Value);
+    void Wait(std::shared_ptr<Fence> const& pFence, UINT64 Value);
 
-    HRESULT TRANSLATION_API GetDeviceState();
-
-
-    enum TILE_MAPPING_FLAG
-    {
-        TILE_MAPPING_NO_OVERWRITE = 0x00000001,
-    };
-
-    enum TILE_RANGE_FLAG
-    {
-        TILE_RANGE_NULL = 0x00000001,
-        TILE_RANGE_SKIP = 0x00000002,
-        TILE_RANGE_REUSE_SINGLE_TILE = 0x00000004,
-    };
-
-    enum TILE_COPY_FLAG
-    {
-        TILE_COPY_NO_OVERWRITE = 0x00000001,
-        TILE_COPY_LINEAR_BUFFER_TO_SWIZZLED_TILED_RESOURCE = 0x00000002,
-        TILE_COPY_SWIZZLED_TILED_RESOURCE_TO_LINEAR_BUFFER = 0x00000004,
-    };
-
-    void TRANSLATION_API UpdateTileMappings(Resource* hTiledResource, UINT NumTiledResourceRegions,_In_reads_(NumTiledResourceRegions) 
-        const D3D12_TILED_RESOURCE_COORDINATE* pTiledResourceRegionStartCoords,_In_reads_opt_(NumTiledResourceRegions) const D3D12_TILE_REGION_SIZE* pTiledResourceRegionSizes,
-        Resource* hTilePool,UINT NumRanges,_In_reads_opt_(NumRanges) const TILE_RANGE_FLAG* pRangeFlags, _In_reads_opt_(NumRanges) const UINT* pTilePoolStartOffsets, _In_reads_opt_(NumRanges) const UINT* pRangeTileCounts, TILE_MAPPING_FLAG Flags );
-
-    void TRANSLATION_API CopyTileMappings(Resource*, _In_ const D3D12_TILED_RESOURCE_COORDINATE*, Resource*, _In_ const  D3D12_TILED_RESOURCE_COORDINATE*, _In_ const D3D12_TILE_REGION_SIZE*, TILE_MAPPING_FLAG);
-    void TRANSLATION_API CopyTiles(Resource*, _In_ const D3D12_TILED_RESOURCE_COORDINATE*, _In_ const D3D12_TILE_REGION_SIZE*, Resource*, UINT64, TILE_COPY_FLAG);
-    void TRANSLATION_API UpdateTiles(Resource*, _In_ const D3D12_TILED_RESOURCE_COORDINATE*, _In_ const D3D12_TILE_REGION_SIZE*, const _In_ VOID*, UINT);
-    void TRANSLATION_API TiledResourceBarrier(Resource* pBefore, Resource* pAfter);
-    void TRANSLATION_API ResizeTilePool(Resource*, UINT64);
-    void TRANSLATION_API GetMipPacking(Resource*, _Out_ UINT*, _Out_ UINT*);
-
-    HRESULT TRANSLATION_API CheckFormatSupport(_Out_ D3D12_FEATURE_DATA_FORMAT_SUPPORT& formatData);
-    bool SupportsRenderTarget(DXGI_FORMAT Format);
-    void TRANSLATION_API CheckMultisampleQualityLevels(DXGI_FORMAT, UINT, D3D12_MULTISAMPLE_QUALITY_LEVEL_FLAGS, _Out_ UINT*);
-    void TRANSLATION_API CheckFeatureSupport(D3D12_FEATURE Feature, _Inout_updates_bytes_(FeatureSupportDataSize)void* pFeatureSupportData, UINT FeatureSupportDataSize);
-
-    void TRANSLATION_API SetHardwareProtection(Resource*, INT);
-    void TRANSLATION_API SetHardwareProtectionState(BOOL);
-    
-    void TRANSLATION_API Signal(_In_ Fence* pFence, UINT64 Value);
-    void TRANSLATION_API Wait(std::shared_ptr<Fence> const& pFence, UINT64 Value);
-
-    void TRANSLATION_API RotateResourceIdentities(Resource* const* ppResources, UINT Resources);
-    HRESULT TRANSLATION_API ResolveSharedResource(Resource* pResource);
-
-    void TRANSLATION_API ClearState();
-
-    void TRANSLATION_API SetMarker(const wchar_t* name);
-    void TRANSLATION_API BeginEvent(const wchar_t* name);
-    void TRANSLATION_API EndEvent();
-    
-    void TRANSLATION_API SharingContractPresent(_In_ Resource* pResource);
-    void TRANSLATION_API Present(
-        _In_reads_(numSrcSurfaces) PresentSurface const* pSrcSurfaces,
-        UINT numSrcSurfaces,
-        _In_opt_ Resource* pDest,
-        UINT flipInterval,
-        UINT vidPnSourceId,
-        _In_ D3DKMT_PRESENT* pKMTPresent,
-        bool bDoNotSequence,
-        std::function<HRESULT(PresentCBArgs&)> pfnPresentCb);
-    HRESULT TRANSLATION_API CloseAndSubmitGraphicsCommandListForPresent(
-        BOOL commandsAdded,
-        _In_reads_(numSrcSurfaces) const PresentSurface* pSrcSurfaces, 
-        UINT numSrcSurfaces,
-        _In_opt_ Resource* pDest,
-        _In_ D3DKMT_PRESENT* pKMTPresent);
+    void SharingContractPresent(_In_ Resource* pResource);
 
 public:
-    void TRANSLATION_API GetSharedGDIHandle(_In_ Resource *pResource, _Out_ HANDLE *pHandle);
-    void TRANSLATION_API CreateSharedNTHandle(_In_ Resource *pResource, _Out_ HANDLE *pHandle, _In_opt_ SECURITY_ATTRIBUTES *pSA = nullptr);
+    void CreateSharedNTHandle(_In_ Resource *pResource, _Out_ HANDLE *pHandle, _In_opt_ SECURITY_ATTRIBUTES *pSA = nullptr);
 
     bool ResourceAllocationFallback(ResourceAllocationContext threadingContext);
 
@@ -1330,43 +1064,21 @@ public: // Type
         void ClearState() noexcept;
 
         PipelineState* m_pPSO = nullptr;
-        RootSignature* m_pLastGraphicsRootSig = nullptr, *m_pLastComputeRootSig = nullptr;
+        RootSignature* m_pLastComputeRootSig = nullptr;
 
-        Query* m_pPredicate = nullptr;
-        
-        CViewBoundState<UAV, D3D11_1_UAV_SLOT_COUNT> m_UAVs, m_CSUAVs;
-
-        CSimpleBoundState<TRTV, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> m_RTVs;
-        CSimpleBoundState<TDSV, 1> m_DSVs;
-        CSimpleBoundState<Resource, D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT, VBBinder> m_VBs;
-        CSimpleBoundState<Resource, D3D11_SO_STREAM_COUNT, SOBinder> m_SO;
-        CSimpleBoundState<Resource, 1, IBBinder> m_IB;
-        UINT m_LastVBCount = 0;
+        CViewBoundState<UAV, D3D11_1_UAV_SLOT_COUNT> m_CSUAVs;
 
         // Slots for re-asserting state on a new command list
-        D3D12_GPU_DESCRIPTOR_HANDLE m_UAVTableBase{ 0 }, m_CSUAVTableBase{ 0 };
+        D3D12_GPU_DESCRIPTOR_HANDLE m_CSUAVTableBase{ 0 };
 
         SStageState& GetStageState(EShaderStage) noexcept;
-        SStageState m_PS, m_VS, m_GS, m_HS, m_DS, m_CS;
+        SStageState m_CS;
     };
-
-    void PreRender(COMMAND_LIST_TYPE type) noexcept; // draw, dispatch, clear, copy, etc
-    void PostRender(COMMAND_LIST_TYPE type, UINT64 ReassertBitsToAdd = 0);
 
     D3D12_BOX GetBoxFromResource(Resource *pSrc, UINT SrcSubresource);
     D3D12_BOX GetSubresourceBoxFromBox(Resource* pSrc, UINT RequestedSubresource, UINT BaseSubresource, D3D12_BOX const& SrcBox);
 
-    class BltResolveManager
-    {
-        D3D12TranslationLayer::ImmediateContext& m_ImmCtx;
-        std::map<HWND, unique_comptr<Resource>> m_Temps;
-    public:
-        BltResolveManager(D3D12TranslationLayer::ImmediateContext& ImmCtx);
-        Resource* GetBltResolveTempForWindow(HWND hwnd, Resource& presentingResource);
-    } m_BltResolveManager;
-
 private: // methods
-    void PreDraw() noexcept(false);
     void PreDispatch() noexcept(false);
     
     // The app should inform the translation layer when a frame has been finished
@@ -1374,9 +1086,8 @@ private: // methods
     //
     // The translation layer makes guesses at frame ends (i.e. when flush is called) 
     // but isn't aware when a present is done.
-    void TRANSLATION_API PostSubmitNotification();
+    void PostSubmitNotification();
 
-    void PostDraw();
     void PostDispatch();
 
     void SameResourceCopy(Resource *pSrc, UINT SrcSubresource, Resource *pDst, UINT DstSubresource, UINT dstX, UINT dstY, UINT dstZ, const D3D12_BOX *pSrcBox);
@@ -1393,8 +1104,6 @@ public:
         ) noexcept(false);
 
     bool HasCommands(COMMAND_LIST_TYPE type) noexcept;
-    UINT GetCommandListTypeMaskForQuery(EQueryType query) noexcept;
-
     void PrepForCommandQueueSync(UINT commandListTypeMask);
 
     RootSignature* CreateOrRetrieveRootSignature(RootSignatureDesc const& desc) noexcept(false);
@@ -1402,39 +1111,21 @@ public:
 private:
     bool Shutdown() noexcept;
 
-    template <bool bDispatch> UINT CalculateViewSlotsForBindings() noexcept;
-    template <bool bDispatch> UINT CalculateSamplerSlotsForBindings() noexcept;
+    UINT CalculateViewSlotsForBindings() noexcept;
+    UINT CalculateSamplerSlotsForBindings() noexcept;
 
     // Mark used in command list, copy to descriptor heap, and bind table
-    template<EShaderStage eShader>
     void DirtyShaderResourcesHelper(UINT& HeapSlot) noexcept;
-    template<EShaderStage eShader>
     void DirtyConstantBuffersHelper(UINT& HeapSlot) noexcept;
-    template<EShaderStage eShader>
     void DirtySamplersHelper(UINT& HeapSlot) noexcept;
 
     // Mark used in command list and bind table (descriptors already in heap)
-    template<EShaderStage eShader>
     void ApplyShaderResourcesHelper() noexcept;
-    template<EShaderStage eShader>
     void ApplyConstantBuffersHelper() noexcept;
-    template<EShaderStage eShader>
     void ApplySamplersHelper() noexcept;
-
-    void SetScissorRectsHelper() noexcept;
-    void RefreshNonHeapBindings(UINT64 DirtyBits) noexcept;
-    ID3D12PipelineState* PrepareGenerateMipsObjects(DXGI_FORMAT Format, D3D12_RESOURCE_DIMENSION Dimension) noexcept(false);
-    void EnsureInternalUAVRootSig() noexcept(false);
-    void EnsureDrawAutoResources() noexcept(false);
-    void EnsureQueryResources() noexcept(false);
-    void EnsureExecuteIndirectResources() noexcept(false);
-
-    static const UINT NUM_UAV_ROOT_SIG_CONSTANTS = 2;
-    void FormatBuffer(ID3D12Resource* pBuffer, ID3D12PipelineState* pPSO, UINT FirstElement, UINT NumElements, const UINT Constants[NUM_UAV_ROOT_SIG_CONSTANTS] ) noexcept(false);
 
     // Helper for views
     void TransitionResourceForView(ViewBase* pView, D3D12_RESOURCE_STATES desiredState) noexcept;
-    template<typename TIface> void ClearViewWithNoRenderTarget(View<TIface>* pView, CONST FLOAT[4], UINT NumRects, const D3D12_RECT *pRects);
 
     UINT GetCurrentCommandListTypeMask() noexcept;
 
@@ -1550,42 +1241,24 @@ public: // variables
     static const UINT NUM_FILTER_TYPES = 2;
     D3D12_CPU_DESCRIPTOR_HANDLE m_GenerateMipsSamplers[NUM_FILTER_TYPES];
 
-    BlitHelper m_BlitHelper{ this };
-
     template <typename TIface> CDescriptorHeapManager& GetViewAllocator();
     template<> CDescriptorHeapManager& GetViewAllocator<ShaderResourceViewType>() { return m_SRVAllocator; }
     template<> CDescriptorHeapManager& GetViewAllocator<UnorderedAccessViewType>() { return m_UAVAllocator; }
     template<> CDescriptorHeapManager& GetViewAllocator<RenderTargetViewType>() { return m_RTVAllocator; }
     template<> CDescriptorHeapManager& GetViewAllocator<DepthStencilViewType>() { return m_DSVAllocator; }
 
-    InternalRootSignature m_InternalUAVRootSig;
-    unique_comptr<ID3D12PipelineState> m_pDrawAutoPSO;
-    unique_comptr<ID3D12PipelineState> m_pFormatQueryPSO;
-    unique_comptr<ID3D12PipelineState> m_pAccumulateQueryPSO;
-
-    unique_comptr<ID3D12CommandSignature> m_pDrawInstancedCommandSignature;
-    unique_comptr<ID3D12CommandSignature> m_pDrawIndexedInstancedCommandSignature;
-    unique_comptr<ID3D12CommandSignature> m_pDispatchCommandSignature;
-
-    LIST_ENTRY m_ActiveQueryList;
-
     D3D_FEATURE_LEVEL FeatureLevel() const { return m_FeatureLevel; }
 
     static DXGI_FORMAT GetParentForFormat(DXGI_FORMAT format);
-
-    bool UseRoundTripPSOs()
-    {
-        return m_CreationArgs.UseRoundTripPSOs;
-    }
 
     TranslationLayerCallbacks const& GetUpperlayerCallbacks() { return m_callbacks; }
 
     ResidencyManager &GetResidencyManager() { return m_residencyManager; }
     ResourceStateManager& GetResourceStateManager() { return m_ResourceStateManager; }
 
-    MaxFrameLatencyHelper m_MaxFrameLatencyHelper;
 private: // variables
     ResourceStateManager m_ResourceStateManager;
+    D3D_FEATURE_LEVEL m_FeatureLevel;
 #if TRANSLATION_LAYER_DBG
     UINT64 m_DebugFlags;
 #endif
@@ -1597,7 +1270,6 @@ private: // Dynamic/staging resource pools
     const UINT64 m_BufferPoolTrimThreshold = 100;
     TDynamicBufferPool m_UploadBufferPool;
     TDynamicBufferPool m_ReadbackBufferPool;
-    TDynamicBufferPool m_DecoderBufferPool;
     TDynamicBufferPool& GetBufferPool(AllocatorHeapType HeapType)
     {
         switch (HeapType)
@@ -1606,8 +1278,6 @@ private: // Dynamic/staging resource pools
             return m_UploadBufferPool;
         case AllocatorHeapType::Readback:
             return m_ReadbackBufferPool;
-        case AllocatorHeapType::Decoder:
-            return m_DecoderBufferPool;
         default:
             assert(false);
         }
@@ -1628,7 +1298,6 @@ private: // Dynamic/staging resource pools
     // can only be done on the entire heap, not just the suballocated range
     ConditionalHeapAllocator m_UploadHeapSuballocator;
     ConditionalHeapAllocator m_ReadbackHeapSuballocator;
-    ConditionalHeapAllocator m_DecoderHeapSuballocator;
     ConditionalHeapAllocator& GetAllocator(AllocatorHeapType HeapType)
     {
         switch (HeapType)
@@ -1637,15 +1306,11 @@ private: // Dynamic/staging resource pools
             return m_UploadHeapSuballocator;
         case AllocatorHeapType::Readback:
             return m_ReadbackHeapSuballocator;
-        case AllocatorHeapType::Decoder:
-            return m_DecoderHeapSuballocator;
         default:
             assert(false);
         }
         return m_UploadHeapSuballocator;
     }
-
-    COptLockedContainer<RenameResourceSet> m_RenamesInFlight;
 
 private: // State tracking
     // Dirty states are marked during sets and converted to command list operations at draw time, to avoid multiple costly conversions due to 11/12 API differences
@@ -1666,16 +1331,6 @@ private:
         commandListTypeMask &= ~COMMAND_LIST_TYPE_UNKNOWN_MASK;     // ignore UNKNOWN type
         return commandListTypeMask & (commandListTypeMask - 1) ? false : true;
     }
-
-    void DiscardViewImpl(COMMAND_LIST_TYPE commandListType, ViewBase* pView, const D3D12_RECT*, UINT, bool allSubresourcesSame);
-    void DiscardResourceImpl(COMMAND_LIST_TYPE commandListType, Resource* pResource, const D3D12_RECT* pRects, UINT NumRects, bool allSubresourcesSame);
-    void UpdateTileMappingsImpl(COMMAND_LIST_TYPE commandListType, Resource* pResource, UINT NumTiledResourceRegions, _In_reads_(NumTiledResourceRegions) const D3D12_TILED_RESOURCE_COORDINATE* pTiledResourceRegionStartCoords, 
-                            _In_reads_opt_(NumTiledResourceRegions) const D3D12_TILE_REGION_SIZE* pTiledResourceRegionSizes, Resource* pTilePool, UINT NumRanges, _In_reads_opt_(NumRanges) const TILE_RANGE_FLAG* pRangeFlags, 
-                            _In_reads_opt_(NumRanges) const UINT* pTilePoolStartOffsets, _In_reads_opt_(NumRanges) const UINT* pRangeTileCounts, TILE_MAPPING_FLAG Flags, bool NeedToSubmit);
-    void CopyTileMappingsImpl(COMMAND_LIST_TYPE commandListType, Resource* pDstTiledResource, _In_ const D3D12_TILED_RESOURCE_COORDINATE* pDstStartCoords, Resource* pSrcTiledResource,
-                          _In_ const  D3D12_TILED_RESOURCE_COORDINATE* pSrcStartCoords, _In_ const D3D12_TILE_REGION_SIZE* pTileRegion, TILE_MAPPING_FLAG Flags);
-    void TiledResourceBarrierImpl(COMMAND_LIST_TYPE commandListType, Resource* pBefore, Resource* pAfter);
-    COMMAND_LIST_TYPE GetFallbackCommandListType(UINT commandListTypeMask);
 
     // Device wide scratch space allocation for use in synchronous ops.
     // Only grows.  Free with device.
@@ -1702,24 +1357,6 @@ private:
 };
 
 DEFINE_ENUM_FLAG_OPERATORS(ImmediateContext::UpdateSubresourcesFlags);
-
-struct SafeRenameResourceCookie
-{
-    SafeRenameResourceCookie(Resource* c = nullptr) : m_c(c) { }
-    Resource* Detach() { auto c = m_c; m_c = nullptr; return c; }
-    Resource* Get() { return m_c; }
-    void Delete()
-    {
-        if (m_c)
-        {
-            m_c->m_pParent->DeleteRenameCookie(m_c);
-            m_c = nullptr;
-        }
-    }
-    void Reset(Resource* c) { Delete(); m_c = c; }
-    ~SafeRenameResourceCookie() { Delete(); }
-    Resource* m_c = nullptr;
-};
 
 } // namespace D3D12TranslationLayer
     
