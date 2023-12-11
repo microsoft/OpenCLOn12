@@ -11,7 +11,6 @@
 #include "Allocator.h"
 #include "XPlatHelpers.h"
 
-#include <ThreadPool.hpp>
 #include <formatdesc.hpp>
 
 #include "Shader.hpp"
@@ -25,7 +24,6 @@
 #include "RootSignature.hpp"
 #include "Resource.hpp"
 #include "Query.hpp"
-#include "ResourceCache.hpp"
 #include "ImmediateContext.hpp"
 #include "CommandListManager.hpp"
 

@@ -135,9 +135,8 @@ namespace D3D12TranslationLayer
             return memcmp(m_NumSRVSpacesUsed, o.m_NumSRVSpacesUsed, sizeof(m_NumSRVSpacesUsed)) == 0;
         }
 
-        template <EShaderStage s> ShaderStage const& GetShaderStage() const
+        ShaderStage const& GetShaderStage() const
         {
-            static_assert(s < ShaderStageCount);
             return m_ShaderStages[0];
         }
 
@@ -182,7 +181,7 @@ namespace D3D12TranslationLayer
 
         using RootSignatureBase::Create;
         using DeviceChildImpl::Created;
-        ID3D12RootSignature* GetRootSignature() { return GetForUse(COMMAND_LIST_TYPE::GRAPHICS); }
+        ID3D12RootSignature* GetRootSignature() { return GetForUse(); }
     };
 
     class RootSignature : public RootSignatureBase

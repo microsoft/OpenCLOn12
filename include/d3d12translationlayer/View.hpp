@@ -12,32 +12,9 @@ namespace D3D12TranslationLayer
     // Stores data responsible for remapping D3D11 views to underlying D3D12 views
     //==================================================================================================================================
 
-    template <UINT NumStages, UINT NumBindPoints>
-    class CViewBindingsImpl
-    {
-    public:
-        CViewBindingsImpl() { D3D12TranslationLayer::InitializeListHead(&m_ViewBindingList); }
-        ~CViewBindingsImpl() { if (IsViewBound()) { D3D12TranslationLayer::RemoveEntryList(&m_ViewBindingList); } }
-
-        bool IsViewBound() { return !D3D12TranslationLayer::IsListEmpty(&m_ViewBindingList); }
-
-        void ViewBound(UINT stage, UINT slot) { m_BindPoints[stage].set(slot); }
-        void ViewUnbound(UINT stage, UINT slot) { assert(m_BindPoints[stage][slot]); m_BindPoints[stage].set(slot, false); }
-
-    private:
-        friend class CResourceBindings;
-        friend class ImmediateContext;
-        friend class Resource;
-
-        std::bitset<NumBindPoints> m_BindPoints[NumStages];
-        LIST_ENTRY m_ViewBindingList;
-    };
-
     // These types are purely used to specialize the templated
     // view class
     enum class ShaderResourceViewType {};
-    enum class RenderTargetViewType {};
-    enum class DepthStencilViewType {};
     enum class UnorderedAccessViewType {};
 
     template< class TIface >
@@ -65,16 +42,8 @@ namespace D3D12TranslationLayer
     }
 
     DECLARE_VIEW_MAPPER(ShaderResourceView, SHADER_RESOURCE_VIEW_DESC, D3D12_SHADER_RESOURCE_VIEW_DESC);
-    DECLARE_VIEW_MAPPER(RenderTargetView, RENDER_TARGET_VIEW_DESC, D3D12_RENDER_TARGET_VIEW_DESC);
-    DECLARE_VIEW_MAPPER(DepthStencilView, DEPTH_STENCIL_VIEW_DESC, D3D12_DEPTH_STENCIL_VIEW_DESC);
     DECLARE_VIEW_MAPPER(UnorderedAccessView, UNORDERED_ACCESS_VIEW_DESC, D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER);
 #undef DECLARE_VIEW_MAPPER
-
-    template <class TIface> struct CViewBindingsMapper { using Type = CViewBindingsImpl<1, 1>; };
-    template <> struct CViewBindingsMapper<ShaderResourceViewType> { using Type = CViewBindingsImpl<ShaderStageCount, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT>; };
-    template <> struct CViewBindingsMapper<RenderTargetViewType> { using Type = CViewBindingsImpl<1, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT>; };
-    template <> struct CViewBindingsMapper<UnorderedAccessViewType> { using Type = CViewBindingsImpl<UAVStageCount, D3D11_1_UAV_SLOT_COUNT>; };
-    template <class TIface> using CViewBindings = typename CViewBindingsMapper<TIface>::Type;
 
     class ViewBase : public DeviceChild
     {
@@ -84,7 +53,7 @@ namespace D3D12TranslationLayer
         // Note: This is hiding the base class implementation not overriding it
         // Warning: this method is hidden in the UAV type, and is not virtual
         // Always ensure that this method is called on the most derived type.
-        void UsedInCommandList(COMMAND_LIST_TYPE commandListType, UINT64 id);
+        void UsedInCommandList(UINT64 id);
 
     public: // Members
         Resource* const m_pResource;
@@ -105,12 +74,6 @@ namespace D3D12TranslationLayer
         typedef CViewMapper<TIface> TMapper;
         typedef typename CViewMapper<TIface>::TDesc12 TDesc12;
         typedef typename CViewMapper<TIface>::TTranslationLayerDesc TTranslationLayerDesc;
-
-        struct TBinder
-        {
-            static void Bound(View<TIface>* pView, UINT slot, EShaderStage stage) { if (pView) pView->ViewBound(slot, stage); }
-            static void Unbound(View<TIface>* pView, UINT slot, EShaderStage stage) { if (pView) pView->ViewUnbound(slot, stage); }
-        };
 
     public: // Methods
         static View *CreateView(ImmediateContext* pDevice, const typename TDesc12 &Desc, Resource &ViewResource) noexcept(false) { return new View(pDevice, Desc, ViewResource); }
@@ -134,22 +97,7 @@ namespace D3D12TranslationLayer
             return m_Descriptor;
         }
 
-        void ViewBound(UINT Slot = 0, EShaderStage = e_PS) noexcept;
-        void ViewUnbound(UINT Slot = 0, EShaderStage = e_PS) noexcept;
-
-        UINT16 GetBindRefs() { return m_BindRefs; }
-        void IncrementBindRefs() { m_BindRefs++; }
-        void DecrementBindRefs() 
-        {
-            assert(m_BindRefs > 0);
-            m_BindRefs--; 
-        }
-
-    public:
-        CViewBindings<TIface> m_currentBindings;
-
     private:
-        UINT16 m_BindRefs;
         TDesc12 m_Desc;
 
         // We tamper with m_Desc.Buffer.FirstElement when renaming resources for map discard so it is important that we record the 
@@ -160,8 +108,6 @@ namespace D3D12TranslationLayer
     };
 
     typedef View<ShaderResourceViewType> TSRV;
-    typedef View<RenderTargetViewType> TRTV;
-    typedef View<DepthStencilViewType> TDSV;
     typedef View<UnorderedAccessViewType> TUAV;
 
     // Counter and Append UAVs have an additional resource allocated
@@ -173,10 +119,10 @@ namespace D3D12TranslationLayer
         ~UAV() noexcept(false);
 
         //Note: This is hiding the base class implementation not overriding it
-        void UsedInCommandList(COMMAND_LIST_TYPE commandListType, UINT64 id)
+        void UsedInCommandList(UINT64 id)
         {
-            TUAV::UsedInCommandList(commandListType, id);
-            DeviceChild::UsedInCommandList(commandListType, id);
+            TUAV::UsedInCommandList(id);
+            DeviceChild::UsedInCommandList(id);
         }
 
         static UAV *CreateView(ImmediateContext* pDevice, const TTranslationLayerDesc &Desc, Resource &ViewResource) noexcept(false) { return new UAV(pDevice, Desc, ViewResource); }
@@ -198,6 +144,4 @@ namespace D3D12TranslationLayer
     };
 
     typedef TSRV SRV;
-    typedef TRTV RTV;
-    typedef TDSV DSV;
 };

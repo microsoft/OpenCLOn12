@@ -187,9 +187,8 @@ private:
             ImmCtx.GetResourceStateManager().
                 TransitionResource(res->GetActiveUnderlyingResource(),
                                    D3D12_RESOURCE_STATE_COMMON,
-                                   D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS,
                                    D3D12TranslationLayer::SubresourceTransitionFlags::StateMatchExact |
-                                       D3D12TranslationLayer::SubresourceTransitionFlags::ForceExclusiveState |
+                                       D3D12TranslationLayer::SubresourceTransitionFlags::ForceWriteState |
                                        D3D12TranslationLayer::SubresourceTransitionFlags::NotUsedInCommandListIfNoStateChange);
         }
         ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();

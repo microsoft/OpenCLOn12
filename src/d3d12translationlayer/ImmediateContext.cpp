@@ -10,32 +10,29 @@ namespace D3D12TranslationLayer
 // 
 //==================================================================================================================================
 
-void ImmediateContext::SStageState::ClearState(EShaderStage stage) noexcept
+void ImmediateContext::SStageState::ClearState() noexcept
 {
-    m_CBs.Clear(stage);
-    m_SRVs.Clear(stage);
+    m_CBs.Clear();
+    m_SRVs.Clear();
     m_Samplers.Clear();
 }
 
 void ImmediateContext::SState::ClearState() noexcept
 {
-    for (EShaderStage stage = (EShaderStage)0; stage < ShaderStageCount; stage = (EShaderStage)(stage + 1))
-    {
-        GetStageState(stage).ClearState(stage);
-    }
+    GetStageState().ClearState();
 
-    m_CSUAVs.Clear(e_Compute);
+    m_CSUAVs.Clear();
     m_pPSO = nullptr;
 }
 
-ImmediateContext::SStageState& ImmediateContext::SState::GetStageState(EShaderStage stage) noexcept
+ImmediateContext::SStageState& ImmediateContext::SState::GetStageState() noexcept
 {
     return m_CS;
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTIONS& caps, 
-    ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, TranslationLayerCallbacks const& callbacks, UINT64 debugFlags, CreationArgs args) noexcept(false)
+    ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, TranslationLayerCallbacks const& callbacks, CreationArgs args) noexcept(false)
     : m_nodeIndex(nodeIndex)
     , m_caps(caps)
     , m_FeatureLevel(GetHardwareFeatureLevel(pDevice))
@@ -45,7 +42,6 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
     , m_RTVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 64, true, 1 << nodeIndex)
     , m_DSVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64, true, 1 << nodeIndex)
     , m_SamplerAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 64, true, 1 << nodeIndex)
-    , m_ResourceCache(*this)
     , m_DirtyStates(e_DirtyOnFirstCommandList)
     , m_StatesToReassert(e_ReassertOnNewCommandList)
     , m_UploadBufferPool(m_BufferPoolTrimThreshold, true)
@@ -59,28 +55,23 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
     , m_ScissorRectEnable(false)
     , m_uIndexBufferOffset(0)
     , m_callbacks(callbacks)
-    , m_GenerateMipsRootSig(this)
     , m_DeferredDeletionQueueManager(this)
 
     , m_UploadHeapSuballocator(
-        std::forward_as_tuple(cBuddyMaxBlockSize, cBuddyAllocatorThreshold, true, this, AllocatorHeapType::Upload),
+        std::forward_as_tuple(cBuddyMaxBlockSize, cBuddyAllocatorThreshold, this, AllocatorHeapType::Upload),
         std::forward_as_tuple(this, AllocatorHeapType::Upload),
         ResourceNeedsOwnAllocation)
 
     , m_ReadbackHeapSuballocator(
-        std::forward_as_tuple(cBuddyMaxBlockSize, cBuddyAllocatorThreshold, true, this, AllocatorHeapType::Readback),
+        std::forward_as_tuple(cBuddyMaxBlockSize, cBuddyAllocatorThreshold, this, AllocatorHeapType::Readback),
         std::forward_as_tuple(this, AllocatorHeapType::Readback),
         ResourceNeedsOwnAllocation)
 
     , m_CreationArgs(args)
     , m_ResourceStateManager(*this)
-#if DBG
-    , m_DebugFlags(debugFlags)
-#endif
     , m_bUseRingBufferDescriptorHeaps(false)
     , m_residencyManager(*this)
 {
-    UNREFERENCED_PARAMETER(debugFlags);
     memset(m_BlendFactor, 0, sizeof(m_BlendFactor));
     memset(m_auVertexOffsets, 0, sizeof(m_auVertexOffsets));
     memset(m_auVertexStrides, 0, sizeof(m_auVertexStrides));
@@ -88,8 +79,6 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
     memset(m_aViewports, 0, sizeof(m_aViewports));
 
     HRESULT hr = S_OK;
-
-    m_DeferredDeletionQueueManager.InitLock();
 
     D3D12_COMMAND_QUEUE_DESC SyncOnlyQueueDesc = { D3D12_COMMAND_LIST_TYPE_NONE };
     (void)m_pDevice12->CreateCommandQueue(&SyncOnlyQueueDesc, IID_PPV_ARGS(&m_pSyncOnlyQueue));
@@ -307,34 +296,32 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
     (void)m_pDevice12->QueryInterface(&m_pDevice12_2);
     m_pDevice12->QueryInterface(&m_pCompatDevice);
 
-    m_CommandLists[(UINT)COMMAND_LIST_TYPE::GRAPHICS].reset(new CommandListManager(this, pQueue, COMMAND_LIST_TYPE::GRAPHICS)); // throw( bad_alloc )
-    m_CommandLists[(UINT)COMMAND_LIST_TYPE::GRAPHICS]->InitCommandList();
+    m_CommandList.reset(new CommandListManager(this, pQueue)); // throw( bad_alloc )
+    m_CommandList->InitCommandList();
 }
 
 bool ImmediateContext::Shutdown() noexcept
 {
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList)
     {
-        if (m_CommandLists[i])
-        {
-            // The device is being destroyed so no point executing any authored work
-            m_CommandLists[i]->DiscardCommandList();
+        // The device is being destroyed so no point executing any authored work
+        m_CommandList->DiscardCommandList();
 
-            // Make sure any GPU work still in the pipe is finished
-            try {
-                if (!m_CommandLists[i]->WaitForCompletion()) // throws
-                {
-                    return false;
-                }
-            }
-            catch (_com_error&)
+        // Make sure any GPU work still in the pipe is finished
+        try
+        {
+            if (!m_CommandList->WaitForCompletion()) // throws
             {
                 return false;
             }
-            catch (std::bad_alloc&)
-            {
-                return false;
-            }
+        }
+        catch (_com_error&)
+        {
+            return false;
+        }
+        catch (std::bad_alloc&)
+        {
+            return false;
         }
     }
     return true;
@@ -350,37 +337,25 @@ ImmediateContext::~ImmediateContext() noexcept
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::AddResourceToDeferredDeletionQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired, std::vector<DeferredWait> deferredWaits)
+void ImmediateContext::AddResourceToDeferredDeletionQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, UINT64 lastCommandListID)
 {
     // Note: Due to the below routines being called after deferred deletion queue destruction,
     // all callers of the generic AddObjectToQueue should ensure that the object really needs to be in the queue.
-    if (!RetiredD3D12Object::ReadyToDestroy(this, completionRequired, lastCommandListIDs, deferredWaits))
+    if (!RetiredD3D12Object::ReadyToDestroy(this, lastCommandListID))
     {
-        m_DeferredDeletionQueueManager.GetLocked()->AddObjectToQueue(pUnderlying, std::move(pResidencyHandle), lastCommandListIDs, completionRequired, std::move(deferredWaits));
+        m_DeferredDeletionQueueManager.GetLocked()->AddObjectToQueue(pUnderlying, std::move(pResidencyHandle), lastCommandListID);
     }
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::AddObjectToDeferredDeletionQueue(ID3D12Object* pUnderlying, COMMAND_LIST_TYPE commandListType, UINT64 lastCommandListID, bool completionRequired)
+void ImmediateContext::AddObjectToDeferredDeletionQueue(ID3D12Object* pUnderlying, UINT64 lastCommandListID)
 {
     // Note: May be called after the deferred deletion queue has been destroyed, but in all such cases,
     // the ReadyToDestroy function will return true.
-    if (!RetiredD3D12Object::ReadyToDestroy(this, completionRequired, lastCommandListID, commandListType))
+    if (!RetiredD3D12Object::ReadyToDestroy(this, lastCommandListID))
     {
         std::unique_ptr<ResidencyManagedObjectWrapper> nullUniquePtr;
-        m_DeferredDeletionQueueManager.GetLocked()->AddObjectToQueue(pUnderlying, std::move(nullUniquePtr), commandListType, lastCommandListID, completionRequired);
-    }
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::AddObjectToDeferredDeletionQueue(ID3D12Object* pUnderlying, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired)
-{
-    // Note: May be called after the deferred deletion queue has been destroyed, but in all such cases,
-    // the ReadyToDestroy function will return true.
-    if (!RetiredD3D12Object::ReadyToDestroy(this, completionRequired, lastCommandListIDs))
-    {
-        std::unique_ptr<ResidencyManagedObjectWrapper> nullUniquePtr;
-        m_DeferredDeletionQueueManager.GetLocked()->AddObjectToQueue(pUnderlying, std::move(nullUniquePtr), lastCommandListIDs, completionRequired);
+        m_DeferredDeletionQueueManager.GetLocked()->AddObjectToQueue(pUnderlying, std::move(nullUniquePtr), lastCommandListID);
     }
 }
 
@@ -406,28 +381,22 @@ bool DeferredDeletionQueueManager::TrimDeletedObjects(bool deviceBeingDestroyed)
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-bool DeferredDeletionQueueManager::GetFenceValuesForObjectDeletion(UINT64(&FenceValues)[(UINT)COMMAND_LIST_TYPE::MAX_VALID])
+UINT64 DeferredDeletionQueueManager::GetFenceValueForObjectDeletion()
 {
-    std::fill(FenceValues, std::end(FenceValues), 0ull);
     if (!m_DeferredObjectDeletionQueue.empty())
     {
-        auto& obj = m_DeferredObjectDeletionQueue.front();
-        std::copy(obj.m_lastCommandListIDs, std::end(obj.m_lastCommandListIDs), FenceValues);
-        return true;
+        return m_DeferredObjectDeletionQueue.front().m_lastCommandListID;
     }
-    return false;
+    return ~0ull;
 }
 
-bool DeferredDeletionQueueManager::GetFenceValuesForSuballocationDeletion(UINT64(&FenceValues)[(UINT)COMMAND_LIST_TYPE::MAX_VALID])
+UINT64 DeferredDeletionQueueManager::GetFenceValueForSuballocationDeletion()
 {
-    std::fill(FenceValues, std::end(FenceValues), 0ull);
     if (!m_DeferredSuballocationDeletionQueue.empty())
     {
-        auto& suballocation = m_DeferredSuballocationDeletionQueue.front();
-        std::copy(suballocation.m_lastCommandListIDs, std::end(suballocation.m_lastCommandListIDs), FenceValues);
-        return true;
+        return m_DeferredSuballocationDeletionQueue.front().m_lastCommandListID;
     }
-    return false;
+    return ~0ull;
 }
 
 bool DeferredDeletionQueueManager::SuballocationsReadyToBeDestroyed(bool deviceBeingDestroyed)
@@ -443,8 +412,8 @@ bool ImmediateContext::TrimDeletedObjects(bool deviceBeingDestroyed)
 
 bool ImmediateContext::TrimResourcePools()
 {
-    m_UploadBufferPool.Trim(GetCompletedFenceValue(CommandListType(AllocatorHeapType::Upload)));
-    m_ReadbackBufferPool.Trim(GetCompletedFenceValue(CommandListType(AllocatorHeapType::Readback)));
+    m_UploadBufferPool.Trim(GetCompletedFenceValue());
+    m_ReadbackBufferPool.Trim(GetCompletedFenceValue());
 
     return true;
 }
@@ -458,7 +427,7 @@ void ImmediateContext::PostSubmitNotification()
     TrimDeletedObjects();
     TrimResourcePools();
 
-    const UINT64 completedFence = GetCompletedFenceValue(COMMAND_LIST_TYPE::GRAPHICS);
+    const UINT64 completedFence = GetCompletedFenceValue();
 
     if (m_bUseRingBufferDescriptorHeaps)
     {
@@ -481,7 +450,7 @@ void ImmediateContext::RollOverHeap(OnlineDescriptorHeap& Heap) noexcept(false)
     if (Heap.m_Desc.NumDescriptors < Heap.m_MaxHeapSize)
     {
         // Defer delete the current heap
-        AddObjectToDeferredDeletionQueue(Heap.m_pDescriptorHeap.get(), COMMAND_LIST_TYPE::GRAPHICS, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS), true);
+        AddObjectToDeferredDeletionQueue(Heap.m_pDescriptorHeap.get(), GetCommandListID());
 
         // Grow
         Heap.m_Desc.NumDescriptors *= 2;
@@ -493,9 +462,9 @@ void ImmediateContext::RollOverHeap(OnlineDescriptorHeap& Heap) noexcept(false)
     else
     {
         // If we reach this point they are really heavy heap users so we can fall back the roll over strategy
-        Heap.m_HeapPool.ReturnToPool(std::move(Heap.m_pDescriptorHeap), GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS));
+        Heap.m_HeapPool.ReturnToPool(std::move(Heap.m_pDescriptorHeap), GetCommandListID());
 
-        UINT64 CurrentFenceValue = GetCompletedFenceValue(COMMAND_LIST_TYPE::GRAPHICS);
+        UINT64 CurrentFenceValue = GetCompletedFenceValue();
         Heap.m_pDescriptorHeap = TryAllocateResourceWithFallback([&]() {
             return Heap.m_HeapPool.RetrieveFromPool(CurrentFenceValue, pfnCreateNew, Heap.m_Desc); // throw( _com_error )
             }, ResourceAllocationContext::ImmediateContextThreadLongLived);
@@ -521,7 +490,7 @@ UINT ImmediateContext::ReserveSlots(OnlineDescriptorHeap& Heap, UINT NumSlots) n
 
     do
     {
-        hr = Heap.m_DescriptorRingBuffer.Allocate(NumSlots, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS), offset);
+        hr = Heap.m_DescriptorRingBuffer.Allocate(NumSlots, GetCommandListID(), offset);
 
         if (FAILED(hr))
         {
@@ -548,7 +517,7 @@ UINT ImmediateContext::ReserveSlotsForBindings(OnlineDescriptorHeap& Heap, UINT 
 
     do
     {
-        hr = Heap.m_DescriptorRingBuffer.Allocate(NumSlots, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS), offset);
+        hr = Heap.m_DescriptorRingBuffer.Allocate(NumSlots, GetCommandListID(), offset);
 
         if (FAILED(hr))
         {
@@ -578,13 +547,7 @@ RootSignature* ImmediateContext::CreateOrRetrieveRootSignature(RootSignatureDesc
 //----------------------------------------------------------------------------------------------------------------------------------
 void ImmediateContext::PostDispatch()
 {
-    m_CommandLists[(UINT)COMMAND_LIST_TYPE::GRAPHICS]->DispatchCommandAdded();
-#if DBG
-    if (m_DebugFlags & Debug_FlushOnDispatch && HasCommands(COMMAND_LIST_TYPE::GRAPHICS))
-    {
-        SubmitCommandList(COMMAND_LIST_TYPE::GRAPHICS);  // throws
-    }
-#endif
+    m_CommandList->DispatchCommandAdded();
 }
 
 D3D12_BOX ImmediateContext::GetSubresourceBoxFromBox(Resource *pSrc, UINT RequestedSubresource, UINT BaseSubresource, D3D12_BOX const& SrcBox)
@@ -671,9 +634,6 @@ D3D12_BOX ImmediateContext::GetBoxFromResource(Resource *pSrc, UINT SrcSubresour
 // * A copy to/from suballocated resources that are both from the same underlying heap
 void ImmediateContext::SameResourceCopy(Resource *pDst, UINT DstSubresource, Resource *pSrc, UINT SrcSubresource, UINT dstX, UINT dstY, UINT dstZ, const D3D12_BOX *pSrcBox)
 {
-#ifdef USE_PIX
-    PIXScopedEvent(GetGraphicsCommandList(), 0ull, L"Same Resource Copy");
-#endif
     D3D12_BOX PatchedBox = {};
     if (!pSrcBox)
     {
@@ -789,112 +749,25 @@ void ImmediateContext::PostCopy(Resource *pSrc, UINT srcSubresource, Resource *p
     {
         m_ResourceStateManager.ApplyAllResourceTransitions();
     }
-
-#if DBG
-    if (m_DebugFlags & Debug_FlushOnCopy && HasCommands(COMMAND_LIST_TYPE::GRAPHICS))
-    {
-        SubmitCommandList(COMMAND_LIST_TYPE::GRAPHICS);  // throws
-    }
-#endif
+    AdditionalCommandsAdded();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::PostUpload()
+void ImmediateContext::AddObjectToResidencySet(Resource *pResource)
 {
-#if DBG
-    if (m_DebugFlags & Debug_FlushOnDataUpload && HasCommands(COMMAND_LIST_TYPE::GRAPHICS))
-    {
-        SubmitCommandList(COMMAND_LIST_TYPE::GRAPHICS);  // throws
-    }
-#endif
+    m_CommandList->AddResourceToResidencySet(pResource);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::ConstantBufferBound(Resource* pBuffer, UINT slot, EShaderStage stage) noexcept
+bool ImmediateContext::Flush()
 {
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.ConstantBufferBound(stage, slot);
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::ConstantBufferUnbound(Resource* pBuffer, UINT slot, EShaderStage stage) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.ConstantBufferUnbound(stage, slot);
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::VertexBufferBound(Resource* pBuffer, UINT slot) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.VertexBufferBound(slot);
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::VertexBufferUnbound(Resource* pBuffer, UINT slot) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.VertexBufferUnbound(slot);
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::IndexBufferBound(Resource* pBuffer) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.IndexBufferBound();
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::IndexBufferUnbound(Resource* pBuffer) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.IndexBufferUnbound();
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::StreamOutputBufferBound(Resource* pBuffer, UINT slot) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.StreamOutputBufferBound(slot);
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::StreamOutputBufferUnbound(Resource* pBuffer, UINT slot) noexcept
-{
-    if (pBuffer == nullptr) return;
-    pBuffer->m_currentBindings.StreamOutputBufferUnbound(slot);
-    pBuffer->m_pParent->m_ResourceStateManager.TransitionResourceForBindings(pBuffer);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::AddObjectToResidencySet(Resource *pResource, COMMAND_LIST_TYPE commandListType)
-{
-    m_CommandLists[(UINT)commandListType]->AddResourceToResidencySet(pResource);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-bool  ImmediateContext::Flush(UINT commandListTypeMask)
-{
-#ifdef USE_PIX
-    PIXSetMarker(0ull, L"Flush");
-#endif
     bool bSubmitCommandList = false;
     m_ResourceStateManager.ApplyAllResourceTransitions();
 
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList && m_CommandList->HasCommands())
     {
-        if ((commandListTypeMask & (1 << i)) && m_CommandLists[i] && m_CommandLists[i]->HasCommands())
-        {
-            m_CommandLists[i]->SubmitCommandList();
-            bSubmitCommandList = true;
-        }
+        m_CommandList->SubmitCommandList();
+        bSubmitCommandList = true;
     }
 
     // Even if there are no commands, the app could have still done things like delete resources,
@@ -904,16 +777,13 @@ bool  ImmediateContext::Flush(UINT commandListTypeMask)
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::PrepForCommandQueueSync(UINT commandListTypeMask)
+void ImmediateContext::PrepForCommandQueueSync()
 {
-    Flush(commandListTypeMask);
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    Flush();
+    if (m_CommandList)
     {
-        if ((commandListTypeMask & (1 << i)) && m_CommandLists[i])
-        {
-            assert(!m_CommandLists[i]->HasCommands());
-            m_CommandLists[i]->PrepForCommandQueueSync();
-        }
+        assert(!m_CommandList->HasCommands());
+        m_CommandList->PrepForCommandQueueSync();
     }
 }
 
@@ -926,7 +796,7 @@ void ImmediateContext::CsSetUnorderedAccessViews(UINT Start, __in_range(0, D3D11
         UAV* pUAV = ppUAVs[i];
 
         // Ensure a counter resource is allocated for the UAV if necessary
-        m_CurrentState.m_CSUAVs.UpdateBinding(slot, pUAV, e_Compute);
+        m_CurrentState.m_CSUAVs.UpdateBinding(slot, pUAV);
     }
 }
 
@@ -1076,9 +946,6 @@ void ImmediateContext::ResourceCopy(Resource* pDst, Resource* pSrc )
     assert(pSrc->NumSubresources() == pDst->NumSubresources());
     if (Resource::IsSameUnderlyingSubresource(pSrc, 0, pDst, 0))
     {
-#ifdef USE_PIX
-        PIXScopedEvent(GetGraphicsCommandList(), 0ull, L"Whole-resource copy");
-#endif
         for (UINT Subresource = 0; Subresource < pSrc->NumSubresources(); ++Subresource)
         {
             SameResourceCopy(pDst, Subresource, pSrc, Subresource, 0, 0, 0, nullptr);
@@ -1094,7 +961,6 @@ void ImmediateContext::ResourceCopy(Resource* pDst, Resource* pSrc )
         // buffer's size does not include padding for alignment to pool sizes like for staging textures.
         if ((pSrc->m_Identity->m_bOwnsUnderlyingResource && pDst->m_Identity->m_bOwnsUnderlyingResource &&
             !pSrc->m_Identity->m_bPlacedTexture && !pDst->m_Identity->m_bPlacedTexture &&
-            pSrc->GetOffsetToStreamOutputSuffix() == pDst->GetOffsetToStreamOutputSuffix() &&
             pSrc->IsBloatedConstantBuffer() == pDst->IsBloatedConstantBuffer()))
         {
             // Neither resource should be suballocated, so no offset adjustment required
@@ -1111,9 +977,6 @@ void ImmediateContext::ResourceCopy(Resource* pDst, Resource* pSrc )
         }
         else
         {
-#ifdef USE_PIX
-            PIXScopedEvent(GetGraphicsCommandList(), 0ull, L"Whole-resource copy");
-#endif
             for (UINT Subresource = 0; Subresource < pSrc->NumSubresources(); ++Subresource)
             {
                 CopyAndConvertSubresourceRegion(pDst, Subresource, pSrc, Subresource, 0, 0, 0, nullptr);
@@ -1343,9 +1206,6 @@ inline void Swap10bitRBUpload(const BYTE* pSrcData, UINT SrcRowPitch, UINT SrcDe
 _Use_decl_annotations_
 void ImmediateContext::FinalizeUpdateSubresources(Resource* pDst, PreparedUpdateSubresourcesOperation const& PreparedStorage, D3D12_PLACED_SUBRESOURCE_FOOTPRINT const* LocalPlacementDescs)
 {
-#ifdef USE_PIX
-    PIXScopedEvent(GetGraphicsCommandList(), 0ull, L"UpdateSubresource on GPU timeline");
-#endif
     bool bUseLocalPlacement = LocalPlacementDescs != nullptr;
 
     const UINT8 PlaneCount = (pDst->SubresourceMultiplier() * pDst->AppDesc()->NonOpaquePlaneCount());
@@ -1402,10 +1262,9 @@ void ImmediateContext::FinalizeUpdateSubresources(Resource* pDst, PreparedUpdate
 
     DoFinalize();
 
-    AdditionalCommandsAdded(COMMAND_LIST_TYPE::GRAPHICS);
-    PostUpload();
+    AdditionalCommandsAdded();
 
-    ReleaseSuballocatedHeap(AllocatorHeapType::Upload, mappableResource, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS), COMMAND_LIST_TYPE::GRAPHICS);
+    ReleaseSuballocatedHeap(AllocatorHeapType::Upload, mappableResource, GetCommandListID());
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -1422,9 +1281,6 @@ ImmediateContext::CPrepareUpdateSubresourcesHelper::CPrepareUpdateSubresourcesHe
     , Subresources(Subresources)
     , bDstBoxPresent(pDstBox != nullptr)
 {
-#ifdef USE_PIX
-    PIXScopedEvent(0ull, L"UpdateSubresource on CPU timeline");
-#endif
 #if DBG
     AssertPreconditions(pSrcData, pClearPattern);
 #endif
@@ -1802,7 +1658,7 @@ unique_comptr<ID3D12Resource> ImmediateContext::AcquireTransitionableUploadBuffe
         return std::move(AllocateHeap(Size, 0, HeapType));
     };
 
-    UINT64 CurrentFence = GetCompletedFenceValue(CommandListType(HeapType));
+    UINT64 CurrentFence = GetCompletedFenceValue();
 
     return Pool.RetrieveFromPool(Size, CurrentFence, pfnCreateNew); // throw( _com_error )
 }
@@ -1825,7 +1681,7 @@ D3D12ResourceSuballocation ImmediateContext::AcquireSuballocatedHeap(AllocatorHe
 {
     if (threadingContext == ResourceAllocationContext::ImmediateContextThreadTemporary)
     {
-        UploadHeapSpaceAllocated(CommandListType(HeapType), Size);
+        UploadHeapSpaceAllocated(Size);
     }
 
     auto &allocator = GetAllocator(HeapType);
@@ -1844,16 +1700,6 @@ D3D12ResourceSuballocation ImmediateContext::AcquireSuballocatedHeap(AllocatorHe
     return D3D12ResourceSuballocation(allocator.GetInnerAllocation(suballocation), suballocation);
 }
 
-inline bool IsSyncPointLessThanOrEqual(UINT64(&lhs)[(UINT)COMMAND_LIST_TYPE::MAX_VALID],
-                                       UINT64(&rhs)[(UINT)COMMAND_LIST_TYPE::MAX_VALID])
-{
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; ++i)
-    {
-        if (lhs[i] > rhs[i])
-            return false;
-    }
-    return true;
-}
 //----------------------------------------------------------------------------------------------------------------------------------
 bool ImmediateContext::ResourceAllocationFallback(ResourceAllocationContext threadingContext)
 {
@@ -1862,67 +1708,31 @@ bool ImmediateContext::ResourceAllocationFallback(ResourceAllocationContext thre
         return true;
     }
 
-    UINT64 SyncPoints[2][(UINT)COMMAND_LIST_TYPE::MAX_VALID];
-    bool SyncPointExists[2];
+    UINT64 SyncPoint;
     {
         auto DeletionManagerLocked = m_DeferredDeletionQueueManager.GetLocked();
-        SyncPointExists[0] = DeletionManagerLocked->GetFenceValuesForObjectDeletion(SyncPoints[0]);
-        SyncPointExists[1] = DeletionManagerLocked->GetFenceValuesForSuballocationDeletion(SyncPoints[1]);
+        SyncPoint = std::min(DeletionManagerLocked->GetFenceValueForObjectDeletion(),
+                             DeletionManagerLocked->GetFenceValueForSuballocationDeletion());
     }
     // If one is strictly less than the other, wait just for that one.
-    if (SyncPointExists[0] && SyncPointExists[1])
-    {
-        if (IsSyncPointLessThanOrEqual(SyncPoints[0], SyncPoints[1]))
-        {
-            SyncPointExists[1] = false;
-        }
-        else if (IsSyncPointLessThanOrEqual(SyncPoints[1], SyncPoints[0]))
-        {
-            SyncPointExists[0] = false;
-        }
-    }
     const bool ImmediateContextThread = threadingContext != ResourceAllocationContext::FreeThread;
-    auto WaitForSyncPoint = [&](UINT64(&SyncPoint)[(UINT)COMMAND_LIST_TYPE::MAX_VALID])
-    {
-        for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; ++i)
-        {
-            auto CommandListManager = GetCommandListManager((COMMAND_LIST_TYPE)i);
-            if (CommandListManager)
-            {
-                CommandListManager->WaitForFenceValueInternal(ImmediateContextThread, SyncPoint[i]); // throws
-            }
-        }
-    };
 
-    //If index == 0 we are checking for object deletion, else subobject deletion
-    auto WasMemoryFreed = [&](int index) -> bool {
-        // DeferredDeletionQueueManager::TrimDeletedObjects() is the only place where we pop() 
-        // items from the deletion queues. This means that, if the sync points are different after
-        // the WaitForSyncPoint call, we must have called TrimDeletedObjects and freed some memory. 
-        UINT64 newSyncPoint[(UINT)COMMAND_LIST_TYPE::MAX_VALID];
+    auto CommandListManager = GetCommandListManager();
+    if (CommandListManager)
+    {
+        CommandListManager->WaitForFenceValueInternal(ImmediateContextThread, SyncPoint); // throws
+    }
+
+    // DeferredDeletionQueueManager::TrimDeletedObjects() is the only place where we pop() 
+    // items from the deletion queues. This means that, if the sync points are different after
+    // the WaitForSyncPoint call, we must have called TrimDeletedObjects and freed some memory. 
+    UINT64 newSyncPoint;
+    {
         auto DeletionManagerLocked = m_DeferredDeletionQueueManager.GetLocked();
-        bool newSyncPointExists = false;
-        if (index == 0) {
-            newSyncPointExists = DeletionManagerLocked->GetFenceValuesForObjectDeletion(newSyncPoint);
-        }
-        else {
-            newSyncPointExists = DeletionManagerLocked->GetFenceValuesForSuballocationDeletion(newSyncPoint);
-        }
-        constexpr size_t numBytes = sizeof(UINT64) * (size_t)COMMAND_LIST_TYPE::MAX_VALID;
-        return !newSyncPointExists || memcmp(&SyncPoints[index], &newSyncPoint, numBytes);
-    };
-
-    bool freedMemory = false;
-    if (SyncPointExists[0])
-    {
-        WaitForSyncPoint(SyncPoints[0]); // throws
-        freedMemory = WasMemoryFreed(0);
+        newSyncPoint = std::min(DeletionManagerLocked->GetFenceValueForObjectDeletion(),
+                                DeletionManagerLocked->GetFenceValueForSuballocationDeletion());
     }
-    if (SyncPointExists[1])
-    {
-        WaitForSyncPoint(SyncPoints[1]); // throws
-        freedMemory |= WasMemoryFreed(1);
-    }
+    bool freedMemory = newSyncPoint < ~0ull && newSyncPoint != SyncPoint;
 
     // If we've already freed up memory go ahead and return true, else try to Trim now and return that result
     return freedMemory || TrimDeletedObjects();
@@ -1991,29 +1801,17 @@ void ImmediateContext::ReturnTransitionableBufferToPool(AllocatorHeapType HeapTy
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::ReleaseSuballocatedHeap(AllocatorHeapType HeapType, D3D12ResourceSuballocation &resource, UINT64 FenceValue, COMMAND_LIST_TYPE commandListType) noexcept
+void ImmediateContext::ReleaseSuballocatedHeap(AllocatorHeapType HeapType, D3D12ResourceSuballocation &resource, UINT64 FenceValue) noexcept
 {
     auto &allocator = GetAllocator(HeapType);
 
-    m_DeferredDeletionQueueManager.GetLocked()->AddSuballocationToQueue(resource.GetBufferSuballocation(), allocator, commandListType, FenceValue);
-    resource.Reset();
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::ReleaseSuballocatedHeap(AllocatorHeapType HeapType, D3D12ResourceSuballocation &resource, const UINT64 FenceValues[]) noexcept
-{
-    auto &allocator = GetAllocator(HeapType);
-
-    m_DeferredDeletionQueueManager.GetLocked()->AddSuballocationToQueue(resource.GetBufferSuballocation(), allocator, FenceValues);
+    m_DeferredDeletionQueueManager.GetLocked()->AddSuballocationToQueue(resource.GetBufferSuballocation(), allocator, FenceValue);
     resource.Reset();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 bool ImmediateContext::MapDynamicTexture(Resource* pResource, UINT Subresource, MAP_TYPE MapType, bool DoNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* pMap )
 {
-#ifdef USE_PIX
-    PIXScopedEvent(GetGraphicsCommandList(), 0ull, L"Map of non-mappable resource");
-#endif
     assert(pResource->GetEffectiveUsage() == RESOURCE_USAGE_DYNAMIC);
     assert(MapType != MAP_TYPE_WRITE_NOOVERWRITE);
 
@@ -2038,7 +1836,7 @@ bool ImmediateContext::MapDynamicTexture(Resource* pResource, UINT Subresource, 
     {
         // If an app modifies the resource after a readback copy has been initiated but not mapped again,
         // make sure to invalidate the old copy so that the app 
-        auto& exclusiveState = pResource->m_Identity->m_currentState.GetExclusiveSubresourceState(Subresource);
+        auto& state = pResource->m_Identity->m_currentState.GetSubresourceState(Subresource);
         const bool bPreviousCopyInvalid = 
             // If the app changed it's mind and decided it doesn't need to readback anymore,
             // we can throw out the copy since they'll be modifying the resource anyways
@@ -2046,8 +1844,7 @@ bool ImmediateContext::MapDynamicTexture(Resource* pResource, UINT Subresource, 
             // The copy was done on the graphics queue so it's been modified
             // if the last write state was outside of graphics or newer than the
             // last exclusive state's fence value
-            exclusiveState.CommandListType != COMMAND_LIST_TYPE::GRAPHICS ||
-            exclusiveState.FenceValue > pResource->GetLastCopyCommandListID(Subresource);
+            state.WriteFenceValue > pResource->GetLastCopyCommandListID(Subresource);
 
         if (bPreviousCopyInvalid)
         {
@@ -2110,7 +1907,7 @@ bool ImmediateContext::MapDynamicTexture(Resource* pResource, UINT Subresource, 
                     ResourceCopyRegion(renameResource.get(), iPlane, DstX, DstY, DstZ, pResource, planeSubresource, pReadWriteRange);
                 }
 
-                pResource->SetLastCopyCommandListID(Subresource, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS));
+                pResource->SetLastCopyCommandListID(Subresource, GetCommandListID());
             }
         }
     }
@@ -2163,7 +1960,7 @@ bool ImmediateContext::SynchronizeForMap(Resource* pResource, UINT Subresource, 
 {
     if (MapType == MAP_TYPE_READ || MapType == MAP_TYPE_READWRITE)
     {
-        GetCommandListManager(COMMAND_LIST_TYPE::GRAPHICS)->ReadbackInitiated();
+        GetCommandListManager()->ReadbackInitiated();
     }
 
     auto& CurrentState = pResource->m_Identity->m_currentState;
@@ -2173,51 +1970,29 @@ bool ImmediateContext::SynchronizeForMap(Resource* pResource, UINT Subresource, 
            // 9on12 special case
            pResource->OwnsReadbackHeap() ||
            // For Map(DEFAULT) we should've made sure we're in common
-           CurrentState.GetExclusiveSubresourceState(Subresource).State == D3D12_RESOURCE_STATE_COMMON ||
+           CurrentState.GetSubresourceState(Subresource).State == D3D12_RESOURCE_STATE_COMMON ||
            // Or we're not mapping the actual resource
            pResource->GetCurrentCpuHeap(Subresource) != nullptr);
 
     // We want to synchronize against the last command list to write to this subresource if
     // either the last op to it was a write (or in the same command list as a write),
     // or if we're only mapping it for read.
-    bool bUseExclusiveState = MapType == MAP_TYPE_READ || CurrentState.IsExclusiveState(Subresource);
-    if (bUseExclusiveState)
-    {
-        auto& ExclusiveState = CurrentState.GetExclusiveSubresourceState(Subresource);
-        if (ExclusiveState.CommandListType == COMMAND_LIST_TYPE::UNKNOWN)
-        {
-            // Resource either has never been used, or at least never written to.
-            return true;
-        }
-        return WaitForFenceValue(ExclusiveState.CommandListType, ExclusiveState.FenceValue, DoNotWait); // throws
-    }
-    else
-    {
-        // Wait for all reads of the resource to be done before allowing write access.
-        auto& SharedState = CurrentState.GetSharedSubresourceState(Subresource);
-        for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; ++i)
-        {
-            if (SharedState.FenceValues[i] > 0 &&
-                !WaitForFenceValue((COMMAND_LIST_TYPE)i, SharedState.FenceValues[i], DoNotWait)) // throws
-            {
-                return false;
-            }
-        }
-        return true;
-    }
+    auto& SubresourceState = CurrentState.GetSubresourceState(Subresource);
+    UINT64 FenceValue = MapType == MAP_TYPE_READ ? SubresourceState.WriteFenceValue : SubresourceState.ReadFenceValue;
+    return WaitForFenceValue(FenceValue, DoNotWait); // throws
 }
 
 
 //----------------------------------------------------------------------------------------------------------------------------------
-bool ImmediateContext::WaitForFenceValue(COMMAND_LIST_TYPE type, UINT64 FenceValue, bool DoNotWait)
+bool ImmediateContext::WaitForFenceValue(UINT64 FenceValue, bool DoNotWait)
 {
     if (DoNotWait)
     {
-        if (FenceValue == GetCommandListID(type))
+        if (FenceValue == GetCommandListID())
         {
-            SubmitCommandList(type); // throws on CommandListManager::CloseCommandList(...)
+            SubmitCommandList(); // throws on CommandListManager::CloseCommandList(...)
         }
-        if (FenceValue > GetCompletedFenceValue(type))
+        if (FenceValue > GetCompletedFenceValue())
         {
             return false;
         }
@@ -2225,7 +2000,7 @@ bool ImmediateContext::WaitForFenceValue(COMMAND_LIST_TYPE type, UINT64 FenceVal
     }
     else
     {
-        return WaitForFenceValue(type, FenceValue); // throws
+        return WaitForFenceValue(FenceValue); // throws
     }
 }
 
@@ -2309,7 +2084,7 @@ bool  ImmediateContext::MapDefault(Resource* pResource, UINT Subresource, MAP_TY
 
     if (pResource->Parent()->ResourceDimension12() != D3D12_RESOURCE_DIMENSION_BUFFER)
     {
-        m_ResourceStateManager.TransitionSubresource(pResource, Subresource, D3D12_RESOURCE_STATE_COMMON, COMMAND_LIST_TYPE::UNKNOWN, SubresourceTransitionFlags::StateMatchExact | SubresourceTransitionFlags::NotUsedInCommandListIfNoStateChange);
+        m_ResourceStateManager.TransitionSubresource(pResource, Subresource, D3D12_RESOURCE_STATE_COMMON, SubresourceTransitionFlags::StateMatchExact | SubresourceTransitionFlags::NotUsedInCommandListIfNoStateChange);
         m_ResourceStateManager.ApplyAllResourceTransitions();
         if (MapType == MAP_TYPE_WRITE_NOOVERWRITE)
         {
@@ -2374,149 +2149,7 @@ bool  ImmediateContext::MapUnderlyingSynchronize(Resource* pResource, UINT Subre
     bool bSynchronizeSucceeded = SynchronizeForMap(pResource, Subresource, MapType, DoNotWait);
     if (bSynchronizeSucceeded)
     {
-        if (pResource->m_FormatEmulationStagingData.empty())
-        {
-            MapUnderlying(pResource, Subresource, MapType, pReadWriteRange, pMap);
-        }
-        else
-        {
-            assert(!pResource->m_Identity->m_bOwnsUnderlyingResource);
-
-            Resource::EmulatedFormatMapState State = (MapType == MAP_TYPE_READ) ? Resource::EmulatedFormatMapState::Read :
-                (MapType == MAP_TYPE_READWRITE) ? Resource::EmulatedFormatMapState::ReadWrite : Resource::EmulatedFormatMapState::Write;
-
-            ZeroMemory(pMap, sizeof(*pMap));
-            SIZE_T StagingBufferSize = 0;
-            CD3DX12_RANGE WrittenRange(0, 0);
-            void* pMapped = nullptr;
-
-            if (pResource->m_FormatEmulationStagingData[Subresource].m_MapState == State)
-            {
-                ++pResource->m_FormatEmulationStagingData[Subresource].m_MapRefCount;                
-
-                if (pResource->GetFormatEmulation() == FormatEmulation::YV12)
-                {
-                    MapUnderlying(pResource, Subresource, MapType, pReadWriteRange, pMap);
-                }
-                else
-                {
-                    assert(pResource->GetFormatEmulation() == FormatEmulation::None);
-                    pMap->pData = pResource->GetFormatEmulationSubresourceStagingAllocation(Subresource).get();
-                }
-            }
-            else if (pResource->m_FormatEmulationStagingData[Subresource].m_MapState == Resource::EmulatedFormatMapState::None)
-            {
-                if (pResource->GetFormatEmulation() == FormatEmulation::YV12)
-                {
-                    assert(pResource->AppDesc()->Format() == DXGI_FORMAT_NV12);
-
-                    MapUnderlying(pResource, Subresource, MapType, pReadWriteRange, pMap);
-
-                    UINT MipIndex, PlaneIndex, ArrayIndex;
-                    pResource->DecomposeSubresource(Subresource, MipIndex, ArrayIndex, PlaneIndex);
-
-                    if (PlaneIndex == 1)
-                    {
-                        auto& UVPlacement = pResource->GetSubresourcePlacement(pResource->GetSubresourceIndex(1, MipIndex, ArrayIndex));
-                        UINT YV12RowPitch = UVPlacement.Footprint.RowPitch >> 1;
-                        UINT UVWidth = UVPlacement.Footprint.Width;
-                        UINT UVHeight =  UVPlacement.Footprint.Height;
-
-                        BYTE* pData = static_cast<BYTE*>(pMap->pData);                        
-                        auto pbUTemp = m_SyncronousOpScrachSpace.GetBuffer(UVWidth * UVHeight);
-
-                        for (UINT i = 0; i < UVPlacement.Footprint.Height; ++i)
-                        {
-                            BYTE* pSrcUV = pData + i * pMap->RowPitch;
-                            BYTE* pDstV = pData + i * YV12RowPitch;
-                            BYTE* pDstU = pbUTemp + i * UVWidth;
-
-                            for (UINT j = 0; j < UVWidth; ++j)
-                            {
-                                *pDstU++ = *pSrcUV++;
-                                *pDstV++ = *pSrcUV++;
-                            }
-                        }
-
-                        for (UINT i = 0; i < UVHeight; ++i)
-                        {
-                            BYTE* pDstU = pData + (UVHeight + i) * YV12RowPitch;
-                            BYTE* pSrcU = pbUTemp + i * UVWidth;
-
-                            memcpy (pDstU, pSrcU, UVWidth);
-                        }
-                    }
-                }
-                else
-                {
-                    assert(!pReadWriteRange); // TODO: Add handling for DSVs that are only getting a subsection mapped
-                    assert(pResource->AppDesc()->Usage() == RESOURCE_USAGE_STAGING);
-                    assert(pResource->SubresourceMultiplier() == 2);
-                    assert(pResource->GetFormatEmulation() == FormatEmulation::None);
-
-                    {
-                        auto& Placement = pResource->GetSubresourcePlacement(pResource->GetExtendedSubresourceIndex(Subresource, 0));
-                        CD3D11FormatHelper::CalculateResourceSize(Placement.Footprint.Width,
-                                                                    Placement.Footprint.Height,
-                                                                    1,
-                                                                    pResource->AppDesc()->Format(),
-                                                                    1,
-                                                                    1,
-                                                                    StagingBufferSize,
-                                                                    reinterpret_cast<D3D11_MAPPED_SUBRESOURCE*>(pMap));
-                    }
-
-                    auto& pStagingBuffer = pResource->GetFormatEmulationSubresourceStagingAllocation(Subresource);
-
-                    if (!pStagingBuffer)
-                    {
-                        void* pData = AlignedHeapAlloc16(StagingBufferSize);
-                        if (!pData)
-                        {
-                            ThrowFailure(E_OUTOFMEMORY);
-                        }
-                        pStagingBuffer.reset(reinterpret_cast<BYTE*>(pData));
-                    }
-
-                    // The interleaving copy uses |= to write each plane's contents into the dest,
-                    // which will break if the destination contains garbage
-                    ZeroMemory(pStagingBuffer.get(), StagingBufferSize);
-
-                    // Note: Always have to interleave the source contents
-                    // Since MAP_WRITE does not imply old contents are discarded, we must provide
-                    // the buffer filled with the correct previous contents
-                    CD3DX12_RANGE ReadRange(pResource->GetSubresourceRange(pResource->GetExtendedSubresourceIndex(Subresource, 0)).Begin,
-                                            pResource->GetSubresourceRange(pResource->GetExtendedSubresourceIndex(Subresource, 1)).End);
-
-                    pResource->GetUnderlyingResource()->Map(0, &ReadRange, &pMapped);
-
-                    for (UINT i = 0; i < pResource->SubresourceMultiplier(); ++i)
-                    {
-                        UINT ExtendedSubresource = pResource->GetExtendedSubresourceIndex(Subresource, i);
-                        auto& Placement = pResource->GetSubresourcePlacement(ExtendedSubresource);
-
-                        BYTE* pSrcPlane = reinterpret_cast<BYTE*>(pMapped) + Placement.Offset;
-
-                        DXGI_FORMAT parentFormat = GetParentForFormat(pResource->AppDesc()->Format());
-                        DepthStencilInterleavingReadback(parentFormat, i,
-                                                            pSrcPlane, Placement.Footprint.RowPitch,
-                                                            pStagingBuffer.get(), pMap->RowPitch,
-                                                            Placement.Footprint.Width, Placement.Footprint.Height);
-                        
-                    }
-
-                    pResource->GetUnderlyingResource()->Unmap(0, &WrittenRange);
-                    pMap->pData = pStagingBuffer.get();
-                }
-
-                pResource->m_FormatEmulationStagingData[Subresource].m_MapState = State;
-                pResource->m_FormatEmulationStagingData[Subresource].m_MapRefCount = 1;
-            }
-            else
-            {
-                ThrowFailure(E_FAIL);
-            }
-        }
+        MapUnderlying(pResource, Subresource, MapType, pReadWriteRange, pMap);
     }
     return bSynchronizeSucceeded;
 }
@@ -2562,129 +2195,20 @@ void ImmediateContext::UnmapUnderlyingStaging(Resource* pResource, UINT Subresou
     assert(pResource->AppDesc()->Usage() == RESOURCE_USAGE_DYNAMIC || pResource->AppDesc()->Usage() == RESOURCE_USAGE_STAGING);
     assert(pResource->OwnsReadbackHeap() ||  !pResource->m_Identity->m_bOwnsUnderlyingResource);
 
-    if (pResource->m_FormatEmulationStagingData.empty())
-    {
-        auto pResource12 = pResource->GetUnderlyingResource();        
+    auto pResource12 = pResource->GetUnderlyingResource();        
 
-        // No way to tell whether the map that is being undone was a READ, WRITE, or both, so key off CPU access flags
-        // to determine if data could've been written by the CPU. If we couldn't have written anything, pass an empty range
-        bool bCouldBeWritten = (pResource->AppDesc()->CPUAccessFlags() & RESOURCE_CPU_ACCESS_WRITE) != 0;
-        D3D12_RANGE WrittenRange = bCouldBeWritten ?
-            pResource->GetSubresourceRange(Subresource, pReadWriteRange) : CD3DX12_RANGE(0, 0);
+    // No way to tell whether the map that is being undone was a READ, WRITE, or both, so key off CPU access flags
+    // to determine if data could've been written by the CPU. If we couldn't have written anything, pass an empty range
+    bool bCouldBeWritten = (pResource->AppDesc()->CPUAccessFlags() & RESOURCE_CPU_ACCESS_WRITE) != 0;
+    D3D12_RANGE WrittenRange = bCouldBeWritten ?
+        pResource->GetSubresourceRange(Subresource, pReadWriteRange) : CD3DX12_RANGE(0, 0);
 
-        pResource12->Unmap(0, &WrittenRange);
-    }
-    else if (pResource->m_FormatEmulationStagingData[Subresource].m_MapState == Resource::EmulatedFormatMapState::None)
-    {
-        ThrowFailure(E_FAIL);
-    }
-    else if (--pResource->m_FormatEmulationStagingData[Subresource].m_MapRefCount == 0)
-    {
-        assert(!pReadWriteRange); // Not supporting mapped DSVs with subranges
-        auto State = pResource->m_FormatEmulationStagingData[Subresource].m_MapState;
-        bool bDoCopy = (State != Resource::EmulatedFormatMapState::Read) 
-                    || pResource->IsInplaceFormatEmulation();
-
-        if (bDoCopy)
-        {
-            CD3DX12_RANGE ReadRange(0, 0);
-            void* pMapped;
-
-            if (pResource->GetFormatEmulation() == FormatEmulation::YV12)
-            {
-                UINT MipIndex, PlaneIndex, ArrayIndex;
-                pResource->DecomposeSubresource(Subresource, MipIndex, ArrayIndex, PlaneIndex);
-
-                if (PlaneIndex == 1)
-                {
-                    auto& UVPlacement = pResource->GetSubresourcePlacement(Subresource);
-                    UINT YV12RowPitch = UVPlacement.Footprint.RowPitch >> 1;
-                    UINT UVWidth = UVPlacement.Footprint.Width;
-                    UINT UVHeight =  UVPlacement.Footprint.Height;
-                    UINT UVRowPitch = UVPlacement.Footprint.RowPitch;
-
-                    pResource->GetUnderlyingResource()->Map(0, &ReadRange, &pMapped);
-
-                    BYTE* pData = static_cast<BYTE*>(pMapped) + UVPlacement.Offset;
-                    BYTE* pbVTemp = m_SyncronousOpScrachSpace.GetBuffer(UVWidth * UVHeight);
-
-                    for (UINT i = 0; i < UVHeight; ++i)
-                    {
-                        BYTE* pDstV = pbVTemp + i * UVWidth;
-                        BYTE* pSrcV = pData + i * YV12RowPitch;
-                        memcpy (pDstV, pSrcV, UVWidth);
-                    }
-
-                    for (UINT i = 0; i < UVHeight; ++i)
-                    {
-                        BYTE* pSrcV = pbVTemp + i * UVWidth; 
-                        BYTE* pSrcU = pData + (UVHeight + i ) * YV12RowPitch;
-                        BYTE* pDstUV = pData + i * UVRowPitch;
-                        
-
-                        for (UINT j = 0; j < UVWidth; ++j)
-                        {
-                            *pDstUV++ = *pSrcU++;
-                            *pDstUV++ = *pSrcV++;
-                        }
-                    }
-
-                    pResource->GetUnderlyingResource()->Unmap(0, &pResource->GetSubresourceRange(Subresource));
-                }
-
-                pResource->GetUnderlyingResource()->Unmap(0, &pResource->GetSubresourceRange(Subresource));
-            }
-            else
-            {
-                auto& pStagingBuffer = pResource->GetFormatEmulationSubresourceStagingAllocation(Subresource);
-
-                assert(pStagingBuffer.get() != nullptr);
-                assert(pResource->GetFormatEmulation() == FormatEmulation::None);
-
-                UINT InterleavedRowPitch;
-                {
-                    auto& Placement = pResource->GetSubresourcePlacement(pResource->GetExtendedSubresourceIndex(Subresource, 0));
-                    CD3D11FormatHelper::CalculateMinimumRowMajorRowPitch(pResource->AppDesc()->Format(), Placement.Footprint.Width, InterleavedRowPitch);
-                }
-
-                CD3DX12_RANGE WrittenRange(pResource->GetSubresourceRange(pResource->GetExtendedSubresourceIndex(Subresource, 0)).Begin,
-                                           pResource->GetSubresourceRange(pResource->GetExtendedSubresourceIndex(Subresource, 1)).End);
-
-                pResource->GetUnderlyingResource()->Map(0, &ReadRange, &pMapped);
-
-                for (UINT i = 0; i < pResource->SubresourceMultiplier(); ++i)
-                {
-                    UINT ExtendedSubresource = pResource->GetExtendedSubresourceIndex(Subresource, i);
-                    auto& Placement = pResource->GetSubresourcePlacement(ExtendedSubresource);
-    
-                    BYTE* pDstPlane = reinterpret_cast<BYTE*>(pMapped) + Placement.Offset;
-    
-                    DXGI_FORMAT parentFormat = GetParentForFormat(pResource->AppDesc()->Format());
-                    DepthStencilDeInterleavingUpload(parentFormat, i,
-                                                     pStagingBuffer.get(), InterleavedRowPitch,
-                                                     pDstPlane, Placement.Footprint.RowPitch,
-                                                     Placement.Footprint.Width, Placement.Footprint.Height);
-                }
-    
-                pResource->GetUnderlyingResource()->Unmap(0, &WrittenRange);
-                pStagingBuffer.reset(nullptr);
-            }
-        }
-        else if (pResource->GetFormatEmulation() != FormatEmulation::None)
-        {
-            assert(pResource->GetFormatEmulation() == FormatEmulation::YV12);
-            pResource->GetUnderlyingResource()->Unmap(0, &CD3DX12_RANGE(0, 0));
-        }
-        pResource->m_FormatEmulationStagingData[Subresource].m_MapState = Resource::EmulatedFormatMapState::None;
-    }
+    pResource12->Unmap(0, &WrittenRange);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 void ImmediateContext::UnmapDynamicTexture(Resource* pResource, UINT Subresource, _In_opt_ const D3D12_BOX *pReadWriteRange, bool bUploadMappedContents)
 {
-#ifdef USE_PIX
-    PIXScopedEvent(GetGraphicsCommandList(), 0ull, L"Unmap non-mappable resource");
-#endif
     UINT MipIndex, PlaneIndex, ArrayIndex;
     pResource->DecomposeSubresource(Subresource, MipIndex, ArrayIndex, PlaneIndex);
 
@@ -2789,32 +2313,17 @@ void ImmediateContext::CopyDataToBuffer(
         Size
         );
 
-    AdditionalCommandsAdded(COMMAND_LIST_TYPE::GRAPHICS);
+    AdditionalCommandsAdded();
     ReleaseSuballocatedHeap(
         AllocatorHeapType::Upload, 
         UploadHeap,
-        GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS),
-        COMMAND_LIST_TYPE::GRAPHICS);
-        
-    PostUpload();
+        GetCommandListID());
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 void ImmediateContext::TransitionResourceForView(ViewBase* pView, D3D12_RESOURCE_STATES desiredState) noexcept
 {
     m_ResourceStateManager.TransitionSubresources(pView->m_pResource, pView->m_subresources, desiredState);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::TransitionResourceForBindings(ViewBase* pView) noexcept
-{
-    m_ResourceStateManager.TransitionSubresourcesForBindings(pView->m_pResource, pView->m_subresources);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::TransitionResourceForBindings(Resource* pResource) noexcept
-{
-    m_ResourceStateManager.TransitionResourceForBindings(pResource);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -2826,73 +2335,9 @@ void ImmediateContext::CreateSharedNTHandle(_In_ Resource *pResource, _Out_ HAND
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-bool RetiredObject::DeferredWaitsSatisfied(const std::vector<DeferredWait>& deferredWaits)
+bool RetiredObject::ReadyToDestroy(ImmediateContext* pContext, UINT64 lastCommandListID)
 {
-    for (auto& deferredWait : deferredWaits)
-    {
-        if (deferredWait.value > deferredWait.fence->GetCompletedValue())
-        {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-bool RetiredObject::ReadyToDestroy(ImmediateContext* pContext, bool completionRequired, UINT64 lastCommandListID, COMMAND_LIST_TYPE commandListType, const std::vector<DeferredWait>& deferredWaits)
-{
-    bool readyToDestroy = true;
-
-    if (completionRequired)
-    {
-        readyToDestroy = lastCommandListID <= pContext->GetCompletedFenceValue(commandListType);
-    }
-    else
-    {
-        readyToDestroy = lastCommandListID < pContext->GetCommandListID(commandListType);
-    }
-
-    if (readyToDestroy)
-    {
-        readyToDestroy = DeferredWaitsSatisfied(deferredWaits);
-    }
-
-    return readyToDestroy;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-bool RetiredObject::ReadyToDestroy(ImmediateContext* pContext, bool completionRequired, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], const std::vector<DeferredWait>& deferredWaits)
-{
-    bool readyToDestroy = true;
-
-    if (completionRequired)
-    {
-        for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID  &&  readyToDestroy; i++)
-        {
-            if (lastCommandListIDs[i] != 0)
-            {
-                readyToDestroy = lastCommandListIDs[i] <= pContext->GetCompletedFenceValue((COMMAND_LIST_TYPE)i);
-            }
-        }
-    }
-    else
-    {
-        for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID  &&  readyToDestroy; i++)
-        {
-            if (lastCommandListIDs[i] != 0)
-            {
-                readyToDestroy = lastCommandListIDs[i] < pContext->GetCommandListID((COMMAND_LIST_TYPE)i);
-            }
-        }
-    }
-
-    if (readyToDestroy)
-    {
-        readyToDestroy = DeferredWaitsSatisfied(deferredWaits);
-    }
-
-    return readyToDestroy;
+    return lastCommandListID <= pContext->GetCompletedFenceValue();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -2932,28 +2377,9 @@ HRESULT  ImmediateContext::GetDeviceState()
     UINT64 Value
     )
 {
-    if (m_pSyncOnlyQueue)
-    {
-        Flush(D3D12TranslationLayer::COMMAND_LIST_TYPE_ALL_MASK);
-        for (UINT listTypeIndex = 0; listTypeIndex < static_cast<UINT>(COMMAND_LIST_TYPE::MAX_VALID); ++listTypeIndex)
-        {
-            auto pManager = m_CommandLists[listTypeIndex].get();
-            if (!pManager)
-            {
-                continue;
-            }
-            UINT64 LastSignaledValue = pManager->GetCommandListID() - 1;
-            ThrowFailure(m_pSyncOnlyQueue->Wait(pManager->GetFence()->Get(), LastSignaledValue));
-            pFence->UsedInCommandList(static_cast<COMMAND_LIST_TYPE>(listTypeIndex), LastSignaledValue);
-        }
-        ThrowFailure(m_pSyncOnlyQueue->Signal(pFence->Get(), Value));
-    }
-    else
-    {
-        Flush(D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK);
-        ThrowFailure(GetCommandQueue(COMMAND_LIST_TYPE::GRAPHICS)->Signal(pFence->Get(), Value));
-        pFence->UsedInCommandList(COMMAND_LIST_TYPE::GRAPHICS, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS) - 1);
-    }
+    Flush();
+    ThrowFailure(GetCommandQueue()->Signal(pFence->Get(), Value));
+    pFence->UsedInCommandList(GetCommandListID() - 1);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -2962,20 +2388,11 @@ HRESULT  ImmediateContext::GetDeviceState()
     UINT64 Value
     )
 {
-    if (pFence->DeferredWaits())
+    Flush();
+    auto pQueue = GetCommandQueue();
+    if (pQueue)
     {
-        m_ResourceStateManager.AddDeferredWait(pFence, Value);
-        return;
-    }
-
-    Flush(D3D12TranslationLayer::COMMAND_LIST_TYPE_ALL_MASK);
-    for (UINT listTypeIndex = 0; listTypeIndex < static_cast<UINT>(COMMAND_LIST_TYPE::MAX_VALID); ++listTypeIndex)
-    {
-        auto pQueue = GetCommandQueue(static_cast<COMMAND_LIST_TYPE>(listTypeIndex));
-        if (pQueue)
-        {
-            ThrowFailure(pQueue->Wait(pFence->Get(), Value));
-        }
+        ThrowFailure(pQueue->Wait(pFence->Get(), Value));
     }
 }
 
@@ -3014,17 +2431,17 @@ void ImmediateContext::ClearState() noexcept
 //----------------------------------------------------------------------------------------------------------------------------------
 void ImmediateContext::SharingContractPresent(_In_ Resource* pResource)
 {
-    Flush(COMMAND_LIST_TYPE_GRAPHICS_MASK);
+    Flush();
 
-    auto pSharingContract = GetCommandListManager(COMMAND_LIST_TYPE::GRAPHICS)->GetSharingContract();
+    auto pSharingContract = GetCommandListManager()->GetSharingContract();
     if (pSharingContract)
     {
         ID3D12Resource* pUnderlying = pResource->GetUnderlyingResource();
         pSharingContract->Present(pUnderlying, 0, nullptr);
     }
 
-    pResource->UsedInCommandList(COMMAND_LIST_TYPE::GRAPHICS, GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS));
-    GetCommandListManager(COMMAND_LIST_TYPE::GRAPHICS)->SetNeedSubmitFence();
+    pResource->UsedInCommandList(GetCommandListID());
+    GetCommandListManager()->SetNeedSubmitFence();
 }
 
 }

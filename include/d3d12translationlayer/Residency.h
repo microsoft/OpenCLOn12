@@ -98,12 +98,12 @@ namespace D3D12TranslationLayer
         // The size of the D3D Object in bytes
         UINT64 Size = 0;
 
-        UINT64 LastUsedFenceValues[(UINT)COMMAND_LIST_TYPE::MAX_VALID] = {};
+        UINT64 LastUsedFenceValue = 0;
         UINT64 LastUsedTimestamp = 0;
 
         // This is used to track which open command lists this resource is currently used on.
         // + 1 for transient residency sets.
-        bool CommandListsUsedOn[(UINT)COMMAND_LIST_TYPE::MAX_VALID + 1] = {};
+        bool CommandListsUsedOn[2] = {};
 
         // Linked list entry
         LIST_ENTRY ListEntry;
@@ -183,15 +183,15 @@ namespace D3D12TranslationLayer
 
             HRESULT GPUWait(ID3D12CommandQueue* pQueue, UINT CommandListIndex)
             {
-                if (CommandListIndex < (UINT)COMMAND_LIST_TYPE::MAX_VALID)
+                if (CommandListIndex == 0)
                 {
                     // Don't call Wait again if we've already inserted a wait on this queue
-                    assert(LastWaitedValues[CommandListIndex] <= FenceValue);
-                    if (LastWaitedValues[CommandListIndex] == FenceValue)
+                    assert(LastWaitedValue <= FenceValue);
+                    if (LastWaitedValue == FenceValue)
                     {
                         return S_OK;
                     }
-                    LastWaitedValues[CommandListIndex] = FenceValue;
+                    LastWaitedValue = FenceValue;
                 }
                 HRESULT hr = pQueue->Wait(pFence, FenceValue);
                 assert(SUCCEEDED(hr));
@@ -205,7 +205,7 @@ namespace D3D12TranslationLayer
 
             CComPtr<ID3D12Fence> pFence;
             UINT64 FenceValue = 0;
-            UINT64 LastWaitedValues[(UINT)COMMAND_LIST_TYPE::MAX_VALID] = {};
+            UINT64 LastWaitedValue = {};
         };
 
         // A Least Recently Used Cache. Tracks all of the objects requested by the app so that objects
@@ -286,10 +286,10 @@ namespace D3D12TranslationLayer
             }
 
             // Evict all of the resident objects used in sync points up to the specficied one (inclusive)
-            void TrimToSyncPointInclusive(INT64 CurrentUsage, INT64 CurrentBudget, std::vector<ID3D12Pageable*> &EvictionList, UINT64 FenceValues[]);
+            void TrimToSyncPointInclusive(INT64 CurrentUsage, INT64 CurrentBudget, std::vector<ID3D12Pageable*> &EvictionList, UINT64 FenceValue);
 
             // Trim all objects which are older than the specified time
-            void TrimAgedAllocations(UINT64 FenceValues[], std::vector<ID3D12Pageable*> &EvictionList, UINT64 CurrentTimeStamp, UINT64 MinDelta);
+            void TrimAgedAllocations(UINT64 FenceValue, std::vector<ID3D12Pageable*> &EvictionList, UINT64 CurrentTimeStamp, UINT64 MinDelta);
 
             ManagedObject* GetResidentListHead()
             {
@@ -390,8 +390,6 @@ namespace D3D12TranslationLayer
         HRESULT ProcessPagingWork(UINT CommandListIndex, ResidencySet *pMasterSet);
 
         void GetCurrentBudget(UINT64 Timestamp, DXCoreAdapterMemoryBudget* InfoOut);
-
-        void WaitForSyncPoint(UINT64 FenceValues[]);
 
         // Generate a result between the minimum period and the maximum period based on the current
         // local memory pressure. I.e. when memory pressure is low, objects will persist longer before

@@ -355,14 +355,14 @@ D3DDevice::D3DDevice(Device &parent, ID3D12Device *pDevice, ID3D12CommandQueue *
     , m_Parent(parent)
     , m_spDevice(pDevice)
     , m_Callbacks(GetImmCtxCallbacks())
-    , m_ImmCtx(0, options, pDevice, pQueue, m_Callbacks, 0, GetImmCtxCreationArgs())
+    , m_ImmCtx(0, options, pDevice, pQueue, m_Callbacks, GetImmCtxCreationArgs())
     , m_RecordingSubmission(new Submission)
     , m_ShaderCache(pDevice)
 {
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
     m_CompletionScheduler.SetSchedulingMode(mode);
 
-    auto commandQueue = m_ImmCtx.GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+    auto commandQueue = m_ImmCtx.GetCommandQueue();
     (void)commandQueue->GetTimestampFrequency(&m_TimestampFrequency);
 
     UINT64 CPUTimestamp = 0, GPUTimestamp = 0;
@@ -380,7 +380,7 @@ D3DDevice &Device::InitD3D(ID3D12Device *pDevice, ID3D12CommandQueue *pQueue)
     for (auto &dev : m_D3DDevices)
     {
         bool deviceAndQueueMatches = pDevice == dev->GetDevice() &&
-            (!pQueue || pQueue == dev->ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS));
+            (!pQueue || pQueue == dev->ImmCtx().GetCommandQueue());
         if ((pDevice && deviceAndQueueMatches) ||
             (!pDevice && !dev->m_IsImportedDevice))
         {
@@ -638,7 +638,7 @@ void D3DDevice::ExecuteTasks(Submission& tasks)
         }
     }
 
-    ImmCtx().WaitForCompletion(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+    ImmCtx().WaitForCompletion();
 
     {
         auto Lock = g_Platform->GetTaskPoolLock();
@@ -729,7 +729,7 @@ clGetDeviceAndHostTimer(cl_device_id device_,
         auto& d3dDevice = device.InitD3D();
         auto cleanup = wil::scope_exit([&]() { device.ReleaseD3D(d3dDevice); });
 
-        auto pQueue = d3dDevice.ImmCtx().GetCommandQueue(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+        auto pQueue = d3dDevice.ImmCtx().GetCommandQueue();
         D3D12TranslationLayer::ThrowFailure(pQueue->GetClockCalibration(device_timestamp, host_timestamp));
         return CL_SUCCESS;
     }

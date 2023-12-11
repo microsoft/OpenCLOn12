@@ -172,15 +172,14 @@ class CMultiLevelPool
 {
 public:
     CMultiLevelPool(UINT64 TrimThreshold, bool bLock)
-        : m_Lock(bLock)
-        , m_TrimThreshold(TrimThreshold)
+        : m_TrimThreshold(TrimThreshold)
     {
     }
 
     void ReturnToPool(UINT64 Size, TResourceType&& Resource, UINT64 FenceValue) noexcept
     {
         UINT PoolIndex = IndexFromSize(Size);
-        auto Lock = m_Lock.TakeLock();
+        auto Lock = std::lock_guard(m_Lock);
 
         if (PoolIndex >= m_MultiPool.size())
         {
@@ -196,7 +195,7 @@ public:
         UINT PoolIndex = IndexFromSize(Size);
         UINT AlignedSize = (PoolIndex + 1) * ResourceSizeMultiple;
 
-        auto Lock = m_Lock.TakeLock();
+        auto Lock = std::unique_lock(m_Lock);
 
         if (PoolIndex >= m_MultiPool.size())
         {
@@ -218,7 +217,7 @@ public:
 
     void Trim(UINT64 CurrentFenceValue)
     {
-        auto Lock = m_Lock.TakeLock();
+        auto Lock = std::lock_guard(m_Lock);
 
         for (TPool& pool : m_MultiPool)
         {
@@ -235,7 +234,7 @@ protected:
 
 protected:
     TMultiPool m_MultiPool;
-    OptLock<> m_Lock;
+    std::mutex m_Lock;
     UINT64 m_TrimThreshold;
 };
 
@@ -417,13 +416,12 @@ public: // Methods
                     NodeMask} )
         , m_DescriptorSize(pDevice->GetDescriptorHandleIncrementSize(Type))
         , m_pDevice(pDevice)
-        , m_CritSect(bLockRequired)
     {
     }
 
     HeapOffset AllocateHeapSlot(_Out_opt_ HeapIndex *outIndex = nullptr) noexcept(false)
     {
-        auto Lock = m_CritSect.TakeLock();
+        auto Lock = std::lock_guard(m_CritSect);
         if (m_FreeHeaps.empty())
         {
             AllocateHeap(); // throw( _com_error )
@@ -453,7 +451,7 @@ public: // Methods
 
     void FreeHeapSlot(HeapOffset Offset, HeapIndex index) noexcept
     {
-        auto Lock = m_CritSect.TakeLock();
+        auto Lock = std::lock_guard(m_CritSect);
         try
         {
             assert(index < m_Heaps.size());
@@ -525,7 +523,7 @@ private: // Members
     const D3D12_DESCRIPTOR_HEAP_DESC m_Desc;
     const UINT m_DescriptorSize;
     ID3D12Device* const m_pDevice; // weak-ref
-    OptLock<> m_CritSect;
+    std::mutex m_CritSect;
 
     THeapMap m_Heaps;
     std::list<HeapIndex> m_FreeHeaps;
@@ -592,43 +590,22 @@ class ImmediateContext;
 struct RetiredObject
 {
     RetiredObject() {}
-    RetiredObject(COMMAND_LIST_TYPE CommandListType, UINT64 lastCommandListID, bool completionRequired, std::vector<DeferredWait> deferredWaits = std::vector<DeferredWait>()) :
-        m_completionRequired(completionRequired),
-        m_deferredWaits(std::move(deferredWaits))
+    RetiredObject(UINT64 lastCommandListID) :
+        m_lastCommandListID(lastCommandListID)
     {
-        m_lastCommandListIDs[(UINT)CommandListType] = lastCommandListID;
     }
 
-    RetiredObject(const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired, std::vector<DeferredWait> deferredWaits = std::vector<DeferredWait>()) :
-        m_completionRequired(completionRequired),
-        m_deferredWaits(std::move(deferredWaits))
-    {
-        for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
-        {
-            m_lastCommandListIDs[i] = lastCommandListIDs[i];
-        }
-    }
+    static bool ReadyToDestroy(ImmediateContext* pContext, UINT64 lastCommandListID);
+    bool ReadyToDestroy(ImmediateContext* pContext) { return ReadyToDestroy(pContext, m_lastCommandListID); }
 
-    static bool ReadyToDestroy(ImmediateContext* pContext, bool completionRequired, UINT64 lastCommandListID, COMMAND_LIST_TYPE CommandListType, const std::vector<DeferredWait>& deferredWaits = std::vector<DeferredWait>());
-    static bool ReadyToDestroy(ImmediateContext* pContext, bool completionRequired, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], const std::vector<DeferredWait>& deferredWaits = std::vector<DeferredWait>());
-    static bool DeferredWaitsSatisfied(const std::vector<DeferredWait>& deferredWaits);
-    bool ReadyToDestroy(ImmediateContext* pContext) { return ReadyToDestroy(pContext, m_completionRequired, m_lastCommandListIDs, m_deferredWaits); }
-
-    UINT64 m_lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID] = {};
-    bool m_completionRequired = false;
-    std::vector<DeferredWait> m_deferredWaits;
+    UINT64 m_lastCommandListID = 0;
 };
 
 struct RetiredD3D12Object : public RetiredObject
 {
     RetiredD3D12Object() {}
-    RetiredD3D12Object(ID3D12Object* pUnderlying, _In_opt_ std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, COMMAND_LIST_TYPE CommandListType, UINT64 lastCommandListID, bool completionRequired, std::vector<DeferredWait> deferredWaits) :
-        RetiredObject(CommandListType, lastCommandListID, completionRequired, std::move(deferredWaits))
-        , m_pUnderlying(pUnderlying)
-        , m_pResidencyHandle(std::move(pResidencyHandle)) {}
-
-    RetiredD3D12Object(ID3D12Object* pUnderlying, _In_opt_ std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired, std::vector<DeferredWait> deferredWaits) :
-        RetiredObject(lastCommandListIDs, completionRequired, std::move(deferredWaits))
+    RetiredD3D12Object(ID3D12Object* pUnderlying, _In_opt_ std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, UINT64 lastCommandListID) :
+        RetiredObject(lastCommandListID)
         , m_pUnderlying(pUnderlying)
         , m_pResidencyHandle(std::move(pResidencyHandle)) {}
 
@@ -639,21 +616,14 @@ struct RetiredD3D12Object : public RetiredObject
     
 
     CComPtr<ID3D12Object> m_pUnderlying;
-    
-
     std::unique_ptr<ResidencyManagedObjectWrapper> m_pResidencyHandle;
 };
 
 typedef ConditionalAllocator<HeapSuballocationBlock, UINT64, DirectHeapAllocator, ThreadSafeBuddyHeapAllocator, bool> ConditionalHeapAllocator;
 struct RetiredSuballocationBlock : public RetiredObject
 {
-    RetiredSuballocationBlock(HeapSuballocationBlock &block, ConditionalHeapAllocator &parentAllocator, COMMAND_LIST_TYPE CommandListType, UINT64 lastCommandListID) :
-        RetiredObject(CommandListType, lastCommandListID, true)
-        , m_SuballocatedBlock(block)
-        , m_ParentAllocator(parentAllocator) {}
-
-    RetiredSuballocationBlock(HeapSuballocationBlock &block, ConditionalHeapAllocator &parentAllocator, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID]) :
-        RetiredObject(lastCommandListIDs, true)
+    RetiredSuballocationBlock(HeapSuballocationBlock &block, ConditionalHeapAllocator &parentAllocator, UINT64 lastCommandListID) :
+        RetiredObject(lastCommandListID)
         , m_SuballocatedBlock(block)
         , m_ParentAllocator(parentAllocator) {}
 
@@ -678,35 +648,17 @@ public:
     }
 
     bool TrimDeletedObjects(bool deviceBeingDestroyed = false);
-    bool GetFenceValuesForObjectDeletion(UINT64(&FenceValues)[(UINT)COMMAND_LIST_TYPE::MAX_VALID]);
-    bool GetFenceValuesForSuballocationDeletion(UINT64(&FenceValues)[(UINT)COMMAND_LIST_TYPE::MAX_VALID]);
+    UINT64 GetFenceValueForObjectDeletion();
+    UINT64 GetFenceValueForSuballocationDeletion();
 
-    void AddObjectToQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, COMMAND_LIST_TYPE CommandListType, UINT64 lastCommandListID, bool completionRequired, std::vector<DeferredWait> deferredWaits = std::vector<DeferredWait>())
+    void AddObjectToQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, UINT64 lastCommandListID)
     {
-        m_DeferredObjectDeletionQueue.push(RetiredD3D12Object(pUnderlying, std::move(pResidencyHandle), CommandListType, lastCommandListID, completionRequired, std::move(deferredWaits)));
+        m_DeferredObjectDeletionQueue.push(RetiredD3D12Object(pUnderlying, std::move(pResidencyHandle), lastCommandListID));
     }
 
-    void AddObjectToQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired, std::vector<DeferredWait> deferredWaits = std::vector<DeferredWait>())
+    void AddSuballocationToQueue(HeapSuballocationBlock &suballocation, ConditionalHeapAllocator &parentAllocator, UINT64 lastCommandListID)
     {
-        m_DeferredObjectDeletionQueue.push(RetiredD3D12Object(pUnderlying, std::move(pResidencyHandle), lastCommandListIDs, completionRequired, std::move(deferredWaits)));
-    }
-
-    void AddSuballocationToQueue(HeapSuballocationBlock &suballocation, ConditionalHeapAllocator &parentAllocator, COMMAND_LIST_TYPE CommandListType, UINT64 lastCommandListID)
-    {
-        RetiredSuballocationBlock retiredSuballocation(suballocation, parentAllocator, CommandListType, lastCommandListID);
-        if (!retiredSuballocation.ReadyToDestroy(m_pParent))
-        {
-            m_DeferredSuballocationDeletionQueue.push(retiredSuballocation);
-        }
-        else
-        {
-            retiredSuballocation.Destroy();
-        }
-    }
-
-    void AddSuballocationToQueue(HeapSuballocationBlock &suballocation, ConditionalHeapAllocator &parentAllocator, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID])
-    {
-        RetiredSuballocationBlock retiredSuballocation(suballocation, parentAllocator, lastCommandListIDs);
+        RetiredSuballocationBlock retiredSuballocation(suballocation, parentAllocator, lastCommandListID);
         if (!retiredSuballocation.ReadyToDestroy(m_pParent))
         {
             m_DeferredSuballocationDeletionQueue.push(retiredSuballocation);
@@ -725,9 +677,9 @@ private:
     std::queue<RetiredSuballocationBlock> m_DeferredSuballocationDeletionQueue;
 };
 
-template <typename T, typename mutex_t = std::mutex> class COptLockedContainer
+template <typename T, typename mutex_t = std::mutex> class CLockedContainer
 {
-    OptLock<mutex_t> m_CS;
+    mutex_t m_CS;
     T m_Obj;
 public:
     class LockedAccess
@@ -735,16 +687,15 @@ public:
         std::unique_lock<mutex_t> m_Lock;
         T& m_Obj;
     public:
-        LockedAccess(OptLock<mutex_t> &CS, T& Obj)
-            : m_Lock(CS.TakeLock())
+        LockedAccess(mutex_t &CS, T& Obj)
+            : m_Lock(CS)
             , m_Obj(Obj) { }
         T* operator->() { return &m_Obj; }
     };
     // Intended use: GetLocked()->member.
     // The LockedAccess temporary object ensures synchronization until the end of the expression.
-    template <typename... Args> COptLockedContainer(Args&&... args) : m_Obj(std::forward<Args>(args)...) { }
+    template <typename... Args> CLockedContainer(Args&&... args) : m_Obj(std::forward<Args>(args)...) { }
     LockedAccess GetLocked() { return LockedAccess(m_CS, m_Obj); }
-    void InitLock() { m_CS.EnsureLock(); }
 };
 
 using RenameResourceSet = std::deque<unique_comptr<Resource>>;
@@ -761,14 +712,14 @@ public:
     unique_comptr<ID3D12CompatibilityDevice> m_pCompatDevice;
     unique_comptr<ID3D12CommandQueue> m_pSyncOnlyQueue;
 private:
-    std::unique_ptr<CommandListManager> m_CommandLists[(UINT)COMMAND_LIST_TYPE::MAX_VALID];
+    std::unique_ptr<CommandListManager> m_CommandList;
 
     // Residency Manager needs to come after the deferred deletion queue so that defer deleted objects can
     // call EndTrackingObject on a valid residency manager
     ResidencyManager m_residencyManager;
 
     // It is important that the deferred deletion queue manager gets destroyed last, place solely strict dependencies above.
-    COptLockedContainer<DeferredDeletionQueueManager> m_DeferredDeletionQueueManager;
+    CLockedContainer<DeferredDeletionQueueManager> m_DeferredDeletionQueueManager;
 public:
     friend class Query;
     friend class CommandListManager;
@@ -782,46 +733,39 @@ public:
     };
 
     ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTIONS& caps,
-        ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, TranslationLayerCallbacks const& callbacks, UINT64 debugFlags, CreationArgs args) noexcept(false);
+        ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, TranslationLayerCallbacks const& callbacks, CreationArgs args) noexcept(false);
     ~ImmediateContext() noexcept;
 
-#if TRANSLATION_LAYER_DBG
-    UINT64 DebugFlags() { return m_DebugFlags; }
-#endif
     CreationArgs m_CreationArgs;
 
-    CommandListManager *GetCommandListManager(COMMAND_LIST_TYPE type) noexcept;
-    ID3D12CommandList *GetCommandList(COMMAND_LIST_TYPE type) noexcept;
-    UINT64 GetCommandListID(COMMAND_LIST_TYPE type) noexcept;
-    UINT64 GetCommandListIDInterlockedRead(COMMAND_LIST_TYPE type) noexcept;
-    UINT64 GetCommandListIDWithCommands(COMMAND_LIST_TYPE type) noexcept;
-    UINT64 GetCompletedFenceValue(COMMAND_LIST_TYPE type) noexcept;
-    ID3D12CommandQueue *GetCommandQueue(COMMAND_LIST_TYPE type) noexcept;
-    void ResetCommandList(UINT commandListTypeMask) noexcept;
-    void CloseCommandList(UINT commandListTypeMask) noexcept;
-    HRESULT EnqueueSetEvent(UINT commandListTypeMask, HANDLE hEvent) noexcept;
-    HRESULT EnqueueSetEvent(COMMAND_LIST_TYPE commandListType, HANDLE hEvent) noexcept;
-    Fence *GetFence(COMMAND_LIST_TYPE type) noexcept;
-    void SubmitCommandList(UINT commandListTypeMask);
-    void SubmitCommandList(COMMAND_LIST_TYPE commandListType);
+    CommandListManager *GetCommandListManager() noexcept;
+    ID3D12CommandList *GetCommandList() noexcept;
+    UINT64 GetCommandListID() noexcept;
+    UINT64 GetCommandListIDInterlockedRead() noexcept;
+    UINT64 GetCommandListIDWithCommands() noexcept;
+    UINT64 GetCompletedFenceValue() noexcept;
+    ID3D12CommandQueue *GetCommandQueue() noexcept;
+    void ResetCommandList() noexcept;
+    void CloseCommandList() noexcept;
+    HRESULT EnqueueSetEvent(HANDLE hEvent) noexcept;
+    Fence *GetFence() noexcept;
+    void SubmitCommandList();
 
     // Returns true if synchronization was successful, false likely means device is removed
-    bool WaitForCompletion(UINT commandListTypeMask) noexcept;
-    bool WaitForCompletion(COMMAND_LIST_TYPE commandListType);
-    bool WaitForFenceValue(COMMAND_LIST_TYPE commandListType, UINT64 FenceValue);
-    bool WaitForFenceValue(COMMAND_LIST_TYPE type, UINT64 FenceValue, bool DoNotWait);
+    bool WaitForCompletion();
+    bool WaitForFenceValue(UINT64 FenceValue);
+    bool WaitForFenceValue(UINT64 FenceValue, bool DoNotWait);
 
     ID3D12GraphicsCommandList *GetGraphicsCommandList() noexcept;
-    void AdditionalCommandsAdded(COMMAND_LIST_TYPE type) noexcept;
-    void UploadHeapSpaceAllocated(COMMAND_LIST_TYPE type, UINT64 HeapSize) noexcept;
+    void AdditionalCommandsAdded() noexcept;
+    void UploadHeapSpaceAllocated(UINT64 HeapSize) noexcept;
 
     unique_comptr<ID3D12Resource> AllocateHeap(UINT64 HeapSize, UINT64 alignment, AllocatorHeapType heapType) noexcept(false);
     void ClearState() noexcept;
 
-    void AddObjectToResidencySet(Resource *pResource, COMMAND_LIST_TYPE commandListType);
-    void AddResourceToDeferredDeletionQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired, std::vector<DeferredWait> deferredWaits);
-    void AddObjectToDeferredDeletionQueue(ID3D12Object* pUnderlying, COMMAND_LIST_TYPE commandListType, UINT64 lastCommandListID, bool completionRequired);
-    void AddObjectToDeferredDeletionQueue(ID3D12Object* pUnderlying, const UINT64 lastCommandListIDs[(UINT)COMMAND_LIST_TYPE::MAX_VALID], bool completionRequired);
+    void AddObjectToResidencySet(Resource *pResource);
+    void AddResourceToDeferredDeletionQueue(ID3D12Object* pUnderlying, std::unique_ptr<ResidencyManagedObjectWrapper> &&pResidencyHandle, UINT64 lastCommandListID);
+    void AddObjectToDeferredDeletionQueue(ID3D12Object* pUnderlying, UINT64 lastCommandListID);
 
     bool TrimDeletedObjects(bool deviceBeingDestroyed = false);
     bool TrimResourcePools();
@@ -832,11 +776,9 @@ public:
 
     D3D12ResourceSuballocation AcquireSuballocatedHeapForResource(_In_ Resource* pResource, ResourceAllocationContext threadingContext) noexcept(false);
     D3D12ResourceSuballocation AcquireSuballocatedHeap(AllocatorHeapType HeapType, UINT64 Size, ResourceAllocationContext threadingContext, bool bCannotBeOffset = false) noexcept(false);
-    void ReleaseSuballocatedHeap(AllocatorHeapType HeapType, D3D12ResourceSuballocation &resource, UINT64 FenceValue, COMMAND_LIST_TYPE commandListType) noexcept;
-    void ReleaseSuballocatedHeap(AllocatorHeapType HeapType, D3D12ResourceSuballocation &resource, const UINT64 FenceValues[]) noexcept;
+    void ReleaseSuballocatedHeap(AllocatorHeapType HeapType, D3D12ResourceSuballocation &resource, UINT64 FenceValue) noexcept;
 
     void ReturnAllBuffersToPool( Resource& UnderlyingResource) noexcept;
-   
 
     static void UploadDataToMappedBuffer(_In_reads_bytes_(Placement.Depth * DepthPitch) const void* pData, UINT SrcPitch, UINT SrcDepth, 
                                          _Out_writes_bytes_(Placement.Depth * DepthPitch) void* pMappedData,
@@ -936,29 +878,10 @@ public:
 
     void UAVBarrier() noexcept;
 
-    // Mark resources and add them to the transition list
-    // Subresource binding states are assumed to already be changed using wrappers below
-    void TransitionResourceForBindings(Resource* pResource) noexcept;
-    void TransitionResourceForBindings(ViewBase* pView) noexcept;
-    static void ConstantBufferBound(Resource* pBuffer, UINT slot, EShaderStage stage) noexcept;
-    static void ConstantBufferUnbound(Resource* pBuffer, UINT slot, EShaderStage stage) noexcept;
-    static void VertexBufferBound(Resource* pBuffer, UINT slot) noexcept;
-    static void VertexBufferUnbound(Resource* pBuffer, UINT slot) noexcept;
-    static void IndexBufferBound(Resource* pBuffer) noexcept;
-    static void IndexBufferUnbound(Resource* pBuffer) noexcept;
-    static void StreamOutputBufferBound(Resource* pBuffer, UINT slot) noexcept;
-    static void StreamOutputBufferUnbound(Resource* pBuffer, UINT slot) noexcept;
-
-    void ClearDSVBinding();
-    void ClearRTVBinding(UINT slot);
-    void ClearVBBinding(UINT slot);
-
     void WriteToSubresource(Resource* DstResource, UINT DstSubresource, _In_opt_ const D3D11_BOX* pDstBox, 
                             const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch);
     void ReadFromSubresource(void* pDstData, UINT DstRowPitch, UINT DstDepthPitch,
                              Resource* SrcResource, UINT SrcSubresource, _In_opt_ const D3D11_BOX* pSrcBox);
-
-    ResourceCache &GetResourceCache() { return m_ResourceCache; }
 
 public:
     PipelineState* GetPipelineState();
@@ -967,7 +890,7 @@ public:
     void Dispatch( UINT, UINT, UINT );
 
     // Returns if any work was actually submitted
-    bool Flush(UINT commandListMask);
+    bool Flush();
 
     void SetShaderResources( UINT, __in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT) UINT, SRV* const* );
     void SetSamplers( UINT, __in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT) UINT, Sampler* const* );
@@ -1040,7 +963,7 @@ public: // Type
     struct SStageState
     {
         SStageState() noexcept(false) = default;
-        void ClearState(EShaderStage stage) noexcept;
+        void ClearState() noexcept;
 
         // Shader-declared bindings do not set pipeline dirty bits at bind time, only slot dirty bits
         // These slot dirty bits are only interesting if they are below the maximum shader-declared slot,
@@ -1071,7 +994,7 @@ public: // Type
         // Slots for re-asserting state on a new command list
         D3D12_GPU_DESCRIPTOR_HANDLE m_CSUAVTableBase{ 0 };
 
-        SStageState& GetStageState(EShaderStage) noexcept;
+        SStageState& GetStageState() noexcept;
         SStageState m_CS;
     };
 
@@ -1094,7 +1017,6 @@ private: // methods
 
 public:
     void PostCopy(Resource *pSrc, UINT startSubresource, Resource *pDest, UINT dstSubresource, UINT totalNumSubresources);
-    void PostUpload();
 
     void CopyDataToBuffer(
         ID3D12Resource* pResource,
@@ -1103,8 +1025,8 @@ public:
         UINT Size
         ) noexcept(false);
 
-    bool HasCommands(COMMAND_LIST_TYPE type) noexcept;
-    void PrepForCommandQueueSync(UINT commandListTypeMask);
+    bool HasCommands() noexcept;
+    void PrepForCommandQueueSync();
 
     RootSignature* CreateOrRetrieveRootSignature(RootSignatureDesc const& desc) noexcept(false);
 
@@ -1126,8 +1048,6 @@ private:
 
     // Helper for views
     void TransitionResourceForView(ViewBase* pView, D3D12_RESOURCE_STATES desiredState) noexcept;
-
-    UINT GetCurrentCommandListTypeMask() noexcept;
 
     void InsertUAVBarriersIfNeeded(CViewBoundState<UAV, D3D11_1_UAV_SLOT_COUNT>& UAVBindings, UINT NumUAVs) noexcept;
 
@@ -1174,8 +1094,6 @@ public: // variables
 
     std::unordered_map<RootSignatureDesc, std::unique_ptr<RootSignature>> m_RootSignatures;
 
-    std::unique_ptr<CThreadPool> m_spPSOCompilationThreadPool;
-
     // "Online" descriptor heaps
     struct OnlineDescriptorHeap
     {
@@ -1219,7 +1137,6 @@ public: // variables
     CDescriptorHeapManager m_DSVAllocator;
     CDescriptorHeapManager m_SamplerAllocator;
 
-    ResourceCache m_ResourceCache;
     std::vector<D3D12_RECT> m_RectCache;
 
     // UAV barriers are not managed by the state manager.
@@ -1227,25 +1144,9 @@ public: // variables
     // in steady-state scenarios.
     std::vector<D3D12_RESOURCE_BARRIER> m_vUAVBarriers;
 
-    // Objects for GenerateMips
-    typedef std::tuple<DXGI_FORMAT, D3D12_RESOURCE_DIMENSION> MipGenKey;
-    std::map<MipGenKey, unique_comptr<ID3D12PipelineState>> m_pGenerateMipsPSOMap;
-    InternalRootSignature m_GenerateMipsRootSig;
-    enum GenerateMipsRootSignatureSlots
-    {
-        eSRV = 0,
-        eRootConstants,
-        eSampler,
-    };
-
-    static const UINT NUM_FILTER_TYPES = 2;
-    D3D12_CPU_DESCRIPTOR_HANDLE m_GenerateMipsSamplers[NUM_FILTER_TYPES];
-
     template <typename TIface> CDescriptorHeapManager& GetViewAllocator();
     template<> CDescriptorHeapManager& GetViewAllocator<ShaderResourceViewType>() { return m_SRVAllocator; }
     template<> CDescriptorHeapManager& GetViewAllocator<UnorderedAccessViewType>() { return m_UAVAllocator; }
-    template<> CDescriptorHeapManager& GetViewAllocator<RenderTargetViewType>() { return m_RTVAllocator; }
-    template<> CDescriptorHeapManager& GetViewAllocator<DepthStencilViewType>() { return m_DSVAllocator; }
 
     D3D_FEATURE_LEVEL FeatureLevel() const { return m_FeatureLevel; }
 
@@ -1259,9 +1160,6 @@ public: // variables
 private: // variables
     ResourceStateManager m_ResourceStateManager;
     D3D_FEATURE_LEVEL m_FeatureLevel;
-#if TRANSLATION_LAYER_DBG
-    UINT64 m_DebugFlags;
-#endif
 
     unique_comptr<Resource> m_pStagingTexture;
     unique_comptr<Resource> m_pStagingBuffer;
@@ -1326,12 +1224,6 @@ private: // State tracking
     const TranslationLayerCallbacks m_callbacks;
 
 private:
-    static inline bool IsSingleCommandListType(UINT commandListTypeMask)
-    {
-        commandListTypeMask &= ~COMMAND_LIST_TYPE_UNKNOWN_MASK;     // ignore UNKNOWN type
-        return commandListTypeMask & (commandListTypeMask - 1) ? false : true;
-    }
-
     // Device wide scratch space allocation for use in synchronous ops.
     // Only grows.  Free with device.
     struct

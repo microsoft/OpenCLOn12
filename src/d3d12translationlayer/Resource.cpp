@@ -41,10 +41,8 @@ namespace D3D12TranslationLayer
     //==================================================================================================================================
     //----------------------------------------------------------------------------------------------------------------------------------
 
-    void  Resource::Create(ResourceAllocationContext threadingContext)  noexcept(false)
+    void Resource::Create(ResourceAllocationContext threadingContext)  noexcept(false)
     {
-        SetWaitForCompletionRequired(true);
-
         bool& ownsResource = m_Identity->m_bOwnsUnderlyingResource;
         ownsResource = (m_creationArgs.m_heapDesc.Properties.Type == D3D12_HEAP_TYPE_DEFAULT ||
             m_creationArgs.m_heapDesc.Properties.Type == D3D12_HEAP_TYPE_CUSTOM ||
@@ -58,9 +56,6 @@ namespace D3D12TranslationLayer
         }
         else
         {
-            // Stream-output only supported in default heaps
-            assert(!m_creationArgs.m_bBoundForStreamOut);
-
             m_Identity->m_suballocation = m_pParent->AcquireSuballocatedHeapForResource(this, threadingContext);
             for (auto& placement : m_SubresourcePlacement)
             {
@@ -100,37 +95,6 @@ namespace D3D12TranslationLayer
             1u : GetTotalSubresources(createArgs);
     }
 
-    inline UINT GetSubresourcesForFormatEmulationStagingAllocation(ResourceCreationArgs const& createArgs) noexcept
-    {
-        assert(createArgs.m_FormatEmulation == FormatEmulation::YV12 || createArgs.m_FormatEmulation == FormatEmulation::None);
-        if (   createArgs.m_appDesc.Usage() == RESOURCE_USAGE_STAGING
-            || createArgs.m_appDesc.Usage() == D3D11_USAGE_DYNAMIC)
-        {
-            if (GetSubresourceMultiplier(createArgs) > 1)
-            {
-                return GetTotalSubresources(createArgs);
-            }
-        }
-
-        return 0u;
-    }
-
-    inline UINT GetSubresourcesForFormatEmulationStagingData(ResourceCreationArgs const& createArgs) noexcept
-    {
-        return (   (   createArgs.m_appDesc.Usage() == RESOURCE_USAGE_STAGING 
-                    || createArgs.m_appDesc.Usage() == D3D11_USAGE_DYNAMIC)
-                && (   GetSubresourceMultiplier(createArgs) > 1
-                    || createArgs.m_FormatEmulation != FormatEmulation::None)) ?
-            GetTotalSubresources(createArgs) : 0u;
-    }
-
-    inline UINT GetSubresourcesForTilingData(ResourceCreationArgs const& createArgs) noexcept
-    {
-        // Preallocate assuming no packed mips.
-        return (createArgs.m_flags11.MiscFlags & D3D11_RESOURCE_MISC_TILED) ?
-            createArgs.m_appDesc.MipLevels() : 0u;
-    }
-
     inline UINT GetSubresourcesForDynamicTexturePlaneData(ResourceCreationArgs const& createArgs) noexcept
     {
         return (createArgs.m_appDesc.Usage() == D3D11_USAGE_DYNAMIC) ?
@@ -159,34 +123,22 @@ namespace D3D12TranslationLayer
         auto SubresourceCount = GetTotalSubresources(createArgs);
         return sizeof(Resource) +
             TransitionableResourceBase::CalcPreallocationSize(GetSubresourcesForTransitioning(createArgs)) +
-            CResourceBindings::CalcPreallocationSize(SubresourceCount) +
             sizeof(unique_comptr<Resource>) * GetSubresourcesForCpuHeaps(createArgs) +
             sizeof(D3D12_PLACED_SUBRESOURCE_FOOTPRINT) * SubresourceCount +
-            sizeof(SEmulatedFormatSubresourceStagingAllocation) * GetSubresourcesForFormatEmulationStagingAllocation(createArgs) +
-            sizeof(SEmulatedFormatSubresourceStagingData) * GetSubresourcesForFormatEmulationStagingData(createArgs) +
             sizeof(UINT64) * GetSubresourcesForCpuHeaps(createArgs) +
-            sizeof(D3D12_SUBRESOURCE_TILING) * GetSubresourcesForTilingData(createArgs) +
             sizeof(DynamicTexturePlaneData) * GetSubresourcesForDynamicTexturePlaneData(createArgs);
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
     Resource::Resource(ImmediateContext* pDevice, ResourceCreationArgs& createArgs, void*& pPreallocatedMemory) noexcept(false)
         : DeviceChild(pDevice)
-        , TransitionableResourceBase(GetSubresourcesForTransitioning(createArgs), createArgs.m_bTriggerDeferredWaits, pPreallocatedMemory)
+        , TransitionableResourceBase(GetSubresourcesForTransitioning(createArgs), pPreallocatedMemory)
         , m_SubresourceMultiplier(GetSubresourceMultiplier(createArgs))
         , m_creationArgs(createArgs)
         , m_Identity(AllocateResourceIdentity(NumSubresources(), IsSimultaneousAccess(createArgs))) // throw( bad_alloc )
-        , m_currentBindings(NumSubresources(), AppDesc()->BindFlags(), pPreallocatedMemory)
-        , m_MinLOD(0.0f)
-        , m_SRVUniqueness(0)
-        , m_AllUniqueness(0)
-        , m_OffsetToStreamOutputSuffix(0)
         , m_spCurrentCpuHeaps(GetSubresourcesForCpuHeaps(createArgs), pPreallocatedMemory)
         , m_SubresourcePlacement(NumSubresources(), pPreallocatedMemory)
-        , m_FormatEmulationStagingAllocation(GetSubresourcesForFormatEmulationStagingAllocation(createArgs), pPreallocatedMemory)
-        , m_FormatEmulationStagingData(GetSubresourcesForFormatEmulationStagingData(createArgs), pPreallocatedMemory)
         , m_LastCommandListID(GetSubresourcesForCpuHeaps(createArgs), pPreallocatedMemory)
-        , m_TiledResource(GetSubresourcesForTilingData(createArgs), pPreallocatedMemory)
         , m_DynamicTexturePlaneData(GetSubresourcesForDynamicTexturePlaneData(createArgs), pPreallocatedMemory)
     {
         m_effectiveUsage = AppDesc()->Usage();
@@ -230,95 +182,6 @@ namespace D3D12TranslationLayer
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
-    unique_comptr<Resource> Resource::OpenResource(
-        ImmediateContext* pParent,
-        ResourceCreationArgs& creationArgs,
-        _In_ IUnknown *pResource,
-        DeferredDestructionType deferredDestructionType,
-        _In_ D3D12_RESOURCE_STATES currentState)
-    {
-        unique_comptr<Resource> spUnderlyingResource = AllocateResource(pParent, creationArgs);
-
-        {
-            D3D12TranslationLayer::Resource::SResourceIdentity* pIdentity = spUnderlyingResource->GetIdentity();
-
-            pIdentity->m_bSharedResource = true;
-
-            spUnderlyingResource->SetWaitForCompletionRequired(deferredDestructionType == D3D12TranslationLayer::DeferredDestructionType::Completion);
-
-            // Resource/heap has one ref, owned by DXGIOn12 through the KM resource handle
-            // Detach cannot be invoked until no more failures can happen, or else the runtime may early release another shared resource
-            // These QIs will take additional refs, so DXGIOn12's ref must be released when the KM resource handle is detached
-            if (FAILED(pResource->QueryInterface(&pIdentity->m_spUnderlyingResource)))
-            {
-                // Tile pool
-                D3D12TranslationLayer::unique_comptr<ID3D12Heap> spHeap;
-                if (FAILED(pResource->QueryInterface(&spHeap)))
-                {
-                    ThrowFailure(E_INVALIDARG);
-                }
-
-                spUnderlyingResource->AddHeapToTilePool(std::move(spHeap));
-            }
-
-            spUnderlyingResource->UnderlyingResourceChanged(); // throw( _com_error )
-            if (!spUnderlyingResource->m_Identity->m_currentState.SupportsSimultaneousAccess())
-            {
-                CCurrentResourceState::ExclusiveState ExclusiveState = { 0, currentState, COMMAND_LIST_TYPE::GRAPHICS };
-                spUnderlyingResource->m_Identity->m_currentState.SetExclusiveResourceState(ExclusiveState);
-            }
-            if (spUnderlyingResource->m_creationArgs.m_flags11.MiscFlags & D3D11_RESOURCE_MISC_TILED)
-            {
-                spUnderlyingResource->InitializeTilingData();
-            }
-        }
-
-        // No more exceptions
-        spUnderlyingResource->m_isValid = true;
-        return std::move(spUnderlyingResource);
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    void Resource::InitializeTilingData() noexcept
-    {
-        // Query tiling data
-        D3D12_PACKED_MIP_INFO PackedMipDesc;
-        m_pParent->m_pDevice12->GetResourceTiling(
-            m_Identity->GetResource(),
-            &m_TiledResource.m_NumTilesForResource,
-            &PackedMipDesc,
-            nullptr,
-            nullptr,
-            0,
-            nullptr);
-
-        m_TiledResource.m_NumTilesForPackedMips = PackedMipDesc.NumTilesForPackedMips;
-        if (Parent()->ResourceDimension12() == D3D12_RESOURCE_DIMENSION_BUFFER)
-        {
-            PackedMipDesc.NumStandardMips = 1;
-        }
-
-        // Validate some assumptions:
-        // We should only need to store either number of packed mips or number of standard mips
-        assert(PackedMipDesc.NumPackedMips == AppDesc()->MipLevels() - PackedMipDesc.NumStandardMips);
-        // Resources with packed mips cannot have array slices
-        assert(PackedMipDesc.NumPackedMips == 0 || AppDesc()->ArraySize() == 1);
-        // 11on12 is not robust against planar tiled
-        assert(AppDesc()->NonOpaquePlaneCount() == 1 && m_SubresourceMultiplier == 1);
-
-        m_TiledResource.m_NumStandardMips = PackedMipDesc.NumStandardMips;
-
-        m_pParent->m_pDevice12->GetResourceTiling(
-            m_Identity->GetResource(),
-            nullptr,
-            nullptr,
-            nullptr,
-            &m_TiledResource.m_NumStandardMips,
-            0,
-            m_TiledResource.m_SubresourceTiling.begin());
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
     Resource::~Resource() noexcept
     {
         if (!m_isValid)
@@ -329,18 +192,7 @@ namespace D3D12TranslationLayer
 
         // If this resource was ever valid, ensure that it either still has its owned heap/resource, or that it returned its borrowed resource
         assert(m_Identity.get() == nullptr || // The identity is deleted early in the case of failed initialization
-            m_Identity->m_bOwnsUnderlyingResource == (m_Identity->m_spUnderlyingResource.get() != nullptr) ||
-            !m_TilePool.m_Allocations.empty());
-
-        if (m_TiledResource.m_pTilePool != nullptr)
-        {
-            // Assuming that destruction ordering between tiled resource and tile pool is correct,
-            // we need to ensure that the tile pool's destruction is deferred at least as long as the resource.
-            for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
-            {
-                m_TiledResource.m_pTilePool->MarkUsedInCommandListIfNewer((COMMAND_LIST_TYPE)i, m_LastUsedCommandListID[i]);
-            }
-        }
+            m_Identity->m_bOwnsUnderlyingResource == (m_Identity->m_spUnderlyingResource.get() != nullptr));
 
         if (m_Identity)
         {
@@ -350,17 +202,7 @@ namespace D3D12TranslationLayer
                 {
                     m_pParent->AddResourceToDeferredDeletionQueue(GetIdentity()->GetOwnedResource(),
                         std::move(m_Identity->m_pResidencyHandle),
-                        m_LastUsedCommandListID,
-                        m_bWaitForCompletionRequired,
-                        std::move(m_ResourceDeferredWaits));
-                }
-                else
-                {
-                    for (auto& allocation : m_TilePool.m_Allocations)
-                    {
-                        AddToDeferredDeletionQueue(allocation.m_spUnderlyingBufferHeap);
-                        AddToDeferredDeletionQueue(allocation.m_spUnderlyingTextureHeap);
-                    }
+                        m_LastUsedCommandListID);
                 }
             }
         }
@@ -419,9 +261,6 @@ namespace D3D12TranslationLayer
     void Resource::CreateUnderlying(ResourceAllocationContext threadingContext) noexcept(false)
     {
         assert(m_Identity->m_bOwnsUnderlyingResource);
-        assert(0 == m_OffsetToStreamOutputSuffix);
-
-        m_OffsetToStreamOutputSuffix = m_creationArgs.m_OffsetToStreamOutputSuffix;
 
         D3D12_RESOURCE_DESC& Desc12 = m_creationArgs.m_desc12;
         D3D12_HEAP_DESC& HeapDesc = m_creationArgs.m_heapDesc;
@@ -451,138 +290,72 @@ namespace D3D12TranslationLayer
 
         HRESULT hr = S_OK;
 
-        if (Flags11.MiscFlags & D3D11_RESOURCE_MISC_TILE_POOL)
+        // All sharing must use this API in order to enable in-API sharing
+        bool bCompatibilityCreateRequired = m_creationArgs.IsShared();
+
+        // True if simultaneous access will pass D3D12 validation
+        bool bSupportsSimultaneousAccess =
+            (Flags11.BindFlags & D3D11_BIND_DEPTH_STENCIL) == 0 &&
+            Desc12.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER &&
+            Desc12.SampleDesc.Count == 1 && Desc12.SampleDesc.Quality == 0;
+
+        if (bCompatibilityCreateRequired || !m_creationArgs.m_bManageResidency)
         {
             HeapDesc.Flags &= ~D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT;
-            auto TiledResourcesTier = m_pParent->GetCaps().TiledResourcesTier;
-            const UINT InitialPoolSize = UINT(Desc12.Width);
-            m_TilePool.m_Allocations.emplace_back(InitialPoolSize, 0); // throw( bad_alloc )
-            auto& Allocation = m_TilePool.m_Allocations.front();
-
-            // D3D11 now blocks shared tile pools
-            assert(!m_creationArgs.IsShared());
-
-            m_pParent->TryAllocateResourceWithFallback([&]()
-            {
-                if (TiledResourcesTier == D3D12_TILED_RESOURCES_TIER_1)
-                {
-                    // Nothing to do here - heaps are lazily instantiated depending on what is mapped into them
-                }
-                else
-                {
-                    hr = m_pParent->m_pDevice12->CreateHeap(
-                        &HeapDesc,
-                        IID_PPV_ARGS(&Allocation.m_spUnderlyingBufferHeap));
-                }
-                assert(hr != E_INVALIDARG);
-                ThrowFailure(hr); // throw( _com_error )
-            }, threadingContext);
         }
-        else
+
+        m_pParent->TryAllocateResourceWithFallback([&]()
         {
-            bool bTiledResource = !!(Flags11.MiscFlags & D3D11_RESOURCE_MISC_TILED);
-
-            // All sharing must use this API in order to enable in-API sharing
-            bool bCompatibilityCreateRequired = m_creationArgs.IsShared();
-
-            // True if simultaneous access will pass D3D12 validation
-            bool bSupportsSimultaneousAccess =
-                (Flags11.BindFlags & D3D11_BIND_DEPTH_STENCIL) == 0 &&
-                Desc12.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER &&
-                Desc12.SampleDesc.Count == 1 && Desc12.SampleDesc.Quality == 0;
-
-            unique_comptr<ID3D12SwapChainAssistant> spSwapChainAssistant;
-            if (HeapDesc.Flags & D3D12_HEAP_FLAG_ALLOW_DISPLAY)
+            if (m_creationArgs.m_PrivateCreateFn)
             {
-                // We need a swapchain assistant in order for D3D12 to track writes to this
-                // resource and insert written primary references, to guarantee synchronization
-                // against scanout.
-                // This class doesn't need to do anything other than be present.
-                spSwapChainAssistant.reset(new SwapChainAssistant);
-                m_creationArgs.m_bManageResidency = false;
+                m_creationArgs.m_PrivateCreateFn(m_creationArgs, &m_Identity->m_spUnderlyingResource);
             }
-
-            if (bCompatibilityCreateRequired || !m_creationArgs.m_bManageResidency)
+            else if (bCompatibilityCreateRequired)
             {
-                HeapDesc.Flags &= ~D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT;
+                // Shared resources should use simultaneous access whenever possible
+                // For future designs: Shared resources that cannot use simultaneous access should, in theory, transition to COMMON at every flush
+                Desc12.Flags
+                    |= (bSupportsSimultaneousAccess
+                        && !(Flags11.MiscFlags & 0x200000) // Feature_D3D1XDisplayable : RESOURCE_MISC_SHARED_EXCLUSIVE_WRITER
+                        )
+                    ? D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
+                    : D3D12_RESOURCE_FLAG_NONE
+                    ;
+                assert((HeapDesc.Flags & D3D12_HEAP_FLAG_SHARED) != 0);
+
+                D3D12_COMPATIBILITY_SHARED_FLAGS CompatFlags =
+                    ((m_creationArgs.IsNTHandleShared()) ? D3D12_COMPATIBILITY_SHARED_FLAG_NONE : D3D12_COMPATIBILITY_SHARED_FLAG_NON_NT_HANDLE) |
+                    ((m_creationArgs.m_flags11.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX) ? D3D12_COMPATIBILITY_SHARED_FLAG_KEYED_MUTEX : D3D12_COMPATIBILITY_SHARED_FLAG_NONE);
+
+                hr = m_pParent->m_pCompatDevice->CreateSharedResource(
+                    &HeapDesc.Properties,
+                    HeapDesc.Flags,
+                    &Desc12,
+                    D3D12_RESOURCE_STATE_COMMON,
+                    nullptr, // Clear values
+                    &Flags11,
+                    CompatFlags,
+                    nullptr,
+                    nullptr,
+                    IID_PPV_ARGS(&m_Identity->m_spUnderlyingResource));
             }
-
-            m_pParent->TryAllocateResourceWithFallback([&]()
+            else
             {
-                if (m_creationArgs.m_PrivateCreateFn)
-                {
-                    m_creationArgs.m_PrivateCreateFn(m_creationArgs, spSwapChainAssistant.get(), &m_Identity->m_spUnderlyingResource);
-                }
-                else if (bCompatibilityCreateRequired)
-                {
-                    // Shared resources should use simultaneous access whenever possible
-                    // For future designs: Shared resources that cannot use simultaneous access should, in theory, transition to COMMON at every flush
-                    Desc12.Flags
-                        |= (bSupportsSimultaneousAccess
-                            && !(Flags11.MiscFlags & 0x200000) // Feature_D3D1XDisplayable : RESOURCE_MISC_SHARED_EXCLUSIVE_WRITER
-                            )
-                        ? D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS
-                        : D3D12_RESOURCE_FLAG_NONE
-                        ;
-                    assert(!bTiledResource);
-                    assert((HeapDesc.Flags & D3D12_HEAP_FLAG_SHARED) != 0);
-
-                    D3D12_COMPATIBILITY_SHARED_FLAGS CompatFlags =
-                        ((m_creationArgs.IsNTHandleShared()) ? D3D12_COMPATIBILITY_SHARED_FLAG_NONE : D3D12_COMPATIBILITY_SHARED_FLAG_NON_NT_HANDLE) |
-                        ((m_creationArgs.m_flags11.MiscFlags & D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX) ? D3D12_COMPATIBILITY_SHARED_FLAG_KEYED_MUTEX : D3D12_COMPATIBILITY_SHARED_FLAG_NONE) |
-                        (m_creationArgs.m_bIsD3D9on12Resource && !(HeapDesc.Flags & D3D12_HEAP_FLAG_SHARED_CROSS_ADAPTER)
-                            ? D3D12_COMPATIBILITY_SHARED_FLAG_9_ON_12 : D3D12_COMPATIBILITY_SHARED_FLAG_NONE);
-
-                    hr = m_pParent->m_pCompatDevice->CreateSharedResource(
-                        &HeapDesc.Properties,
-                        HeapDesc.Flags,
-                        &Desc12,
-                        D3D12_RESOURCE_STATE_COMMON,
-                        nullptr, // Clear values
-                        &Flags11,
-                        CompatFlags,
-                        nullptr,
-                        spSwapChainAssistant.get(),
-                        IID_PPV_ARGS(&m_Identity->m_spUnderlyingResource));
-                }
-                else if (bTiledResource)
-                {
-                    // Tiled resources should use simultaneous access if aliasing is valid by the D3D11 spec (non-RTV/non-DSV)
-                    bool bDesiresSimultaneousAccess = (Flags11.BindFlags & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_DEPTH_STENCIL)) == 0;
-                    Desc12.Flags |= (bSupportsSimultaneousAccess && bDesiresSimultaneousAccess) ?
-                        D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS : D3D12_RESOURCE_FLAG_NONE;
-                    hr = m_pParent->m_pDevice12->CreateReservedResource(
-                        &Desc12,
-                        D3D12_RESOURCE_STATE_COMMON,
-                        nullptr, // Clear values
-                        IID_PPV_ARGS(&m_Identity->m_spUnderlyingResource));
-                }
-                else
-                {
-                    hr = m_pParent->m_pDevice12->CreateCommittedResource(
-                        &HeapDesc.Properties,
-                        HeapDesc.Flags,
-                        &Desc12,
-                        D3D12_RESOURCE_STATE_COMMON,
-                        nullptr, // Clear values
-                        IID_PPV_ARGS(&m_Identity->m_spUnderlyingResource));
-                }
-                [[maybe_unused]] const UINT D3D11_BIND_CAPTURE = 0x800;
-                assert(hr != E_INVALIDARG || (Flags11.BindFlags & D3D11_BIND_CAPTURE));
-                ThrowFailure(hr); // throw( _com_error )
-            }, threadingContext);
-
-            if (!bCompatibilityCreateRequired &&
-                !bTiledResource &&
-                m_creationArgs.m_bManageResidency)
-            {
-                AddToResidencyManager((HeapDesc.Flags & D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT) == D3D12_HEAP_FLAG_NONE);
+                hr = m_pParent->m_pDevice12->CreateCommittedResource(
+                    &HeapDesc.Properties,
+                    HeapDesc.Flags,
+                    &Desc12,
+                    D3D12_RESOURCE_STATE_COMMON,
+                    nullptr, // Clear values
+                    IID_PPV_ARGS(&m_Identity->m_spUnderlyingResource));
             }
+            ThrowFailure(hr); // throw( _com_error )
+        }, threadingContext);
 
-            if (bTiledResource)
-            {
-                InitializeTilingData();
-            }
+        if (!bCompatibilityCreateRequired &&
+            m_creationArgs.m_bManageResidency)
+        {
+            AddToResidencyManager((HeapDesc.Flags & D3D12_HEAP_FLAG_CREATE_NOT_RESIDENT) == D3D12_HEAP_FLAG_NONE);
         }
     }
 
@@ -596,26 +369,10 @@ namespace D3D12TranslationLayer
         return pObject;
     }
 
-    void Resource::UsedInCommandList(COMMAND_LIST_TYPE commandListType, UINT64 id)
+    void Resource::UsedInCommandList(UINT64 id)
     {
-        assert(commandListType != COMMAND_LIST_TYPE::UNKNOWN);
-        m_pParent->AddObjectToResidencySet(this, commandListType);
-        if (m_Identity && m_Identity->HasRestrictedOutstandingResources())
-        {
-            OutstandingResourceUse resourceUse(commandListType, id);
-            // Search existing references to see if we've used it in this command list before.
-            // Can't just check the back because it might be used simultaneously in multiple
-            // command list types.
-            // TODO: Is this really the right place for it?
-            if (std::find(m_Identity->m_OutstandingResources.begin(),
-                          m_Identity->m_OutstandingResources.end(),
-                          resourceUse) ==
-                m_Identity->m_OutstandingResources.end())
-            {
-                m_Identity->m_OutstandingResources.push_back(resourceUse);
-            }
-        }
-        DeviceChild::UsedInCommandList(commandListType, id);
+        m_pParent->AddObjectToResidencySet(this);
+        DeviceChild::UsedInCommandList(id);
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
@@ -632,9 +389,8 @@ namespace D3D12TranslationLayer
         // For resources which own their underlying subresource, they're created in COMMON.
         if (!m_Identity->m_bOwnsUnderlyingResource)
         {
-            CCurrentResourceState::ExclusiveState State = { 0ull, GetDefaultPoolState(GetAllocatorHeapType()),
-                COMMAND_LIST_TYPE::GRAPHICS };
-            m_Identity->m_currentState.SetExclusiveResourceState(State);
+            CCurrentResourceState::SubresourceState State = { 0ull, 0ull, GetDefaultPoolState(GetAllocatorHeapType()) };
+            m_Identity->m_currentState.SetResourceState(State);
         }
 
         ResetLastUsedInCommandList();
@@ -861,23 +617,6 @@ namespace D3D12TranslationLayer
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
-    bool Resource::WaitForOutstandingResourcesIfNeeded(bool DoNotWait)
-    {
-        while (m_Identity &&
-               m_Identity->m_OutstandingResources.size() >= m_Identity->m_MaxOutstandingResources)
-        {
-            auto outstandingResourceUse = m_Identity->m_OutstandingResources.front();
-
-            if (!m_pParent->WaitForFenceValue(outstandingResourceUse.commandListType, outstandingResourceUse.fenceValue, DoNotWait)) // throws
-            {
-                return false;
-            }
-            m_Identity->m_OutstandingResources.erase(m_Identity->m_OutstandingResources.begin());
-        }
-        return true;
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
     Resource* Resource::GetCurrentCpuHeap(UINT Subresource) 
     {
         if (m_spCurrentCpuHeaps.size() == 0) 
@@ -894,33 +633,5 @@ namespace D3D12TranslationLayer
     { 
         UINT DynamicTextureIndex = GetDynamicTextureIndex(subresource);
         m_spCurrentCpuHeaps[DynamicTextureIndex] = UploadHeap;
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    HRESULT Resource::AddFenceForUnwrapResidency(ID3D12CommandQueue* pQueue)
-    {
-        try
-        {
-            if (m_UnwrapUnderlyingResidencyDeferredWait.fence.get() == nullptr)
-            {
-                m_UnwrapUnderlyingResidencyDeferredWait.fence =
-                    std::make_shared<D3D12TranslationLayer::Fence>(m_pParent, FENCE_FLAG_NONE, 0); // throw (_com_error, bad_alloc)
-                m_UnwrapUnderlyingResidencyDeferredWait.value = 0;
-            }
-
-            ++m_UnwrapUnderlyingResidencyDeferredWait.value;
-            pQueue->Signal(m_UnwrapUnderlyingResidencyDeferredWait.fence->Get(), m_UnwrapUnderlyingResidencyDeferredWait.value);
-            m_ResourceDeferredWaits.push_back(m_UnwrapUnderlyingResidencyDeferredWait);
-        }
-        catch( _com_error& hrEx )
-        {
-            return hrEx.Error();
-        }
-        catch(std::bad_alloc&)
-        {
-            return E_OUTOFMEMORY;
-        }
-
-        return S_OK;
     }
 };

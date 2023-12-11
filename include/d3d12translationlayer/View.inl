@@ -66,24 +66,6 @@ namespace D3D12TranslationLayer
 
     //----------------------------------------------------------------------------------------------------------------------------------
     template<typename TIface>
-    void View<TIface>::ViewBound(UINT slot, EShaderStage stage) noexcept
-    {
-        m_currentBindings.ViewBound(stage, slot);
-        m_pResource->ViewBound(this, stage, slot);
-        m_pParent->TransitionResourceForBindings(this);
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<typename TIface>
-    void View<TIface>::ViewUnbound(UINT slot, EShaderStage stage) noexcept
-    {
-        m_currentBindings.ViewUnbound(stage, slot);
-        m_pResource->ViewUnbound(this, stage, slot);
-        m_pParent->TransitionResourceForBindings(this);
-    }
-
-    //----------------------------------------------------------------------------------------------------------------------------------
-    template<typename TIface>
     const typename View<TIface>::TDesc12& View<TIface>::GetDesc12() noexcept
     {
         __if_exists(TDesc12::Buffer)
@@ -111,9 +93,9 @@ namespace D3D12TranslationLayer
     template<typename TIface>
     HRESULT View<TIface>::RefreshUnderlying() noexcept
     {
-        if (m_ViewUniqueness != m_pResource->GetUniqueness<TIface>())
+        if (m_ViewUniqueness == UINT_MAX)
         {
-            UpdateMinLOD(m_pResource->GetMinLOD());
+            UpdateMinLOD(0.0f);
 
             const TDesc12 &Desc = GetDesc12();
             (m_pParent->m_pDevice12.get()->*CViewMapper<TIface>::GetCreate())(
@@ -121,7 +103,7 @@ namespace D3D12TranslationLayer
                 &Desc,
                 m_Descriptor);
 
-            m_ViewUniqueness = m_pResource->GetUniqueness<TIface>();
+            m_ViewUniqueness = 0;
             return S_OK;
         }
         return S_FALSE;
@@ -143,7 +125,7 @@ namespace D3D12TranslationLayer
             m_Descriptor
             );
 
-        m_ViewUniqueness = m_pResource->GetUniqueness<UnorderedAccessViewType>();
+        m_ViewUniqueness = 0;
         return S_OK;
     }
 
@@ -166,7 +148,6 @@ namespace D3D12TranslationLayer
         (UINT16)ViewResource.AppDesc()->ArraySize(),
         (UINT8)ViewResource.AppDesc()->NonOpaquePlaneCount() * ViewResource.SubresourceMultiplier())),
         m_Desc(Desc),
-        m_BindRefs(0),
         APIFirstElement(0)
     {
         __if_exists(TDesc12::Buffer)

@@ -65,7 +65,7 @@ public:
                 m_ImmCtx.GetGraphicsCommandList()->CopyTextureRegion(Dest, 0, 0, 0, Source, nullptr);
             }
         }
-        m_ImmCtx.AdditionalCommandsAdded(D3D12TranslationLayer::COMMAND_LIST_TYPE::GRAPHICS);
+        m_ImmCtx.AdditionalCommandsAdded();
     }
 };
 

@@ -9,12 +9,11 @@ namespace D3D12TranslationLayer
     // Async/query/predicate/counter
     //==================================================================================================================================
 
-    Async::Async(ImmediateContext* pDevice, EQueryType Type, UINT CommandListTypeMask) noexcept
+    Async::Async(ImmediateContext* pDevice, EQueryType Type) noexcept
         : DeviceChild(pDevice)
         , m_Type(Type)
-        , m_CommandListTypeMask(COMMAND_LIST_TYPE_GRAPHICS_MASK)
+        , m_EndedCommandListID(0)
     {
-        ZeroMemory(m_EndedCommandListID, sizeof(m_EndedCommandListID));
     }
 
     Async::~Async()
@@ -26,14 +25,7 @@ namespace D3D12TranslationLayer
     {
         EndInternal();
 
-        ZeroMemory(m_EndedCommandListID, sizeof(m_EndedCommandListID));
-        for (UINT listType = 0; listType < (UINT)COMMAND_LIST_TYPE::MAX_VALID; listType++)
-        {
-            if (m_CommandListTypeMask & (1 << listType))
-            {
-                m_EndedCommandListID[listType] = m_pParent->GetCommandListIDWithCommands((COMMAND_LIST_TYPE)listType);
-            }
-        }
+        m_EndedCommandListID = m_pParent->GetCommandListIDWithCommands();
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
@@ -55,43 +47,34 @@ namespace D3D12TranslationLayer
     //----------------------------------------------------------------------------------------------------------------------------------
     bool Async::FlushAndPrep(bool DoNotFlush) noexcept
     {
-        bool ret = true;
-        for (UINT listType = 0; listType < (UINT)COMMAND_LIST_TYPE::MAX_VALID; listType++)
+        if (m_EndedCommandListID == m_pParent->GetCommandListID())
         {
-            if (m_CommandListTypeMask & (1 << listType))
+            if (DoNotFlush)
             {
-                COMMAND_LIST_TYPE commandListType = (COMMAND_LIST_TYPE)listType;
-                if (m_EndedCommandListID[listType] == m_pParent->GetCommandListID(commandListType))
-                {
-                    if (DoNotFlush)
-                    {
-                        return false;
-                    }
+                return false;
+            }
                     
-                    // convert exceptions to bool result as method is noexcept and SubmitCommandList throws
-                    try
-                    {
-                        m_pParent->SubmitCommandList(commandListType); // throws
-                    }
-                    catch (_com_error&)
-                    {
-                        ret = false;
-                    }
-                    catch (std::bad_alloc&)
-                    {
-                        ret = false;
-                    }
-                }
-
-                UINT64 LastCompletedFence = m_pParent->GetCompletedFenceValue(commandListType);
-                if (LastCompletedFence < m_EndedCommandListID[listType])
-                {
-                    ret = false;
-                    continue;
-                }
+            // convert exceptions to bool result as method is noexcept and SubmitCommandList throws
+            try
+            {
+                m_pParent->SubmitCommandList(); // throws
+            }
+            catch (_com_error&)
+            {
+                return false;
+            }
+            catch (std::bad_alloc&)
+            {
+                return false;
             }
         }
-        return ret;
+
+        UINT64 LastCompletedFence = m_pParent->GetCompletedFenceValue();
+        if (LastCompletedFence < m_EndedCommandListID)
+        {
+            return false;
+        }
+        return true;
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
@@ -123,13 +106,10 @@ namespace D3D12TranslationLayer
     //----------------------------------------------------------------------------------------------------------------------------------
     Query::~Query()
     {
-        for (auto& obj : m_spQueryHeap) { AddToDeferredDeletionQueue(obj); }
-        for (auto& obj : m_spResultBuffer)
+        AddToDeferredDeletionQueue(m_spQueryHeap);
+        if (m_spResultBuffer.IsInitialized())
         {
-            if (obj.IsInitialized())
-            {
-                m_pParent->ReleaseSuballocatedHeap(AllocatorHeapType::Readback, obj, m_LastUsedCommandListID);
-            }
+            m_pParent->ReleaseSuballocatedHeap(AllocatorHeapType::Readback, m_spResultBuffer, m_LastUsedCommandListID);
         }
     }
 
@@ -141,26 +121,16 @@ namespace D3D12TranslationLayer
         D3D12_QUERY_HEAP_DESC QueryHeapDesc = { GetHeapType12(), 1 * m_InstancesPerQuery, m_pParent->GetNodeMask() };
         UINT BufferSize = GetDataSize12() * QueryHeapDesc.Count;
 
-        // The only query types that allows non-graphics command list type are TIMESTAMP and VIDEO_STATS for now.
-        assert(m_Type == e_QUERY_TIMESTAMP || m_CommandListTypeMask == COMMAND_LIST_TYPE_GRAPHICS_MASK);
+        HRESULT hr = m_pParent->m_pDevice12->CreateQueryHeap(
+            &QueryHeapDesc,
+            IID_PPV_ARGS(&m_spQueryHeap)
+            );
+        ThrowFailure(hr); // throw( _com_error )
 
-        for (UINT listType = 0; listType < (UINT)COMMAND_LIST_TYPE::MAX_VALID; listType++)
+        // Query data goes into a readback heap for CPU readback in GetData
         {
-            if (!(m_CommandListTypeMask & (1 << listType)))
-            {
-                continue;
-            }
-            HRESULT hr = m_pParent->m_pDevice12->CreateQueryHeap(
-                &QueryHeapDesc,
-                IID_PPV_ARGS(&m_spQueryHeap[listType])
-                );
-            ThrowFailure(hr); // throw( _com_error )
-
-            // Query data goes into a readback heap for CPU readback in GetData
-            {
-                m_spResultBuffer[listType] = m_pParent->AcquireSuballocatedHeap(
-                    AllocatorHeapType::Readback, BufferSize, ResourceAllocationContext::FreeThread); // throw( _com_error )
-            }
+            m_spResultBuffer = m_pParent->AcquireSuballocatedHeap(
+                AllocatorHeapType::Readback, BufferSize, ResourceAllocationContext::FreeThread); // throw( _com_error )
         }
         m_CurrentInstance = 0;
     }
@@ -175,46 +145,28 @@ namespace D3D12TranslationLayer
         UINT NumSubQueries = 1;
         D3D12_QUERY_TYPE QueryType12 = GetType12();
 
-        auto DoEndQuery = [&](auto pIface, COMMAND_LIST_TYPE commandListType, UINT subQuery)
+        for (UINT subQuery = 0; subQuery < NumSubQueries; subQuery++)
         {
+            auto pIface = m_pParent->GetGraphicsCommandList();
             UINT Index = QueryIndex(m_CurrentInstance);
 
             pIface->EndQuery(
-                m_spQueryHeap[(UINT)commandListType].get(),
+                m_spQueryHeap.get(),
                 static_cast<D3D12_QUERY_TYPE>(QueryType12 + subQuery),
                 Index
-                );
+            );
 
             pIface->ResolveQueryData(
-                m_spQueryHeap[(UINT)commandListType].get(),
+                m_spQueryHeap.get(),
                 static_cast<D3D12_QUERY_TYPE>(QueryType12 + subQuery),
                 Index,
                 1,
-                m_spResultBuffer[(UINT)commandListType].GetResource(),
-                Index * DataSize12 + m_spResultBuffer[(UINT)commandListType].GetOffset()
-                );
-        };
-
-        for (UINT listType = 0; listType < (UINT)COMMAND_LIST_TYPE::MAX_VALID; listType++)
-        {
-            if (m_CommandListTypeMask & (1 << listType))
-            {
-                COMMAND_LIST_TYPE commandListType = (COMMAND_LIST_TYPE)listType;
-                for (UINT subquery = 0; subquery < NumSubQueries; subquery++)
-                {
-                    static_assert(static_cast<UINT>(COMMAND_LIST_TYPE::MAX_VALID) == 3u, "ImmediateContext::DiscardView must support all command list types.");
-
-                    switch (commandListType)
-                    {
-                    case COMMAND_LIST_TYPE::GRAPHICS:
-                        DoEndQuery(m_pParent->GetGraphicsCommandList(), commandListType, subquery);
-                        break;
-                    }
-                }
-                m_pParent->AdditionalCommandsAdded(commandListType);
-                m_LastUsedCommandListID[listType] = m_pParent->GetCommandListID(commandListType);
-            }
+                m_spResultBuffer.GetResource(),
+                Index * DataSize12 + m_spResultBuffer.GetOffset()
+            );
         }
+        m_pParent->AdditionalCommandsAdded();
+        m_LastUsedCommandListID = m_pParent->GetCommandListID();
     }
 
 
@@ -250,102 +202,62 @@ namespace D3D12TranslationLayer
             *pDest = 0;
         }
 
-        for (UINT listType = 0; listType < (UINT)COMMAND_LIST_TYPE::MAX_VALID; listType++)
+        void* pMappedData = nullptr;
+
+        CD3DX12_RANGE ReadRange(0, DataSize);
+        HRESULT hr = m_spResultBuffer.Map(
+            0,
+            &ReadRange,
+            &pMappedData
+            );
+        ThrowFailure(hr);
+
+        UINT DataSize12 = GetDataSize12();
+        UINT NumSubQueries = 1;
+
+        // All structures are arrays of 64-bit values
+        assert(0 == (DataSize12 % sizeof(UINT64)));
+
+        UINT NumCounters = DataSize12 / sizeof(UINT64);
+
+        UINT64 TempBuffer[12];
+
+        static_assert(sizeof(TempBuffer) >= sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS), "Temporary query buffer no large enough.");
+        static_assert(sizeof(TempBuffer) >= sizeof(D3D12_QUERY_DATA_SO_STATISTICS), "Temporary query buffer no large enough.");
+        assert(sizeof(TempBuffer) >= DataSize12);
+        assert(_countof(TempBuffer) >= NumCounters);
+
+        // Accumulate all instances & subqueries into a single value
+        // If the query was never issued, then 0 will be returned
+        ZeroMemory(TempBuffer, sizeof(TempBuffer));
+
+        const UINT64* pSrc = reinterpret_cast<const UINT64*>(pMappedData);
+
+        for (UINT Instance = 0; Instance < m_CurrentInstance; Instance++)
         {
-            if (!(m_CommandListTypeMask & (1 << listType)))
+            for (UINT SubQuery = 0; SubQuery < NumSubQueries; SubQuery++)
             {
-                continue;
-            }
-
-            if (m_Type != e_QUERY_TIMESTAMP)
-            {
-                m_pParent->GetCommandListManager((COMMAND_LIST_TYPE)listType)->ReadbackInitiated();
-            }
-
-            void* pMappedData = nullptr;
-
-            CD3DX12_RANGE ReadRange(0, DataSize);
-            HRESULT hr = m_spResultBuffer[listType].Map(
-                0,
-                &ReadRange,
-                &pMappedData
-                );
-            ThrowFailure(hr);
-
-            UINT DataSize12 = GetDataSize12();
-            UINT NumSubQueries = 1;
-
-            // All structures are arrays of 64-bit values
-            assert(0 == (DataSize12 % sizeof(UINT64)));
-
-            UINT NumCounters = DataSize12 / sizeof(UINT64);
-
-            UINT64 TempBuffer[12];
-
-            static_assert(sizeof(TempBuffer) >= sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS), "Temporary query buffer no large enough.");
-            static_assert(sizeof(TempBuffer) >= sizeof(D3D12_QUERY_DATA_SO_STATISTICS), "Temporary query buffer no large enough.");
-            assert(sizeof(TempBuffer) >= DataSize12);
-            assert(_countof(TempBuffer) >= NumCounters);
-
-            // Accumulate all instances & subqueries into a single value
-            // If the query was never issued, then 0 will be returned
-            ZeroMemory(TempBuffer, sizeof(TempBuffer));
-
-            const UINT64* pSrc = reinterpret_cast<const UINT64*>(pMappedData);
-
-            for (UINT Instance = 0; Instance < m_CurrentInstance; Instance++)
-            {
-                for (UINT SubQuery = 0; SubQuery < NumSubQueries; SubQuery++)
+                for (UINT Counter = 0; Counter < NumCounters; Counter++)
                 {
-                    for (UINT Counter = 0; Counter < NumCounters; Counter++)
-                    {
-                        TempBuffer[Counter] += pSrc[0];
-                        pSrc++;
-                    }
+                    TempBuffer[Counter] += pSrc[0];
+                    pSrc++;
                 }
             }
-
-            switch (m_Type)
-            {
-                // 11 and 12 match, need to interpret & merge values from possibly multiple queues
-            case e_QUERY_TIMESTAMP:
-            {
-                UINT64 Timestamp = (UINT64)TempBuffer[0];
-                if (Timestamp > *(UINT64 *)pData)
-                {
-                    *(UINT64 *)pData = Timestamp;
-                }
-                break;
-            }
-
-            default:
-            {
-                assert(false);
-            }
-            break;
-            }
-            CD3DX12_RANGE WrittenRange(0, 0);
-            m_spResultBuffer[listType].Unmap(0, &WrittenRange);
         }
+
+        UINT64 Timestamp = (UINT64)TempBuffer[0];
+        if (Timestamp > *(UINT64 *)pData)
+        {
+            *(UINT64 *)pData = Timestamp;
+        }
+        CD3DX12_RANGE WrittenRange(0, 0);
+        m_spResultBuffer.Unmap(0, &WrittenRange);
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
     UINT Query::GetDataSize12() const
     {
-        // This returns the size of the data written by ResolveQueryData
-        UINT Result = 0;
-
-        switch (m_Type)
-        {
-        case e_QUERY_TIMESTAMP:
-            Result = sizeof(UINT64);
-            break;
-
-        default:
-            assert(false);
-        }
-
-        return Result;
+        return sizeof(UINT64);
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
@@ -362,7 +274,7 @@ namespace D3D12TranslationLayer
         {
             // Out of instances
             // Wait for the GPU to finish all outstanding work
-            m_pParent->WaitForCompletion(m_CommandListTypeMask);
+            m_pParent->WaitForCompletion();
 
             // Accumulate all results into Instance0
             void* pMappedData = nullptr;
@@ -371,34 +283,27 @@ namespace D3D12TranslationLayer
             UINT NumSubQueries = 1;
 
             CD3DX12_RANGE ReadRange(0, DataSize12 * NumSubQueries * m_InstancesPerQuery);
-            for (UINT listType = 0; listType < (UINT)COMMAND_LIST_TYPE::MAX_VALID; listType++)
+            ThrowFailure(m_spResultBuffer.Map(0, &ReadRange, &pMappedData));
+            // All structures are arrays of 64-bit values
+            assert(0 == (DataSize12 % sizeof(UINT64)));
+
+            UINT NumCountersPerSubQuery = DataSize12 / sizeof(UINT64);
+            UINT NumCountersPerInstance = NumCountersPerSubQuery * NumSubQueries;
+
+            UINT64* pInstance0 = reinterpret_cast<UINT64*>(pMappedData);
+
+            for (UINT Instance = 1; Instance <= m_CurrentInstance; Instance++)
             {
-                if (!(m_CommandListTypeMask & (1 << listType)))
+                const UINT64* pInstance = reinterpret_cast<const UINT64*>(pMappedData) + (NumCountersPerInstance * Instance);
+
+                for (UINT i = 0; i < NumCountersPerInstance; i++)
                 {
-                    continue;
+                    pInstance0[i] += pInstance[i];
                 }
-                ThrowFailure(m_spResultBuffer[listType].Map(0, &ReadRange, &pMappedData));
-                // All structures are arrays of 64-bit values
-                assert(0 == (DataSize12 % sizeof(UINT64)));
-
-                UINT NumCountersPerSubQuery = DataSize12 / sizeof(UINT64);
-                UINT NumCountersPerInstance = NumCountersPerSubQuery * NumSubQueries;
-
-                UINT64* pInstance0 = reinterpret_cast<UINT64*>(pMappedData);
-
-                for (UINT Instance = 1; Instance <= m_CurrentInstance; Instance++)
-                {
-                    const UINT64* pInstance = reinterpret_cast<const UINT64*>(pMappedData) + (NumCountersPerInstance * Instance);
-
-                    for (UINT i = 0; i < NumCountersPerInstance; i++)
-                    {
-                        pInstance0[i] += pInstance[i];
-                    }
-                }
-
-                CD3DX12_RANGE WrittenRange(0, DataSize12 * NumSubQueries);
-                m_spResultBuffer[listType].Unmap(0, &WrittenRange);
             }
+
+            CD3DX12_RANGE WrittenRange(0, DataSize12 * NumSubQueries);
+            m_spResultBuffer.Unmap(0, &WrittenRange);
 
             // Instance0 has valid data.  11on12 can re-use the data for instance1 and beyond
             m_CurrentInstance = 1;

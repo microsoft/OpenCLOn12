@@ -5,10 +5,6 @@
 namespace D3D12TranslationLayer
 {
     class RootSignature;
-    enum EPipelineType
-    {
-        e_Dispatch
-    };
 
     struct GRAPHICS_PIPELINE_STATE_DESC
     {
@@ -76,28 +72,20 @@ namespace D3D12TranslationLayer
     struct PipelineState : protected DeviceChildImpl<ID3D12PipelineState>
     {
     public:
-        EPipelineType GetPipelineStateType() { return m_PipelineStateType; }
-
         const D3D12_COMPUTE_PIPELINE_STATE_DESC &GetComputeDesc()
         {
-            assert(m_PipelineStateType == e_Dispatch);
             return Compute.m_Desc;
         }
 
-        template<EShaderStage Shader>
         SShaderDecls *GetShader() { return Compute.pComputeShader; }
         RootSignature* GetRootSignature() { return m_pRootSignature; }
 
         PipelineState(ImmediateContext *pContext, const COMPUTE_PIPELINE_STATE_DESC &desc);
         ~PipelineState();
 
-        ID3D12PipelineState* GetForUse(COMMAND_LIST_TYPE CommandListType)
-        {
-            return DeviceChildImpl::GetForUse(CommandListType);
-        }
+        using DeviceChildImpl::GetForUse;
 
     protected:
-        const EPipelineType m_PipelineStateType;
         RootSignature* const m_pRootSignature;
         union
         {
@@ -108,10 +96,6 @@ namespace D3D12TranslationLayer
             } Compute;
         };
 
-        template<EPipelineType Type>
         void Create();
-
-        template<EPipelineType Type>
-        void CreateImpl();
     };
 };

@@ -5,115 +5,6 @@ namespace D3D12TranslationLayer
 {
 
 //----------------------------------------------------------------------------------------------------------------------------------
-template<> inline LIST_ENTRY& CResourceBindings::GetViewList<ShaderResourceViewType>() { return m_ShaderResourceViewList; }
-template<> inline LIST_ENTRY& CResourceBindings::GetViewList<RenderTargetViewType>() { return m_RenderTargetViewList; }
-template<> inline LIST_ENTRY& CResourceBindings::GetViewList<UnorderedAccessViewType>() { return m_UnorderedAccessViewList; }
-
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetBindFunc<ShaderResourceViewType>(EShaderStage stage) { return &CSubresourceBindings::NonPixelShaderResourceViewBound; }
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetBindFunc<RenderTargetViewType>(EShaderStage) { return &CSubresourceBindings::RenderTargetViewBound; }
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetBindFunc<UnorderedAccessViewType>(EShaderStage) { return &CSubresourceBindings::UnorderedAccessViewBound; }
-
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetUnbindFunc<ShaderResourceViewType>(EShaderStage stage) { return &CSubresourceBindings::NonPixelShaderResourceViewUnbound; }
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetUnbindFunc<RenderTargetViewType>(EShaderStage) { return &CSubresourceBindings::RenderTargetViewUnbound; }
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetUnbindFunc<DepthStencilViewType>(EShaderStage) { return &CSubresourceBindings::DepthStencilViewUnbound; }
-template<> inline CSubresourceBindings::BindFunc CResourceBindings::GetUnbindFunc<UnorderedAccessViewType>(EShaderStage) { return &CSubresourceBindings::UnorderedAccessViewUnbound; }
-
-//----------------------------------------------------------------------------------------------------------------------------------
-template<typename TIface>
-void CResourceBindings::ViewBound(View<TIface>* pView, EShaderStage stage, UINT /*slot*/)
-{
-    auto& viewBindings = pView->m_currentBindings;
-    pView->IncrementBindRefs();
-    if (!viewBindings.IsViewBound())
-    {
-        D3D12TranslationLayer::InsertHeadList(&GetViewList<TIface>(), &viewBindings.m_ViewBindingList);
-    }
-    CViewSubresourceSubset &viewSubresources = pView->m_subresources;
-    ViewBoundCommon(viewSubresources, GetBindFunc<TIface>(stage));
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-template<typename TIface>
-void CResourceBindings::ViewUnbound(View<TIface>* pView, EShaderStage stage, UINT /*slot*/)
-{
-    auto& viewBindings = pView->m_currentBindings;
-    pView->DecrementBindRefs();
-    if (pView->GetBindRefs() == 0 && viewBindings.IsViewBound())
-    {
-        D3D12TranslationLayer::RemoveEntryList(&viewBindings.m_ViewBindingList);
-        D3D12TranslationLayer::InitializeListHead(&viewBindings.m_ViewBindingList);
-    }
-    CViewSubresourceSubset &viewSubresources = pView->m_subresources;
-    ViewUnboundCommon(viewSubresources, GetUnbindFunc<TIface>(stage));
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-template<> inline void CResourceBindings::ViewBound<DepthStencilViewType>(TDSV* pView, EShaderStage, UINT /*slot*/)
-{
-    assert(!m_bIsDepthStencilViewBound);
-    m_bIsDepthStencilViewBound = true;
-    pView->IncrementBindRefs();
-
-    CViewSubresourceSubset &viewSubresources = pView->m_subresources;
-    
-    bool bHasStencil = pView->m_pResource->SubresourceMultiplier() != 1;
-    bool bReadOnlyDepth = !!(pView->GetDesc12().Flags & D3D12_DSV_FLAG_READ_ONLY_DEPTH);
-    bool bReadOnlyStencil = !!(pView->GetDesc12().Flags & D3D12_DSV_FLAG_READ_ONLY_STENCIL);
-    auto pfnDepthBound = bReadOnlyDepth ? &CSubresourceBindings::ReadOnlyDepthStencilViewBound : &CSubresourceBindings::WritableDepthStencilViewBound;
-    if (!bHasStencil || bReadOnlyDepth == bReadOnlyStencil)
-    {
-        ViewBoundCommon(viewSubresources, pfnDepthBound);
-        return;
-    }
-
-    CViewSubresourceSubset readSubresources(pView->GetDesc12(),
-                                             pView->m_pResource->AppDesc()->MipLevels(),
-                                             pView->m_pResource->AppDesc()->ArraySize(),
-                                             pView->m_pResource->SubresourceMultiplier(),
-                                             CViewSubresourceSubset::ReadOnly);
-    CViewSubresourceSubset writeSubresources(pView->GetDesc12(),
-                                             pView->m_pResource->AppDesc()->MipLevels(),
-                                             pView->m_pResource->AppDesc()->ArraySize(),
-                                             pView->m_pResource->SubresourceMultiplier(),
-                                             CViewSubresourceSubset::WriteOnly);
-
-    // If either of these were empty, then there would be only one type of bind required, and the (readOnlyDepth == readOnlyStencil) check would've covered it
-    assert(!readSubresources.IsEmpty() && !writeSubresources.IsEmpty());
-
-    UINT NumViewsReferencingSubresources = m_NumViewsReferencingSubresources;
-    ViewBoundCommon(readSubresources, &CSubresourceBindings::ReadOnlyDepthStencilViewBound);
-    ViewBoundCommon(writeSubresources, &CSubresourceBindings::WritableDepthStencilViewBound);
-    m_NumViewsReferencingSubresources = NumViewsReferencingSubresources + 1;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-template<> inline void CResourceBindings::ViewUnbound<DepthStencilViewType>(TDSV* pView, EShaderStage stage, UINT /*slot*/)
-{
-#if TRANSLATION_LAYER_DBG
-    // View bindings aren't used for DSVs
-    auto& viewBindings = pView->m_currentBindings;
-    assert(!viewBindings.IsViewBound());
-#endif
-
-    assert(m_bIsDepthStencilViewBound);
-    m_bIsDepthStencilViewBound = false;
-    pView->DecrementBindRefs();
-
-    CViewSubresourceSubset &viewSubresources = pView->m_subresources;
-    ViewUnboundCommon(viewSubresources, GetUnbindFunc<DepthStencilViewType>(stage));
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-// Binding helpers
-//----------------------------------------------------------------------------------------------------------------------------------
-inline void VBBinder::Bound(Resource* pBuffer, UINT slot, EShaderStage)  { return ImmediateContext::VertexBufferBound(pBuffer, slot); }
-inline void VBBinder::Unbound(Resource* pBuffer, UINT slot, EShaderStage) { return ImmediateContext::VertexBufferUnbound(pBuffer, slot); }
-inline void IBBinder::Bound(Resource* pBuffer, UINT, EShaderStage)  { return ImmediateContext::IndexBufferBound(pBuffer); }
-inline void IBBinder::Unbound(Resource* pBuffer, UINT, EShaderStage) { return ImmediateContext::IndexBufferUnbound(pBuffer); }
-inline void SOBinder::Bound(Resource* pBuffer, UINT slot, EShaderStage)  { return ImmediateContext::StreamOutputBufferBound(pBuffer, slot); }
-inline void SOBinder::Unbound(Resource* pBuffer, UINT slot, EShaderStage) { return ImmediateContext::StreamOutputBufferUnbound(pBuffer, slot); }
-
-//----------------------------------------------------------------------------------------------------------------------------------
 inline bool BitSetLessThan(unsigned long bits, UINT slot)
 {
     unsigned long index = 0;
@@ -179,35 +70,7 @@ inline bool CBoundState<TBindable, NumBindSlots>::DirtyBitsUpTo(_In_range_(0, Nu
 
 //----------------------------------------------------------------------------------------------------------------------------------
 template <typename TBindable, UINT NumBindSlots>
-void CBoundState<TBindable, NumBindSlots>::ReassertResourceState() const noexcept
-{
-    for (UINT i = 0; i < m_NumBound; ++i)
-    {
-        if (m_Bound[i])
-        {
-            ImmediateContext* pDevice = m_Bound[i]->m_pParent;
-            pDevice->TransitionResourceForBindings(m_Bound[i]);
-        }
-    }
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-template <typename TBindable, UINT NumBindSlots, typename TBinder>
-inline bool CSimpleBoundState<TBindable, NumBindSlots, TBinder>::UpdateBinding(_In_range_(0, NumBindings-1) UINT slot, _In_opt_ TBindable* pBindable, EShaderStage stage) noexcept
-{
-    auto pCurrent = this->m_Bound[slot];
-    if (__super::UpdateBinding(slot, pBindable))
-    {
-        TBinder::Unbound(pCurrent, slot, stage);
-        TBinder::Bound(pBindable, slot, stage);
-        return true;
-    }
-    return false;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-template <typename TBindable, UINT NumBindSlots>
-inline bool CViewBoundState<TBindable, NumBindSlots>::UpdateBinding(_In_range_(0, NumBindings-1) UINT slot, _In_opt_ TBindable* pBindable, EShaderStage stage) noexcept
+inline bool CViewBoundState<TBindable, NumBindSlots>::UpdateBinding(_In_range_(0, NumBindings-1) UINT slot, _In_opt_ TBindable* pBindable) noexcept
 {
     auto& Current = this->m_Bound[slot];
     if (pBindable)
@@ -216,8 +79,6 @@ inline bool CViewBoundState<TBindable, NumBindSlots>::UpdateBinding(_In_range_(0
     }
     if (Current != pBindable)
     {
-        if (Current) Current->ViewUnbound(slot, stage);
-        if (pBindable) pBindable->ViewBound(slot, stage);
         Current = pBindable;
         
         // We skip calling TrimNumBound because we just use shader data to determine the actual amount to bind
@@ -275,7 +136,7 @@ inline bool CViewBoundState<TBindable, NumBindSlots>::IsDirty(TDeclVector const&
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline bool CConstantBufferBoundState::UpdateBinding(_In_range_(0, NumBindings-1) UINT slot, _In_opt_ Resource* pBindable, EShaderStage stage) noexcept
+inline bool CConstantBufferBoundState::UpdateBinding(_In_range_(0, NumBindings-1) UINT slot, _In_opt_ Resource* pBindable) noexcept
 {
     auto& Current = m_Bound[slot];
     if (pBindable)
@@ -284,8 +145,6 @@ inline bool CConstantBufferBoundState::UpdateBinding(_In_range_(0, NumBindings-1
     }
     if (Current != pBindable)
     {
-        ImmediateContext::ConstantBufferUnbound(Current, slot, stage);
-        ImmediateContext::ConstantBufferBound(pBindable, slot, stage);
         Current = pBindable;
 
         // We skip calling TrimNumBound because we just use shader data to determine the actual amount to bind
@@ -332,12 +191,12 @@ inline void ImmediateContext::InsertUAVBarriersIfNeeded(CViewBoundState<UAV, D3D
     {
         if (pUAVs[i])
         {
-            if (pUAVs[i]->m_pResource->m_Identity->m_LastUAVAccess == GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS))
+            if (pUAVs[i]->m_pResource->m_Identity->m_LastUAVAccess == GetCommandListID())
             {
                 m_vUAVBarriers.push_back({ D3D12_RESOURCE_BARRIER_TYPE_UAV });
                 m_vUAVBarriers.back().UAV.pResource = pUAVs[i]->m_pResource->GetUnderlyingResource();
             }
-            pUAVs[i]->m_pResource->m_Identity->m_LastUAVAccess = GetCommandListID(COMMAND_LIST_TYPE::GRAPHICS);
+            pUAVs[i]->m_pResource->m_Identity->m_LastUAVAccess = GetCommandListID();
         }
     }
     if (m_vUAVBarriers.size())
@@ -355,8 +214,8 @@ inline UINT ImmediateContext::CalculateViewSlotsForBindings() noexcept
         if (m_DirtyStates & dirtyBit) { NumRequiredSlots += count; }
     };
     auto& RootSigDesc = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc;
-    pfnAccumulate(e_CSShaderResourcesDirty, RootSigDesc.GetShaderStage<e_CS>().GetSRVBindingCount());
-    pfnAccumulate(e_CSConstantBuffersDirty, RootSigDesc.GetShaderStage<e_CS>().GetCBBindingCount());
+    pfnAccumulate(e_CSShaderResourcesDirty, RootSigDesc.GetShaderStage().GetSRVBindingCount());
+    pfnAccumulate(e_CSConstantBuffersDirty, RootSigDesc.GetShaderStage().GetCBBindingCount());
     pfnAccumulate(e_CSUnorderedAccessViewsDirty, RootSigDesc.GetUAVBindingCount());
     return NumRequiredSlots;
 }
@@ -369,7 +228,7 @@ inline UINT ImmediateContext::CalculateSamplerSlotsForBindings() noexcept
         if (m_DirtyStates & dirtyBit) { NumRequiredSlots += count; }
     };
     auto& RootSigDesc = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc;
-    pfnAccumulate(e_CSSamplersDirty, RootSigDesc.GetShaderStage<e_CS>().GetSamplerBindingCount());
+    pfnAccumulate(e_CSSamplersDirty, RootSigDesc.GetShaderStage().GetSamplerBindingCount());
     return NumRequiredSlots;
 }
 
@@ -377,15 +236,14 @@ inline UINT ImmediateContext::CalculateSamplerSlotsForBindings() noexcept
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::DirtyShaderResourcesHelper(UINT& HeapSlot) noexcept
 {
-    typedef SShaderTraits<e_CS> TShaderTraits;
-    if ((m_DirtyStates & TShaderTraits::c_ShaderResourcesDirty) == 0)
+    if ((m_DirtyStates & e_CSShaderResourcesDirty) == 0)
     {
         return;
     }
 
-    SStageState& CurrentState = TShaderTraits::CurrentStageState(m_CurrentState);
+    SStageState& CurrentState = m_CurrentState.m_CS;
     auto& SRVBindings = CurrentState.m_SRVs;
-    UINT RootSigHWM = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc.GetShaderStage<e_CS>().GetSRVBindingCount();
+    UINT RootSigHWM = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc.GetShaderStage().GetSRVBindingCount();
     UINT numSRVs = RootSigHWM;
     static const UINT MaxSRVs = SRVBindings.NumBindings;
     assert(HeapSlot + numSRVs <= m_ViewHeap.m_Desc.NumDescriptors);
@@ -427,15 +285,14 @@ inline void GetBufferViewDesc(Resource *pBuffer, TDesc &Desc, UINT APIOffset, UI
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::DirtyConstantBuffersHelper(UINT& HeapSlot) noexcept
 {
-    typedef SShaderTraits<e_CS> TShaderTraits;
-    if ((m_DirtyStates & TShaderTraits::c_ConstantBuffersDirty) == 0)
+    if ((m_DirtyStates & e_CSConstantBuffersDirty) == 0)
     {
         return;
     }
 
-    SStageState& CurrentState = TShaderTraits::CurrentStageState(m_CurrentState);
+    SStageState& CurrentState = m_CurrentState.m_CS;
     auto& CBBindings = CurrentState.m_CBs;
-    UINT numCBs = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc.GetShaderStage<e_CS>().GetCBBindingCount();
+    UINT numCBs = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc.GetShaderStage().GetCBBindingCount();
     static const UINT MaxCBs = CBBindings.NumBindings;
 
     assert(HeapSlot + numCBs <= m_ViewHeap.m_Desc.NumDescriptors);
@@ -461,14 +318,13 @@ inline void ImmediateContext::DirtyConstantBuffersHelper(UINT& HeapSlot) noexcep
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::DirtySamplersHelper(UINT& HeapSlot) noexcept
 {
-    typedef SShaderTraits<e_CS> TShaderTraits;
-    if ((m_DirtyStates & TShaderTraits::c_SamplersDirty) == 0)
+    if ((m_DirtyStates & e_CSSamplersDirty) == 0)
     {
         return;
     }
 
-    SStageState& CurrentState = TShaderTraits::CurrentStageState(m_CurrentState);
-    UINT RootSigHWM = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc.GetShaderStage<e_CS>().GetSamplerBindingCount();
+    SStageState& CurrentState = m_CurrentState.m_CS;
+    UINT RootSigHWM = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc.GetShaderStage().GetSamplerBindingCount();
     UINT numSamplers = RootSigHWM;
     auto& SamplerBindings = CurrentState.m_Samplers;
     static const UINT MaxSamplers = SamplerBindings.NumBindings;
@@ -488,65 +344,44 @@ inline void ImmediateContext::DirtySamplersHelper(UINT& HeapSlot) noexcept
     HeapSlot += numSamplers;
 }
 
-//----------------------------------------------------------------------------------------------------------------------------------
-template<EShaderStage eShader> struct DescriptorBindFuncs
-{
-    static decltype(&ID3D12GraphicsCommandList::SetComputeRootDescriptorTable) GetBindFunc()
-    {
-        return &ID3D12GraphicsCommandList::SetComputeRootDescriptorTable;
-    }
-};
-
-template<EShaderStage eShader> struct SRVBindIndices;
-template<> struct SRVBindIndices<e_CS> { static const UINT c_TableIndex = 1; };
-
 inline void ImmediateContext::ApplyShaderResourcesHelper() noexcept
 {
-    typedef SShaderTraits<e_CS> TShaderTraits;
-    SStageState& CurrentState = TShaderTraits::CurrentStageState(m_CurrentState);
-    if ((m_StatesToReassert & TShaderTraits::c_ShaderResourcesDirty) == 0)
+    SStageState& CurrentState = m_CurrentState.m_CS;
+    if ((m_StatesToReassert & e_CSShaderResourcesDirty) == 0)
     {
         return;
     }
 
-    (GetGraphicsCommandList()->*DescriptorBindFuncs<e_CS>::GetBindFunc())(
-        SRVBindIndices<e_CS>::c_TableIndex,
+    GetGraphicsCommandList()->SetComputeRootDescriptorTable(
+        1,
         CurrentState.m_SRVTableBase);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-template<EShaderStage eShader> struct CBBindIndices;
-template<> struct CBBindIndices<e_CS> { static const UINT c_TableIndex = 0; };
-
 inline void ImmediateContext::ApplyConstantBuffersHelper() noexcept
 {
-    typedef SShaderTraits<e_CS> TShaderTraits;
-    SStageState& CurrentState = TShaderTraits::CurrentStageState(m_CurrentState);
-    if ((m_StatesToReassert & TShaderTraits::c_ConstantBuffersDirty) == 0)
+    SStageState &CurrentState = m_CurrentState.m_CS;
+    if ((m_StatesToReassert & e_CSConstantBuffersDirty) == 0)
     {
         return;
     }
 
-    (GetGraphicsCommandList()->*DescriptorBindFuncs<e_CS>::GetBindFunc())(
-        CBBindIndices<e_CS>::c_TableIndex,
+    GetGraphicsCommandList()->SetComputeRootDescriptorTable(
+        0,
         CurrentState.m_CBTableBase);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-template<EShaderStage eShader> struct SamplerBindIndices;
-template<> struct SamplerBindIndices<e_CS> { static const UINT c_TableIndex = 2; };
-
 inline void ImmediateContext::ApplySamplersHelper() noexcept
 {
-    typedef SShaderTraits<e_CS> TShaderTraits;
-    SStageState& CurrentState = TShaderTraits::CurrentStageState(m_CurrentState);
-    if ((m_StatesToReassert & TShaderTraits::c_SamplersDirty) == 0)
+    SStageState &CurrentState = m_CurrentState.m_CS;
+    if ((m_StatesToReassert & e_CSSamplersDirty) == 0)
     {
         return;
     }
 
-    (GetGraphicsCommandList()->*DescriptorBindFuncs<e_CS>::GetBindFunc())(
-        SamplerBindIndices<e_CS>::c_TableIndex,
+    GetGraphicsCommandList()->SetComputeRootDescriptorTable(
+        2,
         CurrentState.m_SamplerTableBase);
 }
 
@@ -615,10 +450,10 @@ inline void ImmediateContext::PreDispatch() noexcept(false)
 
     // See PreDraw for comments regarding how dirty bits for bindings are managed
     auto& RootSigDesc = m_CurrentState.m_pPSO->GetRootSignature()->m_Desc;
-    auto& shaderStage = RootSigDesc.GetShaderStage<e_CS>();
+    auto& shaderStage = RootSigDesc.GetShaderStage();
 
     const TDeclVector EmptyDecls;
-    auto pComputeShader = m_CurrentState.m_pPSO->GetShader<e_CS>();
+    auto pComputeShader = m_CurrentState.m_pPSO->GetShader();
     m_DirtyStates |= m_CurrentState.m_CS.m_SRVs.IsDirty(pComputeShader ? pComputeShader->m_ResourceDecls : EmptyDecls, shaderStage.GetSRVBindingCount(), !!(m_DirtyStates & e_CSShaderResourcesDirty)) ? e_CSShaderResourcesDirty : 0;
     m_DirtyStates |= m_CurrentState.m_CS.m_CBs.IsDirty(shaderStage.GetCBBindingCount()) ? e_CSConstantBuffersDirty : 0;
     m_DirtyStates |= m_CurrentState.m_CS.m_Samplers.IsDirty(shaderStage.GetSamplerBindingCount()) ? e_CSSamplersDirty : 0;
@@ -668,14 +503,7 @@ inline void ImmediateContext::PreDispatch() noexcept(false)
 
     m_StatesToReassert |= (m_DirtyStates & e_ComputeStateDirty);
 
-    if (m_StatesToReassert & e_FirstDispatch)
-    {
-        m_CurrentState.m_CS.m_SRVs.ReassertResourceState();
-        m_CurrentState.m_CS.m_CBs.ReassertResourceState();
-        m_CurrentState.m_CSUAVs.ReassertResourceState();
-    }
-
-    m_ResourceStateManager.ApplyAllResourceTransitions(true);
+    m_ResourceStateManager.ApplyAllResourceTransitions();
 
     if (m_StatesToReassert & e_ComputeStateDirty)
     {
@@ -687,7 +515,7 @@ inline void ImmediateContext::PreDispatch() noexcept(false)
 
         if (m_StatesToReassert & e_PipelineStateDirty)
         {
-            auto pPSO = m_CurrentState.m_pPSO->GetForUse(COMMAND_LIST_TYPE::GRAPHICS);
+            auto pPSO = m_CurrentState.m_pPSO->GetForUse();
             if (!pPSO)
             {
                 throw _com_error(S_OK);
@@ -703,7 +531,7 @@ inline void ImmediateContext::PreDispatch() noexcept(false)
             {
                 // For compute-only, we turn our sampler tables into SRVs.
                 // Make sure we bind something that's valid to the sampler slot, and just make it mirror the SRVs.
-                GetGraphicsCommandList()->SetComputeRootDescriptorTable(SamplerBindIndices<e_CS>::c_TableIndex, m_CurrentState.m_CS.m_SRVTableBase);
+                GetGraphicsCommandList()->SetComputeRootDescriptorTable(2, m_CurrentState.m_CS.m_SRVTableBase);
             }
         }
         else
@@ -724,11 +552,11 @@ inline void ImmediateContext::PreDispatch() noexcept(false)
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline ID3D12CommandQueue *ImmediateContext::GetCommandQueue(COMMAND_LIST_TYPE type) noexcept
+inline ID3D12CommandQueue *ImmediateContext::GetCommandQueue() noexcept
 {
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)type]->GetCommandQueue();
+        return m_CommandList->GetCommandQueue();
     }
     else
     {
@@ -739,25 +567,25 @@ inline ID3D12CommandQueue *ImmediateContext::GetCommandQueue(COMMAND_LIST_TYPE t
 //----------------------------------------------------------------------------------------------------------------------------------
 inline ID3D12GraphicsCommandList *ImmediateContext::GetGraphicsCommandList() noexcept
 {
-    return m_CommandLists[(UINT)COMMAND_LIST_TYPE::GRAPHICS]->GetGraphicsCommandList();
+    return m_CommandList->GetGraphicsCommandList();
 }
 
 // There is an MSVC bug causing a bogus warning to be emitted here for x64 only, while compiling ApplyAllResourceTransitions
 #pragma warning(push)
 #pragma warning(disable: 4789)
 //----------------------------------------------------------------------------------------------------------------------------------
-inline CommandListManager *ImmediateContext::GetCommandListManager(COMMAND_LIST_TYPE type) noexcept
+inline CommandListManager *ImmediateContext::GetCommandListManager() noexcept
 {
-    return type != COMMAND_LIST_TYPE::UNKNOWN ? m_CommandLists[(UINT)type].get() : nullptr;
+    return m_CommandList ? m_CommandList.get() : nullptr;
 }
 #pragma warning(pop)
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline ID3D12CommandList *ImmediateContext::GetCommandList(COMMAND_LIST_TYPE commandListType) noexcept
+inline ID3D12CommandList *ImmediateContext::GetCommandList() noexcept
 {
-    if (commandListType != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)commandListType])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)commandListType]->GetCommandList();
+        return m_CommandList->GetCommandList();
     }
     else
     {
@@ -766,11 +594,11 @@ inline ID3D12CommandList *ImmediateContext::GetCommandList(COMMAND_LIST_TYPE com
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline UINT64 ImmediateContext::GetCommandListID(COMMAND_LIST_TYPE type) noexcept
+inline UINT64 ImmediateContext::GetCommandListID() noexcept
 {
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)type]->GetCommandListID();
+        return m_CommandList->GetCommandListID();
     }
     else
     {
@@ -779,11 +607,11 @@ inline UINT64 ImmediateContext::GetCommandListID(COMMAND_LIST_TYPE type) noexcep
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline UINT64 ImmediateContext::GetCommandListIDInterlockedRead(COMMAND_LIST_TYPE type) noexcept
+inline UINT64 ImmediateContext::GetCommandListIDInterlockedRead() noexcept
 {
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)type]->GetCommandListIDInterlockedRead();
+        return m_CommandList->GetCommandListIDInterlockedRead();
     }
     else
     {
@@ -792,7 +620,7 @@ inline UINT64 ImmediateContext::GetCommandListIDInterlockedRead(COMMAND_LIST_TYP
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline UINT64 ImmediateContext::GetCommandListIDWithCommands(COMMAND_LIST_TYPE type) noexcept
+inline UINT64 ImmediateContext::GetCommandListIDWithCommands() noexcept
 {
     // This method gets the ID of the last command list that actually has commands, which is either
     // the current command list, if it has commands, or the previously submitted command list if the
@@ -801,11 +629,11 @@ inline UINT64 ImmediateContext::GetCommandListIDWithCommands(COMMAND_LIST_TYPE t
     // The result of this method is the fence id that will be signaled after a flush, and is used so that
     // Async::End can track query completion correctly.
     UINT64 Id = 0;
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        Id = m_CommandLists[(UINT)type]->GetCommandListID();
+        Id = m_CommandList->GetCommandListID();
         assert(Id);
-        if (!m_CommandLists[(UINT)type]->HasCommands() && !m_CommandLists[(UINT)type]->NeedSubmitFence())
+        if (m_CommandList->HasCommands() && !m_CommandList->NeedSubmitFence())
         {
             Id -= 1; // Go back one command list
         }
@@ -814,11 +642,11 @@ inline UINT64 ImmediateContext::GetCommandListIDWithCommands(COMMAND_LIST_TYPE t
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline UINT64 ImmediateContext::GetCompletedFenceValue(COMMAND_LIST_TYPE type) noexcept
+inline UINT64 ImmediateContext::GetCompletedFenceValue() noexcept
 {
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)type]->GetCompletedFenceValue();
+        return m_CommandList->GetCompletedFenceValue();
     }
     else
     {
@@ -827,11 +655,11 @@ inline UINT64 ImmediateContext::GetCompletedFenceValue(COMMAND_LIST_TYPE type) n
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline Fence *ImmediateContext::GetFence(COMMAND_LIST_TYPE type) noexcept
+inline Fence *ImmediateContext::GetFence() noexcept
 {
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)type]->GetFence();
+        return m_CommandList->GetFence();
     }
     else
     {
@@ -840,76 +668,30 @@ inline Fence *ImmediateContext::GetFence(COMMAND_LIST_TYPE type) noexcept
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline void ImmediateContext::CloseCommandList(UINT commandListTypeMask) noexcept
+inline void ImmediateContext::CloseCommandList() noexcept
 {
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList)
     {
-        if ((commandListTypeMask & (1 << i)) && m_CommandLists[i])
-        {
-            m_CommandLists[i]->CloseCommandList();
-        }
+        m_CommandList->CloseCommandList();
     }
 }
 
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline void ImmediateContext::ResetCommandList(UINT commandListTypeMask) noexcept
+inline void ImmediateContext::ResetCommandList() noexcept
 {
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList)
     {
-        if ((commandListTypeMask & (1 << i)) && m_CommandLists[i])
-        {
-            m_CommandLists[i]->ResetCommandList();
-        }
+        m_CommandList->ResetCommandList();
     }
 }
 
-
 //----------------------------------------------------------------------------------------------------------------------------------
-inline HRESULT ImmediateContext::EnqueueSetEvent(UINT commandListTypeMask, HANDLE hEvent) noexcept
+inline HRESULT ImmediateContext::EnqueueSetEvent(HANDLE hEvent) noexcept
 {
-#ifdef USE_PIX
-    PIXSetMarker(0ull, L"EnqueueSetEvent");
-#endif
-    HRESULT hr = S_OK;
-    ID3D12Fence *pFences[(UINT)COMMAND_LIST_TYPE::MAX_VALID] = {};
-    UINT64 FenceValues[(UINT)COMMAND_LIST_TYPE::MAX_VALID] = {};
-    UINT nLists = 0;
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList)
     {
-        if ((commandListTypeMask & (1 << i)) && m_CommandLists[i])
-        {
-            pFences[nLists] = m_CommandLists[i]->GetFence()->Get();
-            try {
-                FenceValues[nLists] = m_CommandLists[i]->EnsureFlushedAndFenced(); // throws
-            }
-            catch (_com_error& e)
-            {
-                return e.Error();
-            }
-            catch (std::bad_alloc&)
-            {
-                return E_OUTOFMEMORY;
-            }
-
-            ++nLists;
-        }
-    }
-    hr = m_pDevice12_1->SetEventOnMultipleFenceCompletion(
-             pFences,
-             FenceValues,
-             nLists,
-             D3D12_MULTIPLE_FENCE_WAIT_FLAG_ALL,
-             hEvent);
-    return hr;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-inline HRESULT ImmediateContext::EnqueueSetEvent(COMMAND_LIST_TYPE commandListType, HANDLE hEvent) noexcept
-{
-    if (commandListType != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)commandListType])
-    {
-        return m_CommandLists[(UINT)commandListType]->EnqueueSetEvent(hEvent);
+        return m_CommandList->EnqueueSetEvent(hEvent);
     }
     else
     {
@@ -918,34 +700,11 @@ inline HRESULT ImmediateContext::EnqueueSetEvent(COMMAND_LIST_TYPE commandListTy
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline bool ImmediateContext::WaitForCompletion(UINT commandListTypeMask) noexcept
+inline bool ImmediateContext::WaitForCompletion()
 {
-    UINT nLists = 0;
-    HANDLE hEvents[(UINT)COMMAND_LIST_TYPE::MAX_VALID] = {};
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList)
     {
-        if ((commandListTypeMask & (1 << i)) && m_CommandLists[i])
-        {
-            hEvents[nLists] = m_CommandLists[i]->GetEvent();
-            if (FAILED(m_CommandLists[i]->EnqueueSetEvent(hEvents[nLists])))
-            {
-                return false;
-            }
-            ++nLists;
-        }
-    }
-    DWORD waitRet = WaitForMultipleObjects(nLists, hEvents, TRUE, INFINITE);
-    UNREFERENCED_PARAMETER(waitRet);
-    assert(waitRet == WAIT_OBJECT_0);
-    return true;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-inline bool ImmediateContext::WaitForCompletion(COMMAND_LIST_TYPE commandListType)
-{
-    if (commandListType != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)commandListType])
-    {
-        return m_CommandLists[(UINT)commandListType]->WaitForCompletion(); // throws
+        return m_CommandList->WaitForCompletion(); // throws
     }
     else
     {
@@ -954,11 +713,11 @@ inline bool ImmediateContext::WaitForCompletion(COMMAND_LIST_TYPE commandListTyp
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline bool ImmediateContext::WaitForFenceValue(COMMAND_LIST_TYPE commandListType, UINT64 FenceValue)
+inline bool ImmediateContext::WaitForFenceValue(UINT64 FenceValue)
 {
-    if (commandListType != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)commandListType])
+    if (m_CommandList)
     {
-        return m_CommandLists[(UINT)commandListType]->WaitForFenceValue(FenceValue); // throws
+        return m_CommandList->WaitForFenceValue(FenceValue); // throws
     }
     else
     {
@@ -967,69 +726,42 @@ inline bool ImmediateContext::WaitForFenceValue(COMMAND_LIST_TYPE commandListTyp
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline void ImmediateContext::SubmitCommandList(UINT commandListTypeMask)
+inline void ImmediateContext::SubmitCommandList()
 {
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
+    if (m_CommandList)
     {
-        if ((commandListTypeMask & (1 << i))  &&  m_CommandLists[i])
-        {
-            m_CommandLists[i]->SubmitCommandList(); // throws
-        }
+        m_CommandList->SubmitCommandList(); // throws
     }
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline void ImmediateContext::SubmitCommandList(COMMAND_LIST_TYPE commandListType)
+inline void ImmediateContext::AdditionalCommandsAdded() noexcept
 {
-    if (commandListType != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)commandListType])
+    if (m_CommandList)
     {
-        m_CommandLists[(UINT)commandListType]->SubmitCommandList(); // throws
+        m_CommandList->AdditionalCommandsAdded();
+    }
+}
+
+inline void ImmediateContext::UploadHeapSpaceAllocated(UINT64 HeapSize) noexcept
+{
+    if (m_CommandList)
+    {
+        m_CommandList->UploadHeapSpaceAllocated(HeapSize);
     }
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-inline void ImmediateContext::AdditionalCommandsAdded(COMMAND_LIST_TYPE type) noexcept
+inline bool ImmediateContext::HasCommands() noexcept
 {
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
+    if (m_CommandList)
     {
-        m_CommandLists[(UINT)type]->AdditionalCommandsAdded();
-    }
-}
-
-inline void ImmediateContext::UploadHeapSpaceAllocated(COMMAND_LIST_TYPE type, UINT64 HeapSize) noexcept
-{
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
-    {
-        m_CommandLists[(UINT)type]->UploadHeapSpaceAllocated(HeapSize);
-    }
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-inline bool ImmediateContext::HasCommands(COMMAND_LIST_TYPE type) noexcept
-{
-    if (type != COMMAND_LIST_TYPE::UNKNOWN  &&  m_CommandLists[(UINT)type])
-    {
-        return m_CommandLists[(UINT)type]->HasCommands();
+        return m_CommandList->HasCommands();
     }
     else
     {
         return false;
     }
 }
-
-//----------------------------------------------------------------------------------------------------------------------------------
-inline UINT ImmediateContext::GetCurrentCommandListTypeMask() noexcept
-{
-    UINT Mask = 0;
-    for (UINT i = 0; i < (UINT)COMMAND_LIST_TYPE::MAX_VALID; i++)
-    {
-        if (m_CommandLists[i])
-        {
-            Mask |= (1 << i);
-        }
-    }
-    return Mask;
-}
-
 
 };

@@ -153,6 +153,7 @@ TEST(OpenCLOn12, SimpleImages)
 
     kernel.setArg(0, input);
     kernel.setArg(1, output);
+    kernel.setArg(2, 0.0f);
     queue.enqueueNDRangeKernel(kernel, offset, globalSize, localSize);
 
     float OutputData[width * height * 4];

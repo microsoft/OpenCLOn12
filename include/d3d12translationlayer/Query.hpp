@@ -18,7 +18,7 @@ namespace D3D12TranslationLayer
     {
     public:
     public:
-        Async(ImmediateContext* pDevice, EQueryType Type, UINT CommandListTypeMask) noexcept;
+        Async(ImmediateContext* pDevice, EQueryType Type) noexcept;
         virtual ~Async() noexcept;
 
         virtual void Initialize() noexcept(false) = 0;
@@ -34,15 +34,14 @@ namespace D3D12TranslationLayer
 
     public:
         EQueryType m_Type;
-        UINT64 m_EndedCommandListID[(UINT)COMMAND_LIST_TYPE::MAX_VALID];
-        UINT m_CommandListTypeMask;
+        UINT64 m_EndedCommandListID;
     };
 
     class Query : public Async
     {
     public:
-        Query(ImmediateContext* pDevice, EQueryType Type, UINT CommandListTypeMask, UINT nInstances = c_DefaultInstancesPerQuery) noexcept
-            : Async(pDevice, Type, CommandListTypeMask)
+        Query(ImmediateContext* pDevice, EQueryType Type, UINT nInstances = c_DefaultInstancesPerQuery) noexcept
+            : Async(pDevice, Type)
             , m_CurrentInstance(0)
             , m_InstancesPerQuery(nInstances)
         { }
@@ -66,8 +65,8 @@ namespace D3D12TranslationLayer
         static const UINT c_DefaultInstancesPerQuery = 4;
 
     protected:
-        unique_comptr<ID3D12QueryHeap> m_spQueryHeap[(UINT)COMMAND_LIST_TYPE::MAX_VALID];
-        D3D12ResourceSuballocation m_spResultBuffer[(UINT)COMMAND_LIST_TYPE::MAX_VALID];
+        unique_comptr<ID3D12QueryHeap> m_spQueryHeap;
+        D3D12ResourceSuballocation m_spResultBuffer;
         UINT m_CurrentInstance;
         const UINT m_InstancesPerQuery;
     };

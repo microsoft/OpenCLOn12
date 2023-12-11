@@ -12,36 +12,12 @@ namespace D3D12TranslationLayer
     class ImmediateContext;
     class Resource;
 
-    enum class COMMAND_LIST_TYPE {
-        GRAPHICS        = 0,
-        VIDEO_DECODE    = 1,
-        VIDEO_PROCESS   = 2,
-        MAX_VALID       = 3,
-        UNKNOWN   = MAX_VALID,
-    };
-
-    const UINT COMMAND_LIST_TYPE_GRAPHICS_MASK = (1 << (UINT)COMMAND_LIST_TYPE::GRAPHICS);
-    const UINT COMMAND_LIST_TYPE_VIDEO_DECODE_MASK    = (1 << (UINT)COMMAND_LIST_TYPE::VIDEO_DECODE);
-    const UINT COMMAND_LIST_TYPE_VIDEO_PROCESS_MASK    = (1 << (UINT)COMMAND_LIST_TYPE::VIDEO_PROCESS);
-    const UINT COMMAND_LIST_TYPE_VIDEO_MASK    = COMMAND_LIST_TYPE_VIDEO_DECODE_MASK |
-                                                 COMMAND_LIST_TYPE_VIDEO_PROCESS_MASK;
-    const UINT COMMAND_LIST_TYPE_ALL_MASK      = COMMAND_LIST_TYPE_GRAPHICS_MASK |
-                                                 COMMAND_LIST_TYPE_VIDEO_DECODE_MASK |
-                                                 COMMAND_LIST_TYPE_VIDEO_PROCESS_MASK;
-    const UINT COMMAND_LIST_TYPE_UNKNOWN_MASK = (1 << (UINT)COMMAND_LIST_TYPE::UNKNOWN);
-
     enum class AllocatorHeapType
     {
         None,
         Upload,
         Readback,
     };
-
-    inline COMMAND_LIST_TYPE CommandListType(AllocatorHeapType HeapType)
-    {
-        assert(HeapType != AllocatorHeapType::None);
-        return COMMAND_LIST_TYPE::GRAPHICS;
-    }
 
     inline D3D12_HEAP_TYPE GetD3D12HeapType(AllocatorHeapType HeapType)
     {
@@ -236,16 +212,6 @@ namespace D3D12TranslationLayer
         ListHead->Blink = Entry;
         return;
     }
-
-    enum EShaderStage : UINT8
-    {
-        e_CS,
-        ShaderStageCount,
-
-        // For UAVs, the EShaderStage enum is used for array indices.
-        e_Compute = 0,
-        UAVStageCount
-    };
 
     //==================================================================================================================================
     //
@@ -449,20 +415,6 @@ namespace D3D12TranslationLayer
         T const& operator[](UINT i) const { assert(i < m_Size); return i < InlineSize ? m_InlineArray[i] : m_Extra[i - InlineSize]; }
     };
 
-#if TRANSLATION_LAYER_DBG
-    enum ED3D11On12DebugFlags
-    {
-        Debug_FlushOnDraw = 0x1,
-        Debug_FlushOnDispatch = 0x2,
-        Debug_FlushOnRender = 0x4,
-        Debug_DisableIncrementalBindings = 0x8,
-        Debug_FlushOnDataUpload = 0x10,
-        Debug_FlushOnCopy = 0x20,
-        Debug_WaitOnFlush = 0x40,
-        Debug_StallExecution = 0x80,
-    };
-#endif
-
     enum class ResourceAllocationContext
     {
         ImmediateContextThreadLongLived,
@@ -530,74 +482,4 @@ namespace D3D12TranslationLayer
         std::hash<T> hasher;
         seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
     }
-
-    template <typename mutex_t = std::mutex>
-    class OptLock
-    {
-        mutable std::optional<mutex_t> m_Lock;
-    public:
-        std::unique_lock<mutex_t> TakeLock() const
-        {
-            return m_Lock ? std::unique_lock<mutex_t>(*m_Lock) : std::unique_lock<mutex_t>();
-        }
-        OptLock(bool bHaveLock = false)
-        {
-            if (bHaveLock)
-            {
-                m_Lock.emplace();
-            }
-        }
-        void EnsureLock()
-        {
-            if (!m_Lock)
-            {
-                m_Lock.emplace();
-            }
-        }
-        bool HasLock() const { return m_Lock.has_value(); }
-    };
-
-    template <typename T, size_t Size> struct CircularArray
-    {
-        T m_Array[Size];
-        struct iterator
-        {
-            using difference_type = ptrdiff_t;
-            using value_type = T;
-            using pointer = T*;
-            using reference = T&;
-            using iterator_category = std::random_access_iterator_tag;
-            T* m_Begin;
-            T* m_Current;
-            iterator( T* Begin, T* Current ) : m_Begin( Begin ), m_Current( Current ) {}
-            iterator increment( ptrdiff_t distance ) const
-            {
-                ptrdiff_t totalDistance = (distance + std::distance( m_Begin, m_Current )) % Size;
-                totalDistance = totalDistance >= 0 ? totalDistance : totalDistance + Size;
-                return iterator( m_Begin, m_Begin + totalDistance );
-            }
-            iterator& operator++() { *this = increment( 1 ); return *this; }
-            iterator operator++( int ) { iterator ret = *this; *this = increment( 1 ); return ret; }
-            iterator& operator--() { *this = increment( -1 ); return *this; }
-            iterator operator--( int ) { iterator ret = *this; *this = increment( -1 ); return ret; }
-            iterator operator+( ptrdiff_t v ) { return increment( v ); }
-            iterator& operator+=( ptrdiff_t v ) { *this = increment( v ); return *this; }
-            iterator operator-( ptrdiff_t v ) { return increment( -v ); }
-            iterator& operator-=( ptrdiff_t v ) { *this = increment( -v ); return *this; }
-            bool operator==( iterator const& o ) const { return o.m_Begin == m_Begin && o.m_Current == m_Current; }
-            bool operator!=( iterator const& o ) const { return !(o == *this); }
-            reference operator*() { return *m_Current; }
-            pointer operator->() { return m_Current; }
-            ptrdiff_t operator-( iterator const& o ) const
-            {
-                assert( o.m_Begin == m_Begin );
-                ptrdiff_t rawDistance = std::distance( o.m_Current, m_Current );
-                return rawDistance >= 0 ? rawDistance : rawDistance + Size;
-            }
-        };
-
-        iterator begin() { return iterator( m_Array, m_Array ); }
-        T& operator[]( size_t index ) { return *(begin() + index); }
-    };
-
 };

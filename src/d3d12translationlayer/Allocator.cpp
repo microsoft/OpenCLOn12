@@ -18,7 +18,7 @@ namespace D3D12TranslationLayer
             std::move(unique_comptr<ID3D12Resource>(pResource)), 
             // Guaranteed to be finished since this is only called after
             // all suballocations have been through the deferred deletion queue
-            m_pContext->GetCompletedFenceValue(CommandListType(m_HeapType)));
+            m_pContext->GetCompletedFenceValue());
 
         // Leave ownership to the buffer pool
         pResource->Release();

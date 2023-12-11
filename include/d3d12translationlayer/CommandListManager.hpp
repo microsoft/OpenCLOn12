@@ -11,12 +11,11 @@ namespace D3D12TranslationLayer
     class CommandListManager
     {
     public:
-        CommandListManager(ImmediateContext *pParent, ID3D12CommandQueue *pQueue, COMMAND_LIST_TYPE type);
+        CommandListManager(ImmediateContext *pParent, ID3D12CommandQueue *pQueue);
 
         ~CommandListManager();
 
         void AdditionalCommandsAdded() noexcept;
-        void DrawCommandAdded() noexcept;
         void DispatchCommandAdded() noexcept;
         void UploadHeapSpaceAllocated(UINT64 heapSize) noexcept;
         void ReadbackInitiated() noexcept;
@@ -58,13 +57,12 @@ namespace D3D12TranslationLayer
 
         UINT64 GetCommandListID() { return m_commandListID; }
         UINT64 GetCommandListIDInterlockedRead() { return InterlockedRead64((volatile LONGLONG*)&m_commandListID); }
-        _Out_range_(0, COMMAND_LIST_TYPE::MAX_VALID - 1) COMMAND_LIST_TYPE GetCommandListType() { return m_type; }
         ID3D12CommandQueue* GetCommandQueue() { return m_pCommandQueue.get(); }
         ID3D12CommandList* GetCommandList() { return m_pCommandList.get(); }
         ID3D12SharingContract* GetSharingContract() { return m_pSharingContract.get(); }
         Fence* GetFence() { return &m_Fence; }
 
-        ID3D12GraphicsCommandList* GetGraphicsCommandList(ID3D12CommandList *pCommandList = nullptr) { return  m_type == COMMAND_LIST_TYPE::GRAPHICS ? static_cast<ID3D12GraphicsCommandList * const>(pCommandList ? pCommandList : m_pCommandList.get()) : nullptr; }
+        ID3D12GraphicsCommandList* GetGraphicsCommandList(ID3D12CommandList *pCommandList = nullptr) { return static_cast<ID3D12GraphicsCommandList * const>(pCommandList ? pCommandList : m_pCommandList.get()); }
 
         bool WaitForFenceValueInternal(bool IsImmediateContextThread, UINT64 FenceValue);
         bool ComputeOnly() {return !!(m_pParent->FeatureLevel() == D3D_FEATURE_LEVEL_1_0_CORE);}
@@ -73,7 +71,6 @@ namespace D3D12TranslationLayer
         void ResetCommandListTrackingData()
         {
             m_NumCommands = 0;
-            m_NumDraws = 0;
             m_NumDispatches = 0;
             m_UploadHeapSpaceAllocated = 0;
         }
@@ -81,7 +78,6 @@ namespace D3D12TranslationLayer
         void SubmitCommandListImpl();
 
         ImmediateContext* const                             m_pParent; // weak-ref
-        const COMMAND_LIST_TYPE                             m_type;
         unique_comptr<ID3D12CommandList>                    m_pCommandList;
         unique_comptr<ID3D12CommandAllocator>               m_pCommandAllocator;
         unique_comptr<ID3D12CommandQueue>                   m_pCommandQueue;
@@ -93,7 +89,6 @@ namespace D3D12TranslationLayer
         std::unique_ptr<ResidencySet>      m_pResidencySet;
         UINT                                                m_NumFlushesWithNoReadback = 0;
         UINT                                                m_NumCommands = 0;
-        UINT                                                m_NumDraws = 0;
         UINT                                                m_NumDispatches = 0;
         UINT64                                              m_UploadHeapSpaceAllocated = 0;
         bool                                                m_bNeedSubmitFence;
@@ -116,15 +111,9 @@ namespace D3D12TranslationLayer
         UINT64 m_commandListID = 1;
 
         // Number of maximum in-flight command lists at a given time
-        static constexpr UINT GetMaxInFlightDepth(COMMAND_LIST_TYPE type)
+        static constexpr UINT GetMaxInFlightDepth()
         {
-            switch (type)
-            {
-                case COMMAND_LIST_TYPE::VIDEO_DECODE:
-                    return 16;
-                default:
-                    return 1024;
-            }
+            return 1024;
         };
 
         void SubmitFence() noexcept;
@@ -132,7 +121,6 @@ namespace D3D12TranslationLayer
         void PrepareNewCommandList();
         void IncrementFence();
         void UpdateLastUsedCommandListIDs();
-        D3D12_COMMAND_LIST_TYPE GetD3D12CommandListType(COMMAND_LIST_TYPE type);
     };
 
 }  // namespace D3D12TranslationLayer

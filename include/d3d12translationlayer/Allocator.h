@@ -68,9 +68,8 @@ namespace D3D12TranslationLayer
     {
     public:
         template <typename... InnerAllocatorArgs>
-        ThreadSafeBuddyHeapAllocator(UINT64 maxBlockSize, UINT64 threshold, bool bNeedsThreadSafety, InnerAllocatorArgs&&... innerArgs) : // throw(std::bad_alloc)
-            DisjointBuddyHeapAllocator(maxBlockSize, threshold, std::forward<InnerAllocatorArgs>(innerArgs)...),
-            m_Lock(bNeedsThreadSafety)
+        ThreadSafeBuddyHeapAllocator(UINT64 maxBlockSize, UINT64 threshold, InnerAllocatorArgs&&... innerArgs) : // throw(std::bad_alloc)
+            DisjointBuddyHeapAllocator(maxBlockSize, threshold, std::forward<InnerAllocatorArgs>(innerArgs)...)
         {}
         ThreadSafeBuddyHeapAllocator() = default;
         ThreadSafeBuddyHeapAllocator(ThreadSafeBuddyHeapAllocator&&) = default;
@@ -78,19 +77,19 @@ namespace D3D12TranslationLayer
         
         HeapSuballocationBlock Allocate(UINT64 size)
         {
-            auto scopedLock = m_Lock.TakeLock();
+            auto scopedLock = std::lock_guard(m_Lock);
             return DisjointBuddyHeapAllocator::Allocate(size);
         }
 
         void Deallocate(const HeapSuballocationBlock &block)
         {
-            auto scopedLock = m_Lock.TakeLock();
+            auto scopedLock = std::lock_guard(m_Lock);
             DisjointBuddyHeapAllocator::Deallocate(block);
         }
 
         auto GetInnerAllocation(const HeapSuballocationBlock &block) const
         {
-            auto scopedLock = m_Lock.TakeLock();
+            auto scopedLock = std::lock_guard(m_Lock);
             return DisjointBuddyHeapAllocator::GetInnerAllocation(block);
         }
 
@@ -98,7 +97,7 @@ namespace D3D12TranslationLayer
         using DisjointBuddyHeapAllocator::IsOwner;
 
     private:
-        OptLock<> m_Lock;
+        mutable std::mutex m_Lock;
     };
 
     // Allocator that will conditionally choose to individually allocate resources or suballocate based on a 

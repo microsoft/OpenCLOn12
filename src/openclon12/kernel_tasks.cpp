@@ -570,21 +570,6 @@ void ExecuteKernel::RecordImpl()
         throw std::exception("Failed to specialize");
     }
 
-    auto& Device = m_CommandQueue->GetD3DDevice();
-    std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetUAV(&Device) : nullptr; });
-    std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) { return resource.Get() ? &resource->GetSRV(&Device) : nullptr; });
-    std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
-    if (m_PrintfUAV.Get())
-    {
-        m_UAVs[m_Kernel->m_Dxil.GetMetadata().printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
-    }
-
-    auto& ImmCtx = Device.ImmCtx();
-    ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
-    ImmCtx.SetShaderResources(0, (UINT)m_SRVs.size(), m_SRVs.data());
-    ImmCtx.SetSamplers(0, (UINT)m_Samplers.size(), m_Samplers.data());
-    ImmCtx.SetPipelineState(m_Specialized->m_PSO.get());
-
     // Fill out offsets that'll be read by the kernel for local arg pointers, based on the offsets
     // returned by the compiler for this specialization
     for (UINT i = 0; i < m_Specialized->m_Dxil->GetMetadata().args.size(); ++i)
@@ -596,6 +581,8 @@ void ExecuteKernel::RecordImpl()
         *offsetLocation = std::get<CompiledDxil::Metadata::Arg::Local>(m_Specialized->m_Dxil->GetMetadata().args[i].properties).sharedmem_offset;
     }
 
+    auto &Device = m_CommandQueue->GetD3DDevice();
+
     D3D11_SUBRESOURCE_DATA Data = { m_KernelArgsCbData.data() };
     Device.ImmCtx().UpdateSubresources(
         m_KernelArgsCb.get(),
@@ -603,6 +590,48 @@ void ExecuteKernel::RecordImpl()
         &Data,
         nullptr,
         D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesFlags::ScenarioInitialData);
+
+    Device.ImmCtx().GetResourceStateManager().TransitionResource(m_KernelArgsCb.get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+
+    std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) -> D3D12TranslationLayer::UAV *
+                   {
+                       if (!resource.Get())
+                       {
+                           return nullptr;
+                       }
+                       auto &UAV = resource->GetUAV(&Device);
+                       Device.ImmCtx().GetResourceStateManager().TransitionSubresources(resource->GetUnderlyingResource(&Device),
+                                                                                        UAV.m_subresources,
+                                                                                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                       return &UAV;
+                   });
+    std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) -> D3D12TranslationLayer::SRV *
+                   {
+                       if (!resource.Get())
+                       {
+                           return nullptr;
+                       }
+                       auto &SRV = resource->GetSRV(&Device);
+                       Device.ImmCtx().GetResourceStateManager().TransitionSubresources(resource->GetUnderlyingResource(&Device),
+                                                                                        SRV.m_subresources,
+                                                                                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                       return &SRV;
+                   });
+    std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
+    if (m_PrintfUAV.Get())
+    {
+        auto &UAV = m_PrintfUAV->GetUAV(&Device);
+        Device.ImmCtx().GetResourceStateManager().TransitionSubresources(m_PrintfUAV->GetUnderlyingResource(&Device),
+                                                                         UAV.m_subresources,
+                                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_UAVs[m_Kernel->m_Dxil.GetMetadata().printf_uav_id] = &UAV;
+    }
+
+    auto& ImmCtx = Device.ImmCtx();
+    ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
+    ImmCtx.SetShaderResources(0, (UINT)m_SRVs.size(), m_SRVs.data());
+    ImmCtx.SetSamplers(0, (UINT)m_Samplers.size(), m_Samplers.data());
+    ImmCtx.SetPipelineState(m_Specialized->m_PSO.get());
 
     cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;

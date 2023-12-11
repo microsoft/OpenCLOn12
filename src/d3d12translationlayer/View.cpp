@@ -6,9 +6,9 @@
 namespace D3D12TranslationLayer
 {
 
-    void ViewBase::UsedInCommandList(COMMAND_LIST_TYPE commandListType, UINT64 id) 
+    void ViewBase::UsedInCommandList(UINT64 id) 
     {
-        if (m_pResource) { m_pResource->UsedInCommandList(commandListType, id); }
+        if (m_pResource) { m_pResource->UsedInCommandList(id); }
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------

@@ -402,11 +402,11 @@ void Task::Record()
         {
             // TODO: Maybe share a start timestamp with the end of the previous command?
             m_StartTimestamp.reset(new D3D12TranslationLayer::Query(
-                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
+                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP
             ));
             m_StartTimestamp->Initialize();
             m_StopTimestamp.reset(new D3D12TranslationLayer::Query(
-                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP, D3D12TranslationLayer::COMMAND_LIST_TYPE_GRAPHICS_MASK
+                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP
             ));
             m_StopTimestamp->Initialize();
         }
