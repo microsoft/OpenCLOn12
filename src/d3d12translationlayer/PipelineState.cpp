@@ -5,29 +5,21 @@
 namespace D3D12TranslationLayer
 {
 
-    PipelineState::PipelineState(ImmediateContext *pContext, const COMPUTE_PIPELINE_STATE_DESC &desc)
+    PipelineState::PipelineState(ImmediateContext *pContext, const D3D12_SHADER_BYTECODE &CS, RootSignature* pRS)
         : DeviceChildImpl(pContext)
-        , m_pRootSignature(pContext->CreateOrRetrieveRootSignature(
-            RootSignatureDesc(desc.pCompute)))
+        , m_pRootSignature(pRS)
+        , m_Desc { 0, CS }
     {
-        Compute.m_Desc = desc;
-        Compute.m_Desc.pRootSignature = m_pRootSignature->GetForImmediateUse();
-        Compute.pComputeShader = desc.pCompute;
+        m_Desc.pRootSignature = m_pRootSignature->GetForImmediateUse();
 
         Create();
     }
 
-    PipelineState::~PipelineState()
-    {
-        if (m_pParent->GetPipelineState() == this)
-        {
-            m_pParent->SetPipelineState(nullptr);
-        }
-    }
+    PipelineState::~PipelineState() = default;
 
     void PipelineState::Create()
     {
-        HRESULT hr = m_pParent->m_pDevice12->CreateComputePipelineState(&GetComputeDesc(), IID_PPV_ARGS(GetForCreate()));
+        HRESULT hr = m_pParent->m_pDevice12->CreateComputePipelineState(&m_Desc, IID_PPV_ARGS(GetForCreate()));
         ThrowFailure(hr); // throw( _com_error )
     }
 }

@@ -221,7 +221,7 @@ namespace D3D12TranslationLayer
 
             m_Identity->m_pResidencyHandle = std::unique_ptr<ResidencyManagedObjectWrapper>(new ResidencyManagedObjectWrapper(residencyManager));
             D3D12_RESOURCE_DESC resourceDesc12 = m_creationArgs.m_desc12;
-            D3D12_RESOURCE_ALLOCATION_INFO allocInfo = m_pParent->m_pDevice12->GetResourceAllocationInfo(m_pParent->GetNodeMask(), 1, &resourceDesc12);
+            D3D12_RESOURCE_ALLOCATION_INFO allocInfo = m_pParent->m_pDevice12->GetResourceAllocationInfo(1, 1, &resourceDesc12);
 
             m_Identity->m_pResidencyHandle->Initialize(m_Identity->GetResource(), allocInfo.SizeInBytes, bIsResident);
         }

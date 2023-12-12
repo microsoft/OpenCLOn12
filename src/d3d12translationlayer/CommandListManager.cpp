@@ -25,7 +25,7 @@ namespace D3D12TranslationLayer
         {
             D3D12_COMMAND_QUEUE_DESC queue = {};
             queue.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
-            queue.NodeMask = m_pParent->GetNodeMask();
+            queue.NodeMask = 1;
             queue.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
             CComPtr<ID3D12Device9> spDevice9;
             if (SUCCEEDED(m_pParent->m_pDevice12->QueryInterface(&spDevice9)))
@@ -145,7 +145,7 @@ namespace D3D12TranslationLayer
         else
         {
             // Create a new command list
-            hr = m_pParent->m_pDevice12->CreateCommandList(m_pParent->GetNodeMask(),
+            hr = m_pParent->m_pDevice12->CreateCommandList(1,
                 D3D12_COMMAND_LIST_TYPE_COMPUTE,
                 m_pCommandAllocator.get(),
                 nullptr,
@@ -199,9 +199,6 @@ namespace D3D12TranslationLayer
         SubmitFence();
 
         PrepareNewCommandList();
-
-        m_pParent->m_DirtyStates |= e_DirtyOnNewCommandList;
-        m_pParent->m_StatesToReassert |= e_ReassertOnNewCommandList;
         m_pParent->PostSubmitNotification();
     }
 

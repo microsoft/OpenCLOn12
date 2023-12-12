@@ -12,7 +12,7 @@ class Kernel : public CLChildBase<Kernel, Program, cl_kernel>
 private:
     CompiledDxil const& m_Dxil;
     std::string const m_Name;
-    D3D12TranslationLayer::SShaderDecls m_ShaderDecls;
+    ComPtr<ID3DBlob> m_SerializedRootSignature;
 
     std::vector<std::byte> m_KernelArgsCbData;
     std::vector<CompiledDxil::Configuration::Arg> m_ArgMetadataToCompiler;
@@ -45,6 +45,8 @@ public:
 
     uint16_t const* GetRequiredLocalDims() const;
     uint16_t const* GetLocalDimsHint() const;
+    
+    std::unique_ptr<D3D12TranslationLayer::RootSignature> GetRootSignature(ImmCtx &ImmCtx) const;
 
     const ProgramBinary::Kernel m_Meta;
 };

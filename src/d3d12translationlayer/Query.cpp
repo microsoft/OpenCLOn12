@@ -118,7 +118,7 @@ namespace D3D12TranslationLayer
     {
         // GetNumSubQueries() is > 1 for stream-output queries where 11on12 must accumulate the results from all 4 streams
         // m_InstancesPerQuery is a constant multiplier for all queries.  A new instance is used each time that Suspend/Resume are called
-        D3D12_QUERY_HEAP_DESC QueryHeapDesc = { GetHeapType12(), 1 * m_InstancesPerQuery, m_pParent->GetNodeMask() };
+        D3D12_QUERY_HEAP_DESC QueryHeapDesc = { GetHeapType12(), 1 * m_InstancesPerQuery, 1 };
         UINT BufferSize = GetDataSize12() * QueryHeapDesc.Count;
 
         HRESULT hr = m_pParent->m_pDevice12->CreateQueryHeap(

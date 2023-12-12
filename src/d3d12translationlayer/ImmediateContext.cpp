@@ -10,51 +10,17 @@ namespace D3D12TranslationLayer
 // 
 //==================================================================================================================================
 
-void ImmediateContext::SStageState::ClearState() noexcept
-{
-    m_CBs.Clear();
-    m_SRVs.Clear();
-    m_Samplers.Clear();
-}
-
-void ImmediateContext::SState::ClearState() noexcept
-{
-    GetStageState().ClearState();
-
-    m_CSUAVs.Clear();
-    m_pPSO = nullptr;
-}
-
-ImmediateContext::SStageState& ImmediateContext::SState::GetStageState() noexcept
-{
-    return m_CS;
-}
-
 //----------------------------------------------------------------------------------------------------------------------------------
-ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTIONS& caps, 
-    ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, TranslationLayerCallbacks const& callbacks, CreationArgs args) noexcept(false)
-    : m_nodeIndex(nodeIndex)
-    , m_caps(caps)
+ImmediateContext::ImmediateContext(D3D12_FEATURE_DATA_D3D12_OPTIONS& caps, 
+    ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, CreationArgs args) noexcept(false)
+    : m_caps(caps)
     , m_FeatureLevel(GetHardwareFeatureLevel(pDevice))
     , m_pDevice12(pDevice)
-    , m_SRVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024, true, 1 << nodeIndex)
-    , m_UAVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024, true, 1 << nodeIndex)
-    , m_RTVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 64, true, 1 << nodeIndex)
-    , m_DSVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64, true, 1 << nodeIndex)
-    , m_SamplerAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 64, true, 1 << nodeIndex)
-    , m_DirtyStates(e_DirtyOnFirstCommandList)
-    , m_StatesToReassert(e_ReassertOnNewCommandList)
+    , m_SRVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024)
+    , m_UAVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024)
+    , m_SamplerAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 64)
     , m_UploadBufferPool(m_BufferPoolTrimThreshold, true)
     , m_ReadbackBufferPool(m_BufferPoolTrimThreshold, true)
-    , m_uStencilRef(0)
-    , m_PrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
-    , m_PredicateValue(false)
-    , m_IndexBufferFormat(DXGI_FORMAT_UNKNOWN)
-    , m_uNumScissors(0)
-    , m_uNumViewports(0)
-    , m_ScissorRectEnable(false)
-    , m_uIndexBufferOffset(0)
-    , m_callbacks(callbacks)
     , m_DeferredDeletionQueueManager(this)
 
     , m_UploadHeapSuballocator(
@@ -69,15 +35,9 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
 
     , m_CreationArgs(args)
     , m_ResourceStateManager(*this)
-    , m_bUseRingBufferDescriptorHeaps(false)
+    , m_bUseRingBufferDescriptorHeaps(true)
     , m_residencyManager(*this)
 {
-    memset(m_BlendFactor, 0, sizeof(m_BlendFactor));
-    memset(m_auVertexOffsets, 0, sizeof(m_auVertexOffsets));
-    memset(m_auVertexStrides, 0, sizeof(m_auVertexStrides));
-    memset(m_aScissors, 0, sizeof(m_aScissors));
-    memset(m_aViewports, 0, sizeof(m_aViewports));
-
     HRESULT hr = S_OK;
 
     D3D12_COMMAND_QUEUE_DESC SyncOnlyQueueDesc = { D3D12_COMMAND_LIST_TYPE_NONE };
@@ -98,10 +58,7 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
         }
     }
 
-    m_residencyManager.Initialize(nodeIndex, m_pDXCoreAdapter.get());
-
-    m_UAVDeclScratch.reserve(D3D11_1_UAV_SLOT_COUNT); // throw( bad_alloc )
-    m_vUAVBarriers.reserve(D3D11_1_UAV_SLOT_COUNT); // throw( bad_alloc )
+    m_residencyManager.Initialize(m_pDXCoreAdapter.get());
 
     m_ViewHeap.m_MaxHeapSize = (DWORD)D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_1;
     const UINT32 viewHeapStartingCount = m_bUseRingBufferDescriptorHeaps ? 4096 : m_ViewHeap.m_MaxHeapSize;
@@ -109,7 +66,7 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
     m_ViewHeap.m_Desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     m_ViewHeap.m_Desc.NumDescriptors = viewHeapStartingCount;
     m_ViewHeap.m_Desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    m_ViewHeap.m_Desc.NodeMask = GetNodeMask();
+    m_ViewHeap.m_Desc.NodeMask = 1;
 
     m_SamplerHeap.m_MaxHeapSize = D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
     const UINT32 samplerHeapStartingCount = m_bUseRingBufferDescriptorHeaps ? 512 : m_SamplerHeap.m_MaxHeapSize;
@@ -117,7 +74,7 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
     m_SamplerHeap.m_Desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
     m_SamplerHeap.m_Desc.NumDescriptors = samplerHeapStartingCount;
     m_SamplerHeap.m_Desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    m_SamplerHeap.m_Desc.NodeMask = GetNodeMask();
+    m_SamplerHeap.m_Desc.NodeMask = 1;
 
     // Create initial objects
     hr = m_pDevice12->CreateDescriptorHeap(&m_ViewHeap.m_Desc, IID_PPV_ARGS(&m_ViewHeap.m_pDescriptorHeap));
@@ -137,160 +94,13 @@ ImmediateContext::ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTI
         m_SamplerHeap.m_BitsToSetOnNewHeap = e_SamplersDirty;
     }
 
-    for (UINT i = 0; i <= (UINT)RESOURCE_DIMENSION::TEXTURECUBEARRAY; ++i)
-    {
-        auto ResourceDimension = ComputeOnly() ? RESOURCE_DIMENSION::BUFFER : (RESOURCE_DIMENSION)i;
-        D3D12_SHADER_RESOURCE_VIEW_DESC NullSRVDesc = {};
-        D3D12_UNORDERED_ACCESS_VIEW_DESC NullUAVDesc = {};
-        NullSRVDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-        NullSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        NullUAVDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-        switch (ResourceDimension)
-        {
-            case RESOURCE_DIMENSION::BUFFER:
-            case RESOURCE_DIMENSION::UNKNOWN:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-                NullSRVDesc.Buffer.FirstElement = 0;
-                NullSRVDesc.Buffer.NumElements = 0;
-                NullSRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
-                NullSRVDesc.Buffer.StructureByteStride = 0;
-                NullUAVDesc.Buffer.FirstElement = 0;
-                NullUAVDesc.Buffer.NumElements = 0;
-                NullUAVDesc.Buffer.StructureByteStride = 0;
-                NullUAVDesc.Buffer.CounterOffsetInBytes = 0;
-                NullUAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
-                if (ComputeOnly())
-                {
-                    // Compute only will use a raw view instead of typed
-                    NullSRVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-                    NullUAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-                    NullSRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-                    NullUAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-                }
-                break;
-            case RESOURCE_DIMENSION::TEXTURE1D:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1D;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
-                NullSRVDesc.Texture1D.MipLevels = 1;
-                NullSRVDesc.Texture1D.MostDetailedMip = 0;
-                NullSRVDesc.Texture1D.ResourceMinLODClamp = 0.0f;
-                NullUAVDesc.Texture1D.MipSlice = 0;
-                break;
-            case RESOURCE_DIMENSION::TEXTURE1DARRAY:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE1DARRAY;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1DARRAY;
-                NullSRVDesc.Texture1DArray.MipLevels = 1;
-                NullSRVDesc.Texture1DArray.ArraySize = 1;
-                NullSRVDesc.Texture1DArray.MostDetailedMip = 0;
-                NullSRVDesc.Texture1DArray.FirstArraySlice = 0;
-                NullSRVDesc.Texture1DArray.ResourceMinLODClamp = 0.0f;
-                NullUAVDesc.Texture1DArray.ArraySize = 1;
-                NullUAVDesc.Texture1DArray.MipSlice = 0;
-                NullUAVDesc.Texture1DArray.FirstArraySlice = 0;
-                break;
-            case RESOURCE_DIMENSION::TEXTURE2D:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-                NullSRVDesc.Texture2D.MipLevels = 1;
-                NullSRVDesc.Texture2D.MostDetailedMip = 0;
-                NullSRVDesc.Texture2D.PlaneSlice = 0;
-                NullSRVDesc.Texture2D.ResourceMinLODClamp = 0.0f;
-                NullUAVDesc.Texture2D.MipSlice = 0;                
-                NullUAVDesc.Texture2D.PlaneSlice = 0;
-                break;
-            case RESOURCE_DIMENSION::TEXTURE2DARRAY:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
-                NullSRVDesc.Texture2DArray.MipLevels = 1;
-                NullSRVDesc.Texture2DArray.ArraySize = 1;
-                NullSRVDesc.Texture2DArray.MostDetailedMip = 0;
-                NullSRVDesc.Texture2DArray.FirstArraySlice = 0;
-                NullSRVDesc.Texture2DArray.PlaneSlice = 0;
-                NullSRVDesc.Texture2DArray.ResourceMinLODClamp = 0.0f;
-                NullUAVDesc.Texture2DArray.ArraySize = 1;
-                NullUAVDesc.Texture2DArray.MipSlice = 0;
-                NullUAVDesc.Texture2DArray.FirstArraySlice = 0;
-                NullUAVDesc.Texture2DArray.PlaneSlice = 0;
-                break;
-            case RESOURCE_DIMENSION::TEXTURE2DMS:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_UNKNOWN;
-                break;
-            case RESOURCE_DIMENSION::TEXTURE2DMSARRAY:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_UNKNOWN;
-                NullSRVDesc.Texture2DMSArray.ArraySize = 1;
-                NullSRVDesc.Texture2DMSArray.FirstArraySlice = 0;
-                break;
-            case RESOURCE_DIMENSION::TEXTURE3D:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
-                NullSRVDesc.Texture3D.MipLevels = 1;
-                NullSRVDesc.Texture3D.MostDetailedMip = 0;
-                NullSRVDesc.Texture3D.ResourceMinLODClamp = 0.0f;
-                NullUAVDesc.Texture3D.WSize = 1;
-                NullUAVDesc.Texture3D.MipSlice = 0;
-                NullUAVDesc.Texture3D.FirstWSlice = 0;
-                break;
-            case RESOURCE_DIMENSION::TEXTURECUBE:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_UNKNOWN;
-                NullSRVDesc.TextureCube.MipLevels = 1;
-                NullSRVDesc.TextureCube.MostDetailedMip = 0;
-                NullSRVDesc.TextureCube.ResourceMinLODClamp = 0.0f;
-                break;
-            case RESOURCE_DIMENSION::TEXTURECUBEARRAY:
-                NullSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
-                NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_UNKNOWN;
-                NullSRVDesc.TextureCubeArray.MipLevels = 1;
-                NullSRVDesc.TextureCubeArray.NumCubes = 1;
-                NullSRVDesc.TextureCubeArray.MostDetailedMip = 0;
-                NullSRVDesc.TextureCubeArray.First2DArrayFace = 0;
-                NullSRVDesc.TextureCubeArray.ResourceMinLODClamp = 0.0f;
-                break;
-        }
-
-        if (NullSRVDesc.ViewDimension != D3D12_SRV_DIMENSION_UNKNOWN)
-        {
-            m_NullSRVs[i] = m_SRVAllocator.AllocateHeapSlot(); // throw( _com_error )
-            m_pDevice12->CreateShaderResourceView(nullptr, &NullSRVDesc, m_NullSRVs[i]);
-        }
-
-        if (NullUAVDesc.ViewDimension != D3D12_UAV_DIMENSION_UNKNOWN)
-        {
-            m_NullUAVs[i] = m_UAVAllocator.AllocateHeapSlot(); // throw( _com_error )
-            m_pDevice12->CreateUnorderedAccessView(nullptr, nullptr, &NullUAVDesc, m_NullUAVs[i]);
-        }
-    }
-    if (!ComputeOnly())
-    {
-        m_NullRTV = m_RTVAllocator.AllocateHeapSlot(); // throw( _com_error )
-        D3D12_RENDER_TARGET_VIEW_DESC NullRTVDesc;
-        NullRTVDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        NullRTVDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-        NullRTVDesc.Texture2D.MipSlice = 0;
-        NullRTVDesc.Texture2D.PlaneSlice = 0;
-        m_pDevice12->CreateRenderTargetView(nullptr, &NullRTVDesc, m_NullRTV);
-    }
-
-    if (!ComputeOnly())
-    {
-        m_NullSampler = m_SamplerAllocator.AllocateHeapSlot(); // throw( _com_error )
-        // Arbitrary parameters used, this sampler should never actually be used
-        D3D12_SAMPLER_DESC NullSamplerDesc;
-        NullSamplerDesc.Filter = D3D12_FILTER_ANISOTROPIC;
-        NullSamplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-        NullSamplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-        NullSamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-        NullSamplerDesc.MipLODBias = 0.0f;
-        NullSamplerDesc.MaxAnisotropy = 0;
-        NullSamplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-        NullSamplerDesc.MinLOD = 0.0f;
-        NullSamplerDesc.MaxLOD = 0.0f;
-        memset(NullSamplerDesc.BorderColor, 0, sizeof(NullSamplerDesc.BorderColor));
-        m_pDevice12->CreateSampler(&NullSamplerDesc, m_NullSampler);
-    }
+    m_NullUAV = m_UAVAllocator.AllocateHeapSlot();
+    D3D12_UNORDERED_ACCESS_VIEW_DESC NullUAVDesc = {};
+    NullUAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    NullUAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+    NullUAVDesc.Buffer = {};
+    NullUAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+    m_pDevice12->CreateUnorderedAccessView(nullptr, nullptr, &NullUAVDesc, m_NullUAV);
 
     (void)m_pDevice12->QueryInterface(&m_pDevice12_1);
     (void)m_pDevice12->QueryInterface(&m_pDevice12_2);
@@ -420,10 +230,6 @@ bool ImmediateContext::TrimResourcePools()
 
 void ImmediateContext::PostSubmitNotification()
 {
-    if (m_callbacks.m_pfnPostSubmit)
-    {
-        m_callbacks.m_pfnPostSubmit();
-    }
     TrimDeletedObjects();
     TrimResourcePools();
 
@@ -476,8 +282,6 @@ void ImmediateContext::RollOverHeap(OnlineDescriptorHeap& Heap) noexcept(false)
 
     ID3D12DescriptorHeap* pHeaps[2] = {m_ViewHeap.m_pDescriptorHeap.get(), m_SamplerHeap.m_pDescriptorHeap.get()};
     GetGraphicsCommandList()->SetDescriptorHeaps(ComputeOnly() ? 1 : 2, pHeaps);
-
-    m_DirtyStates |= Heap.m_BitsToSetOnNewHeap;
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -531,17 +335,6 @@ UINT ImmediateContext::ReserveSlotsForBindings(OnlineDescriptorHeap& Heap, UINT 
     assert(offset + NumSlots <= Heap.m_Desc.NumDescriptors);
 
     return offset;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-RootSignature* ImmediateContext::CreateOrRetrieveRootSignature(RootSignatureDesc const& desc) noexcept(false)
-{
-    auto& result = m_RootSignatures[desc];
-    if (!result)
-    {
-        result.reset(new RootSignature(this, desc));
-    }
-    return result.get();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -784,19 +577,6 @@ void ImmediateContext::PrepForCommandQueueSync()
     {
         assert(!m_CommandList->HasCommands());
         m_CommandList->PrepForCommandQueueSync();
-    }
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::CsSetUnorderedAccessViews(UINT Start, __in_range(0, D3D11_1_UAV_SLOT_COUNT) UINT NumViews, __in_ecount(NumViews) UAV* const* ppUAVs, __in_ecount(NumViews) CONST UINT* pInitialCounts)
-{
-    for (UINT i = 0; i < NumViews; ++i)
-    {
-        UINT slot = i + Start;
-        UAV* pUAV = ppUAVs[i];
-
-        // Ensure a counter resource is allocated for the UAV if necessary
-        m_CurrentState.m_CSUAVs.UpdateBinding(slot, pUAV);
     }
 }
 
@@ -2130,21 +1910,7 @@ bool  ImmediateContext::MapDefault(Resource* pResource, UINT Subresource, MAP_TY
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::WriteToSubresource(Resource* pDstResource, UINT DstSubresource, _In_opt_ const D3D11_BOX* pDstBox, 
-    const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch)
-{
-    pDstResource->GetUnderlyingResource()->WriteToSubresource(DstSubresource, reinterpret_cast<const D3D12_BOX*>(pDstBox), pSrcData, SrcRowPitch, SrcDepthPitch);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::ReadFromSubresource(void* pDstData, UINT DstRowPitch, UINT DstDepthPitch,
-    Resource* pSrcResource, UINT SrcSubresource, _In_opt_ const D3D11_BOX* pSrcBox)
-{
-    pSrcResource->GetUnderlyingResource()->ReadFromSubresource(pDstData, DstRowPitch, DstDepthPitch, SrcSubresource, reinterpret_cast<const D3D12_BOX*>(pSrcBox));
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-bool  ImmediateContext::MapUnderlyingSynchronize(Resource* pResource, UINT Subresource, MAP_TYPE MapType, bool DoNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* pMap )
+bool ImmediateContext::MapUnderlyingSynchronize(Resource* pResource, UINT Subresource, MAP_TYPE MapType, bool DoNotWait, _In_opt_ const D3D12_BOX *pReadWriteRange, MappedSubresource* pMap )
 {
     bool bSynchronizeSucceeded = SynchronizeForMap(pResource, Subresource, MapType, DoNotWait);
     if (bSynchronizeSucceeded)
@@ -2321,42 +2087,9 @@ void ImmediateContext::CopyDataToBuffer(
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::TransitionResourceForView(ViewBase* pView, D3D12_RESOURCE_STATES desiredState) noexcept
-{
-    m_ResourceStateManager.TransitionSubresources(pView->m_pResource, pView->m_subresources, desiredState);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::CreateSharedNTHandle(_In_ Resource *pResource, _Out_ HANDLE *pHandle, _In_opt_ SECURITY_ATTRIBUTES *pSA)
-{
-    assert(pResource->Parent()->IsNTHandleShared()); // Note: Not validated by this layer, but only called when this is true.
-
-    ThrowFailure(m_pDevice12->CreateSharedHandle(pResource->GetUnderlyingResource(), pSA, GENERIC_ALL, nullptr, pHandle));
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
 bool RetiredObject::ReadyToDestroy(ImmediateContext* pContext, UINT64 lastCommandListID)
 {
     return lastCommandListID <= pContext->GetCompletedFenceValue();
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-PipelineState* ImmediateContext::GetPipelineState()
-{
-    return m_CurrentState.m_pPSO;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::SetPipelineState(PipelineState* pPipeline)
-{
-    if (!m_CurrentState.m_pPSO || !pPipeline ||
-         m_CurrentState.m_pPSO->GetRootSignature() != pPipeline->GetRootSignature())
-    {
-        m_DirtyStates |= e_ComputeRootSignatureDirty;
-    }
-
-    m_CurrentState.m_pPSO = pPipeline;
-    m_DirtyStates |= e_PipelineStateDirty;
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -2364,12 +2097,6 @@ DXGI_FORMAT ImmediateContext::GetParentForFormat(DXGI_FORMAT format)
 {
     return CD3D11FormatHelper::GetParentFormat(format);
 };
-
-//----------------------------------------------------------------------------------------------------------------------------------
-HRESULT  ImmediateContext::GetDeviceState()
-{
-    return m_pDevice12->GetDeviceRemovedReason();
-}
 
 //----------------------------------------------------------------------------------------------------------------------------------
  void ImmediateContext::Signal(
@@ -2417,31 +2144,6 @@ unique_comptr<ID3D12Resource> ImmediateContext::AllocateHeap(UINT64 HeapSize, UI
     ThrowFailure(spResource->Map(0, &NullRange, &pData));
 
     return std::move(spResource);
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::ClearState() noexcept
-{
-    m_CurrentState.ClearState();
-
-    m_DirtyStates |= e_DirtyOnFirstCommandList;
-    m_StatesToReassert |= e_ReassertOnNewCommandList;
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-void ImmediateContext::SharingContractPresent(_In_ Resource* pResource)
-{
-    Flush();
-
-    auto pSharingContract = GetCommandListManager()->GetSharingContract();
-    if (pSharingContract)
-    {
-        ID3D12Resource* pUnderlying = pResource->GetUnderlyingResource();
-        pSharingContract->Present(pUnderlying, 0, nullptr);
-    }
-
-    pResource->UsedInCommandList(GetCommandListID());
-    GetCommandListManager()->SetNeedSubmitFence();
 }
 
 }

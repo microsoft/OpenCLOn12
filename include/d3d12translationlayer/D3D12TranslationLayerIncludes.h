@@ -13,11 +13,9 @@
 
 #include <formatdesc.hpp>
 
-#include "Shader.hpp"
 #include "Sampler.hpp"
 #include "View.hpp"
 #include "PipelineState.hpp"
-#include "ResourceBinding.hpp"
 #include "Fence.hpp"
 #include "Residency.h"
 #include "ResourceState.hpp"
@@ -29,7 +27,6 @@
 
 #include "View.inl"
 #include "Sampler.inl"
-#include "Shader.inl"
 #include "ImmediateContext.inl"
 #include "CommandListManager.inl"
 #include <BlockAllocators.inl>

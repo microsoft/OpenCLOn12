@@ -28,7 +28,7 @@ public:
     void ReadyTask(Task*, TaskPoolLock const&);
     void Flush(TaskPoolLock const&);
 
-    std::unique_ptr<D3D12TranslationLayer::PipelineState> CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc);
+    //std::unique_ptr<D3D12TranslationLayer::PipelineState> CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc);
     Device &GetParent() const noexcept { return m_Parent; }
 
 protected:
@@ -44,7 +44,6 @@ protected:
 
     Device &m_Parent;
     const ComPtr<ID3D12Device> m_spDevice;
-    const D3D12TranslationLayer::TranslationLayerCallbacks m_Callbacks;
     ::ImmCtx m_ImmCtx;
 
     std::unique_ptr<Submission> m_RecordingSubmission;

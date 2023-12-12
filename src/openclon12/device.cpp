@@ -342,20 +342,12 @@ static ImmCtx::CreationArgs GetImmCtxCreationArgs()
     return Args;
 }
 
-static D3D12TranslationLayer::TranslationLayerCallbacks GetImmCtxCallbacks()
-{
-    D3D12TranslationLayer::TranslationLayerCallbacks Callbacks = {};
-    Callbacks.m_pfnPostSubmit = []() {};
-    return Callbacks;
-}
-
 D3DDevice::D3DDevice(Device &parent, ID3D12Device *pDevice, ID3D12CommandQueue *pQueue,
                      D3D12_FEATURE_DATA_D3D12_OPTIONS &options, bool IsImportedDevice)
     : m_IsImportedDevice(IsImportedDevice)
     , m_Parent(parent)
     , m_spDevice(pDevice)
-    , m_Callbacks(GetImmCtxCallbacks())
-    , m_ImmCtx(0, options, pDevice, pQueue, m_Callbacks, GetImmCtxCreationArgs())
+    , m_ImmCtx(options, pDevice, pQueue, GetImmCtxCreationArgs())
     , m_RecordingSubmission(new Submission)
     , m_ShaderCache(pDevice)
 {
@@ -605,11 +597,11 @@ void Device::FlushAllDevices(TaskPoolLock const& Lock)
     }
 }
 
-std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
-{
-    std::lock_guard PSOCreateLock(m_PSOCreateLock);
-    return std::make_unique<D3D12TranslationLayer::PipelineState>(&ImmCtx(), Desc);
-}
+//std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
+//{
+//    std::lock_guard PSOCreateLock(m_PSOCreateLock);
+//    return std::make_unique<D3D12TranslationLayer::PipelineState>(&ImmCtx(), Desc);
+//}
 
 void D3DDevice::ExecuteTasks(Submission& tasks)
 {

@@ -73,9 +73,8 @@ void Internal::LRUCache::TrimAgedAllocations(UINT64 FenceValue, std::vector<ID3D
     }
 }
 
-HRESULT ResidencyManager::Initialize(UINT DeviceNodeIndex, IDXCoreAdapter *ParentAdapterDXCore)
+HRESULT ResidencyManager::Initialize(IDXCoreAdapter *ParentAdapterDXCore)
 {
-    NodeIndex = DeviceNodeIndex;
     AdapterDXCore = ParentAdapterDXCore;
 
     if (FAILED(ImmCtx.m_pDevice12->QueryInterface(&Device)))
@@ -261,10 +260,9 @@ HRESULT ResidencyManager::ProcessPagingWork(UINT CommandListIndex, ResidencySet 
     }
 }
 
-static void GetDXCoreBudget(IDXCoreAdapter *AdapterDXCore, UINT NodeIndex, DXCoreAdapterMemoryBudget *InfoOut, DXCoreSegmentGroup Segment)
+static void GetDXCoreBudget(IDXCoreAdapter *AdapterDXCore, DXCoreAdapterMemoryBudget *InfoOut, DXCoreSegmentGroup Segment)
 {
     DXCoreAdapterMemoryBudgetNodeSegmentGroup InputParams = {};
-    InputParams.nodeIndex = NodeIndex;
     InputParams.segmentGroup = Segment;
 
     [[maybe_unused]] HRESULT hr = AdapterDXCore->QueryState(DXCoreAdapterState::AdapterMemoryBudget, &InputParams, InfoOut);
@@ -277,8 +275,8 @@ void ResidencyManager::GetCurrentBudget(UINT64 Timestamp, DXCoreAdapterMemoryBud
     {
         LastBudgetTimestamp = Timestamp;
         DXCoreAdapterMemoryBudget Local, Nonlocal;
-        GetDXCoreBudget(AdapterDXCore, NodeIndex, &Local, DXCoreSegmentGroup::Local);
-        GetDXCoreBudget(AdapterDXCore, NodeIndex, &Nonlocal, DXCoreSegmentGroup::NonLocal);
+        GetDXCoreBudget(AdapterDXCore, &Local, DXCoreSegmentGroup::Local);
+        GetDXCoreBudget(AdapterDXCore, &Nonlocal, DXCoreSegmentGroup::NonLocal);
         CachedBudget.currentUsage = Local.currentUsage + Nonlocal.currentUsage;
         CachedBudget.budget = Local.budget + Nonlocal.budget;
     }

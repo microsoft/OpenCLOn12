@@ -317,8 +317,7 @@ namespace D3D12TranslationLayer
         {
         }
 
-        // NOTE: DeviceNodeIndex is an index not a mask. The majority of D3D12 uses bit masks to identify a GPU node whereas DXGI uses 0 based indices.
-        HRESULT Initialize(UINT DeviceNodeIndex, IDXCoreAdapter* ParentAdapterDXCore);
+        HRESULT Initialize(IDXCoreAdapter* ParentAdapterDXCore);
 
         void BeginTrackingObject(ManagedObject* pObject)
         {
@@ -419,8 +418,6 @@ namespace D3D12TranslationLayer
         Internal::Fence AsyncThreadFence;
 
         CComPtr<ID3D12Device3> Device;
-        // NOTE: This is an index not a mask. The majority of D3D12 uses bit masks to identify a GPU node whereas DXGI uses 0 based indices.
-        UINT NodeIndex = 0;
         IDXCoreAdapter* AdapterDXCore = nullptr;
         Internal::LRUCache LRU;
 

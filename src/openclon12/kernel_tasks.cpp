@@ -104,13 +104,9 @@ public:
     Kernel::ref_ptr_int m_Kernel;
     const std::array<uint32_t, 3> m_DispatchDims;
 
-    std::vector<D3D12TranslationLayer::UAV*> m_UAVs;
-    std::vector<D3D12TranslationLayer::SRV*> m_SRVs;
-    std::vector<D3D12TranslationLayer::Sampler*> m_Samplers;
-    std::vector<D3D12TranslationLayer::Resource*> m_CBs;
-    std::vector<cl_uint> m_CBOffsets;
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
     std::vector<std::byte> m_KernelArgsCbData;
+    size_t m_WorkPropertiesOffset;
     Resource::ref_ptr m_PrintfUAV;
 
     std::vector<Resource::ref_ptr_int> m_KernelArgUAVs;
@@ -143,19 +139,12 @@ public:
         : Task(kernel.m_Parent->GetContext(), CL_COMMAND_NDRANGE_KERNEL, queue)
         , m_Kernel(&kernel)
         , m_DispatchDims(dims)
-        , m_UAVs(kernel.m_UAVs.size(), nullptr)
-        , m_SRVs(kernel.m_SRVs.size(), nullptr)
-        , m_Samplers(kernel.m_Samplers.size(), nullptr)
         , m_KernelArgUAVs(kernel.m_UAVs.begin(), kernel.m_UAVs.end())
         , m_KernelArgSRVs(kernel.m_SRVs.begin(), kernel.m_SRVs.end())
         , m_KernelArgSamplers(kernel.m_Samplers.begin(), kernel.m_Samplers.end())
     {
         cl_uint KernelArgCBIndex = kernel.m_Dxil.GetMetadata().kernel_inputs_cbv_id;
         cl_uint WorkPropertiesCBIndex = kernel.m_Dxil.GetMetadata().work_properties_cbv_id;
-        unsigned num_cbs = max(KernelArgCBIndex + 1,
-                               WorkPropertiesCBIndex + 1);
-        m_CBs.resize(num_cbs);
-        m_CBOffsets.resize(num_cbs);
 
         WorkProperties work_properties = {};
         work_properties.global_offset_x = offset[0];
@@ -172,19 +161,18 @@ public:
         cl_uint numIterations = numXIterations * numYIterations * numZIterations;
 
         size_t KernelInputsCbSize = kernel.m_Dxil.GetMetadata().kernel_inputs_buf_size;
-        size_t WorkPropertiesOffset = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
-        m_CBOffsets[WorkPropertiesCBIndex] = (UINT)WorkPropertiesOffset / 16;
+        m_WorkPropertiesOffset = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 
         auto pCompiler = g_Platform->GetCompiler();
         size_t WorkPropertiesSize = pCompiler->GetWorkPropertiesChunkSize() * numIterations;
-        KernelInputsCbSize = WorkPropertiesOffset + WorkPropertiesSize;
+        KernelInputsCbSize = m_WorkPropertiesOffset + WorkPropertiesSize;
 
         m_KernelArgsCbData.resize(KernelInputsCbSize);
         if (!kernel.m_KernelArgsCbData.empty())
         {
             memcpy(m_KernelArgsCbData.data(), kernel.m_KernelArgsCbData.data(), kernel.m_KernelArgsCbData.size());
         }
-        std::byte* workPropertiesData = m_KernelArgsCbData.data() + WorkPropertiesOffset;
+        std::byte* workPropertiesData = m_KernelArgsCbData.data() + m_WorkPropertiesOffset;
         for (cl_uint x = 0; x < numXIterations; ++x)
         {
             for (cl_uint y = 0; y < numYIterations; ++y)
@@ -228,14 +216,10 @@ public:
                 Args,
                 D3D12TranslationLayer::ResourceAllocationContext::FreeThread);
 
-        m_CBs[KernelArgCBIndex] = m_KernelArgsCb.get();
-        m_CBs[WorkPropertiesCBIndex] = m_KernelArgsCb.get();
-
         if (kernel.m_Dxil.GetMetadata().printf_uav_id >= 0)
         {
             m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
             m_PrintfUAV->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
-            m_UAVs[kernel.m_Dxil.GetMetadata().printf_uav_id] = &m_PrintfUAV->GetUAV(&Device);
         }
 
         CompiledDxil::Configuration config = {};
@@ -268,15 +252,15 @@ public:
                     if (specialized)
                         specialized->Sign();
 
-                    auto CS = std::make_unique<D3D12TranslationLayer::Shader>(&Device.ImmCtx(), specialized->GetBinary(), specialized->GetBinarySize(), kernel->m_ShaderDecls);
-                    D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC Desc = { CS.get() };
-                    auto PSO = Device.CreatePSO(Desc);
+                    auto RS = kernel->GetRootSignature(Device.ImmCtx());
+                    auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
+                        &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get());
 
                     auto cacheEntry = kernel->m_Parent->StoreSpecialization(m_Device.Get(),
                                                                             kernel->m_Name,
                                                                             SpecKey,
                                                                             std::move(specialized),
-                                                                            std::move(CS),
+                                                                            std::move(RS),
                                                                             std::move(PSO));
 
                     {
@@ -582,62 +566,105 @@ void ExecuteKernel::RecordImpl()
     }
 
     auto &Device = m_CommandQueue->GetD3DDevice();
+    auto &ImmCtx = Device.ImmCtx();
 
     D3D11_SUBRESOURCE_DATA Data = { m_KernelArgsCbData.data() };
-    Device.ImmCtx().UpdateSubresources(
+    ImmCtx.UpdateSubresources(
         m_KernelArgsCb.get(),
         m_KernelArgsCb->GetFullSubresourceSubset(),
         &Data,
         nullptr,
         D3D12TranslationLayer::ImmediateContext::UpdateSubresourcesFlags::ScenarioInitialData);
 
-    Device.ImmCtx().GetResourceStateManager().TransitionResource(m_KernelArgsCb.get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    ImmCtx.GetResourceStateManager().TransitionResource(m_KernelArgsCb.get(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 
-    std::transform(m_KernelArgUAVs.begin(), m_KernelArgUAVs.end(), m_UAVs.begin(), [&Device](Resource::ref_ptr_int& resource) -> D3D12TranslationLayer::UAV *
-                   {
-                       if (!resource.Get())
-                       {
-                           return nullptr;
-                       }
-                       auto &UAV = resource->GetUAV(&Device);
-                       Device.ImmCtx().GetResourceStateManager().TransitionSubresources(resource->GetUnderlyingResource(&Device),
-                                                                                        UAV.m_subresources,
-                                                                                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-                       return &UAV;
-                   });
-    std::transform(m_KernelArgSRVs.begin(), m_KernelArgSRVs.end(), m_SRVs.begin(), [&Device](Resource::ref_ptr_int& resource) -> D3D12TranslationLayer::SRV *
-                   {
-                       if (!resource.Get())
-                       {
-                           return nullptr;
-                       }
-                       auto &SRV = resource->GetSRV(&Device);
-                       Device.ImmCtx().GetResourceStateManager().TransitionSubresources(resource->GetUnderlyingResource(&Device),
-                                                                                        SRV.m_subresources,
-                                                                                        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-                       return &SRV;
-                   });
-    std::transform(m_KernelArgSamplers.begin(), m_KernelArgSamplers.end(), m_Samplers.begin(), [&Device](Sampler::ref_ptr_int& sampler) { return sampler.Get() ? &sampler->GetUnderlying(&Device) : nullptr; });
+    std::vector<D3D12_CPU_DESCRIPTOR_HANDLE> SrcDescriptors;
+    UINT NumViewDescriptors = 2 + (UINT)m_KernelArgUAVs.size() + (UINT)m_KernelArgSRVs.size();
+    UINT NumSamplerDescriptors = (UINT)m_KernelArgSamplers.size();
+    SrcDescriptors.reserve(std::max(NumViewDescriptors - 2, NumSamplerDescriptors));
+
+    ID3D12GraphicsCommandList *pCmdList = ImmCtx.GetGraphicsCommandList();
+    pCmdList->SetComputeRootSignature(m_Specialized->m_RS->GetForUse());
+    pCmdList->SetPipelineState(m_Specialized->m_PSO->GetForUse());
+
+    if (NumSamplerDescriptors)
+    {
+        UINT SamplerSlot = ImmCtx.ReserveSlots(ImmCtx.m_SamplerHeap, NumSamplerDescriptors);
+        for (auto &samp : m_KernelArgSamplers)
+        {
+            SrcDescriptors.push_back(samp->GetUnderlying(&Device).m_Descriptor);
+        }
+        ImmCtx.m_pDevice12->CopyDescriptors(1, &ImmCtx.m_SamplerHeap.CPUHandle(SamplerSlot), &NumSamplerDescriptors,
+                                            NumSamplerDescriptors, SrcDescriptors.data(), nullptr, D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+        SrcDescriptors.clear();
+        pCmdList->SetComputeRootDescriptorTable(1, ImmCtx.m_SamplerHeap.GPUHandle(SamplerSlot));
+    }
+
+    for (auto &UavRes : m_KernelArgUAVs)
+    {
+        if (UavRes.Get())
+        {
+            auto &UAV = UavRes->GetUAV(&Device);
+            Device.ImmCtx().GetResourceStateManager().TransitionSubresources(UavRes->GetUnderlyingResource(&Device),
+                                                                             UAV.m_subresources,
+                                                                             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            SrcDescriptors.push_back(UAV.GetRefreshedDescriptorHandle());
+        }
+        else
+        {
+            SrcDescriptors.push_back(ImmCtx.m_NullUAV);
+        }
+    }
+    for (auto &SrvRes : m_KernelArgSRVs)
+    {
+        auto &SRV = SrvRes->GetSRV(&Device);
+        Device.ImmCtx().GetResourceStateManager().TransitionSubresources(SrvRes->GetUnderlyingResource(&Device),
+                                                                         SRV.m_subresources,
+                                                                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        SrcDescriptors.push_back(SRV.GetRefreshedDescriptorHandle());
+    }
     if (m_PrintfUAV.Get())
     {
         auto &UAV = m_PrintfUAV->GetUAV(&Device);
         Device.ImmCtx().GetResourceStateManager().TransitionSubresources(m_PrintfUAV->GetUnderlyingResource(&Device),
                                                                          UAV.m_subresources,
                                                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        m_UAVs[m_Kernel->m_Dxil.GetMetadata().printf_uav_id] = &UAV;
+        SrcDescriptors[m_Specialized->m_Dxil->GetMetadata().printf_uav_id] = UAV.GetRefreshedDescriptorHandle();
     }
 
-    auto& ImmCtx = Device.ImmCtx();
-    ImmCtx.CsSetUnorderedAccessViews(0, (UINT)m_UAVs.size(), m_UAVs.data(), c_aUAVAppendOffsets);
-    ImmCtx.SetShaderResources(0, (UINT)m_SRVs.size(), m_SRVs.data());
-    ImmCtx.SetSamplers(0, (UINT)m_Samplers.size(), m_Samplers.data());
-    ImmCtx.SetPipelineState(m_Specialized->m_PSO.get());
+    auto pCompiler = g_Platform->GetCompiler();
+    cl_uint WorkPropertiesChunkSize = (cl_uint)pCompiler->GetWorkPropertiesChunkSize();
+
+    auto CopyAndSetViewDescriptors = [&](size_t WorkPropertiesOffset)
+    {
+        // The root signature indicates CBVs, then UAVs, then SRVs
+        UINT ViewSlot = ImmCtx.ReserveSlots(ImmCtx.m_ViewHeap, NumViewDescriptors);
+        UINT KernelArgsSlot = ViewSlot + m_Specialized->m_Dxil->GetMetadata().kernel_inputs_cbv_id;
+        UINT WorkPropertiesSlot = ViewSlot + m_Specialized->m_Dxil->GetMetadata().work_properties_cbv_id;
+
+        D3D12_CONSTANT_BUFFER_VIEW_DESC CBVDesc;
+        D3D12TranslationLayer::GetBufferViewDesc(m_KernelArgsCb.get(), CBVDesc, 0, m_WorkPropertiesOffset);
+        ImmCtx.m_pDevice12->CreateConstantBufferView(&CBVDesc, ImmCtx.m_ViewHeap.CPUHandle(KernelArgsSlot));
+        CBVDesc.BufferLocation += WorkPropertiesOffset;
+        CBVDesc.SizeInBytes = WorkPropertiesChunkSize;
+        ImmCtx.m_pDevice12->CreateConstantBufferView(&CBVDesc, ImmCtx.m_ViewHeap.CPUHandle(WorkPropertiesSlot));
+
+        UINT CopyStartSlot = ViewSlot + 2;
+        UINT CopySize = NumViewDescriptors - 2;
+        ImmCtx.m_pDevice12->CopyDescriptors(1, &ImmCtx.m_ViewHeap.CPUHandle(CopyStartSlot), &CopySize,
+                                            CopySize, SrcDescriptors.data(), nullptr, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        pCmdList->SetComputeRootDescriptorTable(0, ImmCtx.m_ViewHeap.GPUHandle(ViewSlot));
+    };
+
+    ImmCtx.GetResourceStateManager().ApplyAllResourceTransitions();
+
+    // TODO: Optimize this out
+    ImmCtx.UAVBarrier();
 
     cl_uint numXIterations = ((m_DispatchDims[0] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numYIterations = ((m_DispatchDims[1] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
     cl_uint numZIterations = ((m_DispatchDims[2] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
-    auto pCompiler = g_Platform->GetCompiler();
-    cl_uint WorkPropertiesChunkSize = (cl_uint)pCompiler->GetWorkPropertiesChunkSize();
+    size_t WorkPropertiesOffset = m_WorkPropertiesOffset;
     for (cl_uint x = 0; x < numXIterations; ++x)
     {
         for (cl_uint y = 0; y < numYIterations; ++y)
@@ -648,15 +675,13 @@ void ExecuteKernel::RecordImpl()
                 UINT DimsY = (y == numYIterations - 1) ? (m_DispatchDims[1] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numYIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
                 UINT DimsZ = (z == numZIterations - 1) ? (m_DispatchDims[2] - D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION * (numZIterations - 1)) : D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
 
-                ImmCtx.SetConstantBuffers(0, (UINT)m_CBs.size(), m_CBs.data(), m_CBOffsets.data(), c_NumConstants);
+                CopyAndSetViewDescriptors(WorkPropertiesOffset);
                 ImmCtx.Dispatch(DimsX, DimsY, DimsZ);
 
-                m_CBOffsets[m_Kernel->m_Dxil.GetMetadata().work_properties_cbv_id] += WorkPropertiesChunkSize / 16;
+                WorkPropertiesOffset += WorkPropertiesChunkSize;
             }
         }
     }
-
-    ImmCtx.ClearState();
 }
 
 void ExecuteKernel::OnComplete()

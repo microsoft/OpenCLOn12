@@ -212,55 +212,27 @@ static cl_mem_object_type MemObjectTypeFromName(const char* name)
     return 0;
 }
 
-static D3D12TranslationLayer::RESOURCE_DIMENSION ResourceDimensionFromMemObjectType(cl_mem_object_type type)
+static ComPtr<ID3DBlob> SerializeRootSignature(CompiledDxil::Metadata const& metadata)
 {
-    switch (type)
+    CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC RSDesc;
+    CD3DX12_ROOT_PARAMETER1 Params[2];
+    CD3DX12_DESCRIPTOR_RANGE1 ViewRanges[3], SamplerRange;
+    cl_uint NumRanges = 0;
+    ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 2, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE, 0);
+    ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, metadata.num_uavs, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE, 2);
+    if (metadata.num_srvs)
     {
-    case CL_MEM_OBJECT_IMAGE1D: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE1D;
-    case CL_MEM_OBJECT_IMAGE1D_ARRAY: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE1DARRAY;
-    case CL_MEM_OBJECT_IMAGE1D_BUFFER: return D3D12TranslationLayer::RESOURCE_DIMENSION::BUFFER;
-    case CL_MEM_OBJECT_IMAGE2D: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE2D;
-    case CL_MEM_OBJECT_IMAGE2D_ARRAY: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE2DARRAY;
-    case CL_MEM_OBJECT_IMAGE3D: return D3D12TranslationLayer::RESOURCE_DIMENSION::TEXTURE3D;
+        ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, metadata.num_srvs, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE);
     }
-    return D3D12TranslationLayer::RESOURCE_DIMENSION::UNKNOWN;
-}
+    SamplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, metadata.num_samplers, 0);
+    Params[0].InitAsDescriptorTable(NumRanges, ViewRanges);
+    // TODO: Static samplers
+    Params[1].InitAsDescriptorTable(1, &SamplerRange);
+    RSDesc.Init_1_1(metadata.num_samplers ? 2 : 1, Params);
 
-static D3D12TranslationLayer::SShaderDecls DeclsFromMetadata(CompiledDxil::Metadata const& metadata)
-{
-    D3D12TranslationLayer::SShaderDecls decls = {};
-    cl_uint KernelArgCBIndex = metadata.kernel_inputs_cbv_id;
-    cl_uint WorkPropertiesCBIndex = metadata.work_properties_cbv_id;
-    decls.m_NumCBs = max(KernelArgCBIndex + 1, WorkPropertiesCBIndex + 1);
-    decls.m_NumSamplers = (UINT)metadata.num_samplers;
-    decls.m_ResourceDecls.resize(metadata.num_srvs);
-    decls.m_UAVDecls.resize(metadata.num_uavs);
-
-    for (cl_uint i = 0; i < metadata.args.size(); ++i)
-    {
-        auto& arg_info = metadata.program_kernel_info.args[i];
-        auto& arg_meta = metadata.args[i];
-        if (arg_info.address_qualifier == ProgramBinary::Kernel::Arg::AddressSpace::Global ||
-            arg_info.address_qualifier == ProgramBinary::Kernel::Arg::AddressSpace::Constant)
-        {
-            cl_mem_object_type imageType = MemObjectTypeFromName(arg_info.type_name);
-            if (imageType != 0)
-            {
-                auto dim = ResourceDimensionFromMemObjectType(imageType);
-                bool uav = arg_info.writable;
-                auto& declVector = uav ? decls.m_UAVDecls : decls.m_ResourceDecls;
-                auto& image_meta = std::get<CompiledDxil::Metadata::Arg::Image>(arg_meta.properties);
-                for (cl_uint j = 0; j < image_meta.num_buffer_ids; ++j)
-                    declVector[image_meta.buffer_ids[j]] = dim;
-            }
-            else
-            {
-                auto& mem_meta = std::get<CompiledDxil::Metadata::Arg::Memory>(arg_meta.properties);
-                decls.m_UAVDecls[mem_meta.buffer_id] = D3D12TranslationLayer::RESOURCE_DIMENSION::BUFFER;
-            }
-        }
-    }
-    return decls;
+    ComPtr<ID3DBlob> ret;
+    D3D12TranslationLayer::ThrowFailure(D3D12SerializeVersionedRootSignature(&RSDesc, &ret, nullptr));
+    return ret;
 }
 
 static cl_addressing_mode CLAddressingModeFromSpirv(unsigned addressing_mode)
@@ -282,12 +254,12 @@ Kernel::Kernel(Program& Parent, std::string const& name, CompiledDxil const& Dxi
     : CLChildBase(Parent)
     , m_Dxil(Dxil)
     , m_Name(name)
-    , m_ShaderDecls(DeclsFromMetadata(Dxil.GetMetadata()))
     , m_Meta(spirv_meta)
+    , m_SerializedRootSignature(SerializeRootSignature(Dxil.GetMetadata()))
 {
-    m_UAVs.resize(m_ShaderDecls.m_UAVDecls.size());
-    m_SRVs.resize(m_ShaderDecls.m_ResourceDecls.size());
-    m_Samplers.resize(m_ShaderDecls.m_NumSamplers);
+    m_UAVs.resize(Dxil.GetMetadata().num_uavs);
+    m_SRVs.resize(Dxil.GetMetadata().num_srvs);
+    m_Samplers.resize(Dxil.GetMetadata().num_samplers);
     m_ArgMetadataToCompiler.resize(Dxil.GetMetadata().args.size());
     m_ArgsSet.resize(Dxil.GetMetadata().args.size());
     for (cl_uint i = 0; i < Dxil.GetMetadata().args.size(); ++i)
@@ -332,7 +304,7 @@ Kernel::Kernel(Kernel const& other)
     : CLChildBase(other.m_Parent.get())
     , m_Dxil(other.m_Dxil)
     , m_Name(other.m_Name)
-    , m_ShaderDecls(other.m_ShaderDecls)
+    , m_SerializedRootSignature(other.m_SerializedRootSignature)
     , m_UAVs(other.m_UAVs)
     , m_SRVs(other.m_SRVs)
     , m_Samplers(other.m_Samplers)
@@ -512,6 +484,13 @@ uint16_t const* Kernel::GetLocalDimsHint() const
     if (m_Dxil.GetMetadata().local_size_hint[0] != 0)
         return m_Dxil.GetMetadata().local_size_hint;
     return nullptr;
+}
+
+std::unique_ptr<D3D12TranslationLayer::RootSignature> Kernel::GetRootSignature(ImmCtx &ImmCtx) const
+{
+    auto pRS = std::make_unique<D3D12TranslationLayer::RootSignature>(&ImmCtx);
+    pRS->Create(m_SerializedRootSignature->GetBufferPointer(), m_SerializedRootSignature->GetBufferSize());
+    return pRS;
 }
 
 extern CL_API_ENTRY cl_int CL_API_CALL

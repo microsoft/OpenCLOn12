@@ -83,10 +83,10 @@ public:
     struct SpecializationValue
     {
         unique_dxil m_Dxil;
-        std::unique_ptr<D3D12TranslationLayer::Shader> m_Shader;
+        std::unique_ptr<D3D12TranslationLayer::RootSignature> m_RS;
         std::unique_ptr<D3D12TranslationLayer::PipelineState> m_PSO;
-        SpecializationValue(decltype(m_Dxil) d, decltype(m_Shader) s, decltype(m_PSO) p)
-            : m_Dxil(std::move(d)), m_Shader(std::move(s)), m_PSO(std::move(p)) { }
+        SpecializationValue(decltype(m_Dxil) d, decltype(m_RS) rs, decltype(m_PSO) p)
+            : m_Dxil(std::move(d)), m_RS(std::move(rs)), m_PSO(std::move(p)) { }
     };
 
     SpecializationValue *FindExistingSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey> const& key) const;

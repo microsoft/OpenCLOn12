@@ -11,11 +11,6 @@ namespace D3D12TranslationLayer
 class Resource;
 class CommandListManager;
 
-struct TranslationLayerCallbacks
-{
-    std::function<void()> m_pfnPostSubmit;
-};
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // A pool of objects that are recycled on specific fence values
 // This class assumes single threaded caller
@@ -407,13 +402,11 @@ private: // Types
 public: // Methods
     CDescriptorHeapManager(ID3D12Device* pDevice,
                            D3D12_DESCRIPTOR_HEAP_TYPE Type,
-                           UINT NumDescriptorsPerHeap,
-                           bool bLockRequired,
-                           UINT NodeMask) noexcept
+                           UINT NumDescriptorsPerHeap) noexcept
         : m_Desc( { Type,
                     NumDescriptorsPerHeap,
                     D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
-                    NodeMask} )
+                    1} )
         , m_DescriptorSize(pDevice->GetDescriptorHandleIncrementSize(Type))
         , m_pDevice(pDevice)
     {
@@ -732,8 +725,8 @@ public:
         GUID CreatorID;
     };
 
-    ImmediateContext(UINT nodeIndex, D3D12_FEATURE_DATA_D3D12_OPTIONS& caps,
-        ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, TranslationLayerCallbacks const& callbacks, CreationArgs args) noexcept(false);
+    ImmediateContext(D3D12_FEATURE_DATA_D3D12_OPTIONS& caps,
+        ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, CreationArgs args) noexcept(false);
     ~ImmediateContext() noexcept;
 
     CreationArgs m_CreationArgs;
@@ -878,25 +871,12 @@ public:
 
     void UAVBarrier() noexcept;
 
-    void WriteToSubresource(Resource* DstResource, UINT DstSubresource, _In_opt_ const D3D11_BOX* pDstBox, 
-                            const void* pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch);
-    void ReadFromSubresource(void* pDstData, UINT DstRowPitch, UINT DstDepthPitch,
-                             Resource* SrcResource, UINT SrcSubresource, _In_opt_ const D3D11_BOX* pSrcBox);
-
 public:
-    PipelineState* GetPipelineState();
-    void SetPipelineState(PipelineState* pPipeline);
     
     void Dispatch( UINT, UINT, UINT );
 
     // Returns if any work was actually submitted
     bool Flush();
-
-    void SetShaderResources( UINT, __in_range(0, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT) UINT, SRV* const* );
-    void SetSamplers( UINT, __in_range(0, D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT) UINT, Sampler* const* );
-    void SetConstantBuffers( UINT, __in_range(0, D3D11_COMMONSHADER_CONSTANT_BUFFER_HW_SLOT_COUNT) UINT Buffers, Resource* const*, __in_ecount_opt(Buffers) CONST UINT* pFirstConstant, __in_ecount_opt(Buffers) CONST UINT* pNumConstants);
-
-    void CsSetUnorderedAccessViews(UINT, __in_range(0, D3D11_1_UAV_SLOT_COUNT) UINT NumViews, __in_ecount(NumViews) UAV* const*, __in_ecount(NumViews) CONST UINT* );
 
     void QueryEnd(Async*);
     bool QueryGetData(Async*, void*, UINT, bool DoNotFlush, bool AsyncGetData = false);
@@ -921,8 +901,6 @@ public:
     void ResourceCopyRegion( Resource*, UINT, UINT, UINT, UINT, Resource*, UINT, const D3D12_BOX*);
     void ResourceUpdateSubresourceUP( Resource*, UINT, _In_opt_ const D3D12_BOX*, _In_ const VOID*, UINT, UINT);
 
-    HRESULT GetDeviceState();
-
     HRESULT CheckFormatSupport(_Out_ D3D12_FEATURE_DATA_FORMAT_SUPPORT& formatData);
     void CheckMultisampleQualityLevels(DXGI_FORMAT, UINT, D3D12_MULTISAMPLE_QUALITY_LEVEL_FLAGS, _Out_ UINT*);
     void CheckFeatureSupport(D3D12_FEATURE Feature, _Inout_updates_bytes_(FeatureSupportDataSize)void* pFeatureSupportData, UINT FeatureSupportDataSize);
@@ -930,11 +908,7 @@ public:
     void Signal(_In_ Fence* pFence, UINT64 Value);
     void Wait(std::shared_ptr<Fence> const& pFence, UINT64 Value);
 
-    void SharingContractPresent(_In_ Resource* pResource);
-
 public:
-    void CreateSharedNTHandle(_In_ Resource *pResource, _Out_ HANDLE *pHandle, _In_opt_ SECURITY_ATTRIBUTES *pSA = nullptr);
-
     bool ResourceAllocationFallback(ResourceAllocationContext threadingContext);
 
     template <typename TFunc>
@@ -958,52 +932,10 @@ public:
     }
 
 public: // Type 
-    // Note: all interfaces in these structs have weak refs
-    // Bindings are remembered separate from immediate context to compute diff for state transitions
-    struct SStageState
-    {
-        SStageState() noexcept(false) = default;
-        void ClearState() noexcept;
-
-        // Shader-declared bindings do not set pipeline dirty bits at bind time, only slot dirty bits
-        // These slot dirty bits are only interesting if they are below the maximum shader-declared slot,
-        // as determined during pre-draw/dispatch based on the bound shaders
-        CViewBoundState<TSRV, D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT> m_SRVs;
-        CConstantBufferBoundState m_CBs;
-        CSamplerBoundState m_Samplers;
-
-        // Slots for re-asserting state on a new command list
-        D3D12_GPU_DESCRIPTOR_HANDLE m_SRVTableBase{ 0 };
-        D3D12_GPU_DESCRIPTOR_HANDLE m_CBTableBase{ 0 };
-        D3D12_GPU_DESCRIPTOR_HANDLE m_SamplerTableBase{ 0 };
-
-        UINT m_uConstantBufferOffsets[D3D11_COMMONSHADER_CONSTANT_BUFFER_HW_SLOT_COUNT] = {};
-        UINT m_uConstantBufferCounts[D3D11_COMMONSHADER_CONSTANT_BUFFER_HW_SLOT_COUNT] = {};
-    };
-
-    struct SState
-    {
-        SState() noexcept(false) = default;
-        void ClearState() noexcept;
-
-        PipelineState* m_pPSO = nullptr;
-        RootSignature* m_pLastComputeRootSig = nullptr;
-
-        CViewBoundState<UAV, D3D11_1_UAV_SLOT_COUNT> m_CSUAVs;
-
-        // Slots for re-asserting state on a new command list
-        D3D12_GPU_DESCRIPTOR_HANDLE m_CSUAVTableBase{ 0 };
-
-        SStageState& GetStageState() noexcept;
-        SStageState m_CS;
-    };
-
     D3D12_BOX GetBoxFromResource(Resource *pSrc, UINT SrcSubresource);
     D3D12_BOX GetSubresourceBoxFromBox(Resource* pSrc, UINT RequestedSubresource, UINT BaseSubresource, D3D12_BOX const& SrcBox);
 
 private: // methods
-    void PreDispatch() noexcept(false);
-    
     // The app should inform the translation layer when a frame has been finished
     // to hint when trimming work should start
     //
@@ -1028,71 +960,25 @@ public:
     bool HasCommands() noexcept;
     void PrepForCommandQueueSync();
 
-    RootSignature* CreateOrRetrieveRootSignature(RootSignatureDesc const& desc) noexcept(false);
-
 private:
     bool Shutdown() noexcept;
 
-    UINT CalculateViewSlotsForBindings() noexcept;
-    UINT CalculateSamplerSlotsForBindings() noexcept;
-
-    // Mark used in command list, copy to descriptor heap, and bind table
-    void DirtyShaderResourcesHelper(UINT& HeapSlot) noexcept;
-    void DirtyConstantBuffersHelper(UINT& HeapSlot) noexcept;
-    void DirtySamplersHelper(UINT& HeapSlot) noexcept;
-
-    // Mark used in command list and bind table (descriptors already in heap)
-    void ApplyShaderResourcesHelper() noexcept;
-    void ApplyConstantBuffersHelper() noexcept;
-    void ApplySamplersHelper() noexcept;
-
-    // Helper for views
-    void TransitionResourceForView(ViewBase* pView, D3D12_RESOURCE_STATES desiredState) noexcept;
-
-    void InsertUAVBarriersIfNeeded(CViewBoundState<UAV, D3D11_1_UAV_SLOT_COUNT>& UAVBindings, UINT NumUAVs) noexcept;
-
 public: // Methods
-    UINT GetNodeMask() const noexcept
-    {
-        return 1 << m_nodeIndex;
-    }
-
-    UINT GetNodeIndex() const noexcept
-    {
-        return m_nodeIndex;
-    }
-
     D3D12_HEAP_PROPERTIES GetHeapProperties(D3D12_HEAP_TYPE Type) const noexcept
     {
-        if (ComputeOnly())
+        if (ComputeOnly() || Type == D3D12_HEAP_TYPE_DEFAULT)
         {
-            return CD3DX12_HEAP_PROPERTIES(Type, GetNodeMask(), GetNodeMask());
+            return CD3DX12_HEAP_PROPERTIES(Type, 1, 1);
         }
         else
         {
-            return m_pDevice12->GetCustomHeapProperties(GetNodeMask(), Type);
+            return m_pDevice12->GetCustomHeapProperties(1, Type);
         }
     }
 
     const D3D12_FEATURE_DATA_D3D12_OPTIONS& GetCaps() { return m_caps; }
     bool ComputeOnly() const {return !!(FeatureLevel() == D3D_FEATURE_LEVEL_1_0_CORE);}
 public: // variables
-    // D3D11 objects
-    UINT m_uStencilRef;
-    float m_BlendFactor[4];
-    D3D12_PRIMITIVE_TOPOLOGY m_PrimitiveTopology;
-    BOOL m_PredicateValue;
-    UINT  m_auVertexOffsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-    UINT m_auVertexStrides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-    DXGI_FORMAT m_IndexBufferFormat;
-    UINT m_uIndexBufferOffset;
-    UINT m_uNumScissors;
-    D3D12_RECT m_aScissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    UINT m_uNumViewports;
-    D3D12_VIEWPORT m_aViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
-    BOOL m_ScissorRectEnable;
-
-    std::unordered_map<RootSignatureDesc, std::unique_ptr<RootSignature>> m_RootSignatures;
 
     // "Online" descriptor heaps
     struct OnlineDescriptorHeap
@@ -1124,25 +1010,12 @@ public: // variables
     UINT ReserveSlotsForBindings(OnlineDescriptorHeap& Heap, UINT (ImmediateContext::*pfnCalcRequiredSlots)()) noexcept(false);
     UINT ReserveSlots(OnlineDescriptorHeap& Heap, UINT NumSlots) noexcept(false);
 
-    D3D12_CPU_DESCRIPTOR_HANDLE m_NullSRVs[(UINT)RESOURCE_DIMENSION::TEXTURECUBEARRAY+1];
-    D3D12_CPU_DESCRIPTOR_HANDLE m_NullUAVs[(UINT)RESOURCE_DIMENSION::TEXTURECUBEARRAY+1];
-    D3D12_CPU_DESCRIPTOR_HANDLE m_NullRTV;
-    D3D12_CPU_DESCRIPTOR_HANDLE m_NullSampler;
-    TDeclVector m_UAVDeclScratch;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_NullUAV;
 
     // Offline descriptor heaps
     CDescriptorHeapManager m_SRVAllocator;
     CDescriptorHeapManager m_UAVAllocator;
-    CDescriptorHeapManager m_RTVAllocator;
-    CDescriptorHeapManager m_DSVAllocator;
     CDescriptorHeapManager m_SamplerAllocator;
-
-    std::vector<D3D12_RECT> m_RectCache;
-
-    // UAV barriers are not managed by the state manager.
-    // The state manager deals with changes in state, where UAV barriers need to be inserted
-    // in steady-state scenarios.
-    std::vector<D3D12_RESOURCE_BARRIER> m_vUAVBarriers;
 
     template <typename TIface> CDescriptorHeapManager& GetViewAllocator();
     template<> CDescriptorHeapManager& GetViewAllocator<ShaderResourceViewType>() { return m_SRVAllocator; }
@@ -1151,8 +1024,6 @@ public: // variables
     D3D_FEATURE_LEVEL FeatureLevel() const { return m_FeatureLevel; }
 
     static DXGI_FORMAT GetParentForFormat(DXGI_FORMAT format);
-
-    TranslationLayerCallbacks const& GetUpperlayerCallbacks() { return m_callbacks; }
 
     ResidencyManager &GetResidencyManager() { return m_residencyManager; }
     ResourceStateManager& GetResourceStateManager() { return m_ResourceStateManager; }
@@ -1210,41 +1081,8 @@ private: // Dynamic/staging resource pools
         return m_UploadHeapSuballocator;
     }
 
-private: // State tracking
-    // Dirty states are marked during sets and converted to command list operations at draw time, to avoid multiple costly conversions due to 11/12 API differences
-    UINT64 m_DirtyStates;
-
-    // Set to be all states during Flush, bits are cleared as individual sets come in, and all remaining bits are re-asserted on new command lists at draw time
-    UINT64 m_StatesToReassert;
-
-    SState m_CurrentState;
-
-    UINT m_nodeIndex;
-    D3D12_FEATURE_DATA_D3D12_OPTIONS m_caps;
-    const TranslationLayerCallbacks m_callbacks;
-
 private:
-    // Device wide scratch space allocation for use in synchronous ops.
-    // Only grows.  Free with device.
-    struct
-    {
-        BYTE* GetBuffer(UINT minSize)
-        {
-            if (minSize > m_Size)
-            {
-                m_spScratchBuffer = std::make_unique<BYTE[]>(minSize);
-                m_Size = minSize;
-            }
-
-            return m_spScratchBuffer.get();
-        }
-
-    private:
-        std::unique_ptr<BYTE[]> m_spScratchBuffer;
-        UINT m_Size = 0;
-
-    } m_SyncronousOpScrachSpace;
-
+    D3D12_FEATURE_DATA_D3D12_OPTIONS m_caps;
     const bool m_bUseRingBufferDescriptorHeaps;
 };
 
