@@ -2,9 +2,13 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "D3D12TranslationLayerDependencyIncludes.h"
+#include "Util.hpp"
+
 namespace D3D12TranslationLayer
 {
     class CommandListManager;
+    class CViewSubresourceSubset;
 
 // These are defined in the private d3d12 header
 #define UNKNOWN_RESOURCE_STATE (D3D12_RESOURCE_STATES)0x8000u

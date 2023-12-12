@@ -7,6 +7,7 @@
 #include <vector>
 #include <mutex>
 
+#include "ImmediateContext.hpp"
 using ImmCtx = D3D12TranslationLayer::ImmediateContext;
 
 class Task;

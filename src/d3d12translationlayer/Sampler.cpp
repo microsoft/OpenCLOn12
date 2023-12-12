@@ -1,11 +1,15 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #pragma once
+
+#include "ImmediateContext.hpp"
+#include "Sampler.hpp"
+
 namespace D3D12TranslationLayer
 {
 
     //----------------------------------------------------------------------------------------------------------------------------------
-    inline Sampler::Sampler(ImmediateContext* pDevice, D3D12_SAMPLER_DESC const& desc) noexcept(false)
+    Sampler::Sampler(ImmediateContext* pDevice, D3D12_SAMPLER_DESC const& desc) noexcept(false)
         : DeviceChild(pDevice)
     {
         if (!pDevice->ComputeOnly())
@@ -16,7 +20,7 @@ namespace D3D12TranslationLayer
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
-    inline Sampler::~Sampler() noexcept
+    Sampler::~Sampler() noexcept
     {
         if (!m_pParent->ComputeOnly())
         {

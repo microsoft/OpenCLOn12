@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #pragma once
+
+#include "View.inl"
+
 namespace D3D12TranslationLayer
 {
 
@@ -46,20 +49,13 @@ inline void  ImmediateContext::Dispatch(UINT x, UINT y, UINT z)
 //----------------------------------------------------------------------------------------------------------------------------------
 inline ID3D12CommandQueue *ImmediateContext::GetCommandQueue() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->GetCommandQueue();
-    }
-    else
-    {
-        return nullptr;
-    }
+    return m_CommandList.GetCommandQueue();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline ID3D12GraphicsCommandList *ImmediateContext::GetGraphicsCommandList() noexcept
 {
-    return m_CommandList->GetGraphicsCommandList();
+    return m_CommandList.GetGraphicsCommandList();
 }
 
 // There is an MSVC bug causing a bogus warning to be emitted here for x64 only, while compiling ApplyAllResourceTransitions
@@ -68,192 +64,92 @@ inline ID3D12GraphicsCommandList *ImmediateContext::GetGraphicsCommandList() noe
 //----------------------------------------------------------------------------------------------------------------------------------
 inline CommandListManager *ImmediateContext::GetCommandListManager() noexcept
 {
-    return m_CommandList ? m_CommandList.get() : nullptr;
+    return &m_CommandList;
 }
 #pragma warning(pop)
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline ID3D12CommandList *ImmediateContext::GetCommandList() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->GetCommandList();
-    }
-    else
-    {
-        return nullptr;
-    }
+    return m_CommandList.GetCommandList();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline UINT64 ImmediateContext::GetCommandListID() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->GetCommandListID();
-    }
-    else
-    {
-        return 0;
-    }
+    return m_CommandList.GetCommandListID();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline UINT64 ImmediateContext::GetCommandListIDInterlockedRead() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->GetCommandListIDInterlockedRead();
-    }
-    else
-    {
-        return 0;
-    }
-}
-
-//----------------------------------------------------------------------------------------------------------------------------------
-inline UINT64 ImmediateContext::GetCommandListIDWithCommands() noexcept
-{
-    // This method gets the ID of the last command list that actually has commands, which is either
-    // the current command list, if it has commands, or the previously submitted command list if the
-    // current is empty.
-    //
-    // The result of this method is the fence id that will be signaled after a flush, and is used so that
-    // Async::End can track query completion correctly.
-    UINT64 Id = 0;
-    if (m_CommandList)
-    {
-        Id = m_CommandList->GetCommandListID();
-        assert(Id);
-        if (m_CommandList->HasCommands() && !m_CommandList->NeedSubmitFence())
-        {
-            Id -= 1; // Go back one command list
-        }
-    }
-    return Id;
+    return m_CommandList.GetCommandListIDInterlockedRead();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline UINT64 ImmediateContext::GetCompletedFenceValue() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->GetCompletedFenceValue();
-    }
-    else
-    {
-        return 0;
-    }
+    return m_CommandList.GetCompletedFenceValue();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline Fence *ImmediateContext::GetFence() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->GetFence();
-    }
-    else
-    {
-        return nullptr;
-    }
+    return m_CommandList.GetFence();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::CloseCommandList() noexcept
 {
-    if (m_CommandList)
-    {
-        m_CommandList->CloseCommandList();
-    }
+    m_CommandList.CloseCommandList();
 }
 
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::ResetCommandList() noexcept
 {
-    if (m_CommandList)
-    {
-        m_CommandList->ResetCommandList();
-    }
+    m_CommandList.ResetCommandList();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline HRESULT ImmediateContext::EnqueueSetEvent(HANDLE hEvent) noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->EnqueueSetEvent(hEvent);
-    }
-    else
-    {
-        return E_UNEXPECTED;
-    }
+    return m_CommandList.EnqueueSetEvent(hEvent);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline bool ImmediateContext::WaitForCompletion()
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->WaitForCompletion(); // throws
-    }
-    else
-    {
-        return false;
-    }
+    return m_CommandList.WaitForCompletion(); // throws
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline bool ImmediateContext::WaitForFenceValue(UINT64 FenceValue)
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->WaitForFenceValue(FenceValue); // throws
-    }
-    else
-    {
-        return false;
-    }
+    return m_CommandList.WaitForFenceValue(FenceValue); // throws
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::SubmitCommandList()
 {
-    if (m_CommandList)
-    {
-        m_CommandList->SubmitCommandList(); // throws
-    }
+    m_CommandList.SubmitCommandList(); // throws
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline void ImmediateContext::AdditionalCommandsAdded() noexcept
 {
-    if (m_CommandList)
-    {
-        m_CommandList->AdditionalCommandsAdded();
-    }
+    m_CommandList.AdditionalCommandsAdded();
 }
 
 inline void ImmediateContext::UploadHeapSpaceAllocated(UINT64 HeapSize) noexcept
 {
-    if (m_CommandList)
-    {
-        m_CommandList->UploadHeapSpaceAllocated(HeapSize);
-    }
+    m_CommandList.UploadHeapSpaceAllocated(HeapSize);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
 inline bool ImmediateContext::HasCommands() noexcept
 {
-    if (m_CommandList)
-    {
-        return m_CommandList->HasCommands();
-    }
-    else
-    {
-        return false;
-    }
+    return m_CommandList.HasCommands();
 }
 
 };

@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#include <pch.h>
+#include "FormatDesc.hpp"
 #include <intsafe.h>
+#include <assert.h>
 
 #define R D3D11FCN_R
 #define G D3D11FCN_G
@@ -739,137 +740,6 @@ HRESULT CD3D11FormatHelper::CalculateExtraPlanarRows(
         return INTSAFE_E_ARITHMETIC_OVERFLOW;
     }
 
-
-    return S_OK;
-}
-
-//----------------------------------------------------------------------------
-// CalculateResourceSize
-HRESULT CD3D11FormatHelper::CalculateResourceSize(
-    UINT width, 
-    UINT height, 
-    UINT depth,
-    DXGI_FORMAT format, 
-    UINT mipLevels, 
-    UINT subresources, 
-    _Out_ SIZE_T& totalByteSize, 
-    _Out_writes_opt_(subresources) D3D11_MAPPED_SUBRESOURCE *pDst)
-{
-    UINT tableIndex = GetDetailTableIndexNoThrow( format );
-    const FORMAT_DETAIL& formatDetail = s_FormatDetail[tableIndex];
-
-    bool fIsBlockCompressedFormat = IsBlockCompressFormat(format );
-
-    // No format currently requires depth alignment.
-    assert(formatDetail.DepthAlignment == 1);
-
-    UINT subWidth = width;
-    UINT subHeight = height;
-    UINT subDepth = depth;
-    for (UINT s = 0, iM = 0, iA = 0; s < subresources; ++s)
-    {
-        UINT blockWidth;
-        if (FAILED(DivideAndRoundUp(subWidth, formatDetail.WidthAlignment, /*_Out_*/ blockWidth)))
-        {
-            return INTSAFE_E_ARITHMETIC_OVERFLOW;
-        }
-
-        UINT blockSize, blockHeight;
-        if (fIsBlockCompressedFormat)
-        {
-            if (FAILED(DivideAndRoundUp(subHeight, formatDetail.HeightAlignment, /*_Out_*/ blockHeight)))
-            {
-                return INTSAFE_E_ARITHMETIC_OVERFLOW;
-            }
-
-            // Block Compressed formats use BitsPerUnit as block size.
-            blockSize = formatDetail.BitsPerUnit;
-        }
-        else
-        {
-            // The height must *not* be aligned to HeightAlign.  As there is no plane pitch/stride, the expectation is that the 2nd plane
-            // begins immediately after the first.  The only formats with HeightAlignment other than 1 are planar or block compressed, and
-            // block compressed is handled above.
-            assert(formatDetail.bPlanar || formatDetail.HeightAlignment == 1);
-            blockHeight = subHeight;
-
-            // Combined with the division os subWidth by the width alignment above, this helps achieve rounding the stride up to an even multiple of
-            // block width.  This is especially important for formats like NV12 and P208 whose chroma plane is wider than the luma.
-            blockSize = formatDetail.BitsPerUnit * formatDetail.WidthAlignment;
-        }
-
-        if (DXGI_FORMAT_UNKNOWN == formatDetail.DXGIFormat)
-        {
-            blockSize = 8;
-        }
-
-        // Convert block width size to bytes.
-        assert((blockSize & 0x7) == 0);
-        blockSize = blockSize >> 3;
-
-        if (formatDetail.bPlanar)
-        {
-            if (FAILED(CalculateExtraPlanarRows(format, blockHeight, /*_Out_*/ blockHeight)))
-            {
-                return INTSAFE_E_ARITHMETIC_OVERFLOW;
-            }
-        }
-
-        // Calculate rowPitch, depthPitch, and total subresource size.
-        UINT rowPitch, depthPitch;
-        SIZE_T subresourceByteSize;
-        if (   FAILED(UIntMult(blockWidth, blockSize, &rowPitch))
-            || FAILED(UIntMult(blockHeight, rowPitch, &depthPitch))
-            || FAILED(SIZETMult(subDepth, depthPitch, &subresourceByteSize)))
-        {
-            return INTSAFE_E_ARITHMETIC_OVERFLOW;
-        }
-
-        if (pDst)
-        {
-            D3D11_MAPPED_SUBRESOURCE& dst = pDst[s];
-
-            // This data will be returned straight from the API to satisfy Map. So, strides/ alignment must be API-correct.
-            dst.pData = reinterpret_cast<void*>(totalByteSize);
-            assert(s != 0 || dst.pData == NULL);
-
-            dst.RowPitch = rowPitch; 
-            dst.DepthPitch = depthPitch;
-        }
-
-        // Align the subresource size.
-        static_assert((MAP_ALIGN_REQUIREMENT & (MAP_ALIGN_REQUIREMENT - 1)) == 0, "This code expects MAP_ALIGN_REQUIREMENT to be a power of 2.");
-        
-        SIZE_T subresourceByteSizeAligned;
-        if (FAILED(SIZETAdd(subresourceByteSize, MAP_ALIGN_REQUIREMENT - 1, &subresourceByteSizeAligned)))
-        {
-            return INTSAFE_E_ARITHMETIC_OVERFLOW;
-        }
-
-        subresourceByteSizeAligned = subresourceByteSizeAligned & ~(MAP_ALIGN_REQUIREMENT - 1);
-
-        if (FAILED(SIZETAdd(totalByteSize, subresourceByteSizeAligned, &totalByteSize)))
-        {
-            return INTSAFE_E_ARITHMETIC_OVERFLOW;
-        }
-
-        // Iterate over mip levels and array elements
-        if (++iM >= mipLevels)
-        {
-            ++iA;
-            iM = 0;
-
-            subWidth = width;
-            subHeight = height;
-            subDepth = depth;
-        }
-        else
-        {
-            subWidth /= (1 == subWidth ? 1 : 2);
-            subHeight /= (1 == subHeight ? 1 : 2);
-            subDepth /= (1 == subDepth ? 1 : 2);
-        }
-    }
 
     return S_OK;
 }

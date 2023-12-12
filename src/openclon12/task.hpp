@@ -6,6 +6,8 @@
 #include <mutex>
 #include <future>
 
+#include "Query.hpp"
+
 // A task is an encapsulation of something that can be submitted to a command queue
 // and/or something that can be waited on (i.e. cl_event).
 //
@@ -133,8 +135,8 @@ protected:
     std::promise<void> m_CompletionPromise;
     std::future<void> m_CompletionFuture{ m_CompletionPromise.get_future() };
 
-    std::shared_ptr<D3D12TranslationLayer::Query> m_StartTimestamp;
-    std::shared_ptr<D3D12TranslationLayer::Query> m_StopTimestamp;
+    std::shared_ptr<D3D12TranslationLayer::TimestampQuery> m_StartTimestamp;
+    std::shared_ptr<D3D12TranslationLayer::TimestampQuery> m_StopTimestamp;
 };
 
 class UserEvent : public Task

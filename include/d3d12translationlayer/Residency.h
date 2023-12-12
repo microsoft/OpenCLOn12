@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "D3D12TranslationLayerDependencyIncludes.h"
+#include "Util.hpp"
+#include <mutex>
+
 namespace D3D12TranslationLayer
 {
     // Used to contain waits that must be satisfied before a pinned ManagedObject can be unpinned.

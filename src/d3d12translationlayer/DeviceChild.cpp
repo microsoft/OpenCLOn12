@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#include "pch.h"
+#include "DeviceChild.hpp"
+#include "ImmediateContext.hpp"
 
 namespace D3D12TranslationLayer
 {

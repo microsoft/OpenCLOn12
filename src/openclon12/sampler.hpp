@@ -4,6 +4,8 @@
 
 #include "context.hpp"
 
+#include "../d3d12translationlayer/Sampler.hpp"
+
 class Sampler : public CLChildBase<Sampler, Context, cl_sampler>
 {
 public:

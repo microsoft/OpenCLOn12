@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "pch.h"
+#include "ImmediateContext.hpp"
+#include "RootSignature.hpp"
 #include <numeric>
 
 namespace D3D12TranslationLayer

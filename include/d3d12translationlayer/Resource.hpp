@@ -2,6 +2,13 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "D3D12TranslationLayerDependencyIncludes.h"
+#include "Allocator.h"
+#include "DeviceChild.hpp"
+#include "Residency.h"
+#include "ResourceState.hpp"
+#include "SubresourceHelpers.hpp"
+#include "Util.hpp"
 #include <functional>
 
 namespace D3D12TranslationLayer

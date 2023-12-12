@@ -1,6 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-#include "pch.h"
+#include "Allocator.h"
+#include "CommandListManager.hpp"
+#include "CommandListManager.inl"
+#include "ImmediateContext.hpp"
+#include "Residency.h"
+#include "Resource.hpp"
 
 namespace D3D12TranslationLayer
 {
@@ -12,7 +17,6 @@ namespace D3D12TranslationLayer
     CommandListManager::CommandListManager(ImmediateContext *pParent, ID3D12CommandQueue *pQueue)
         : m_pParent(pParent)
         , m_pCommandQueue(pQueue)
-        , m_bNeedSubmitFence(false)
         , m_pCommandList(nullptr)
         , m_pCommandAllocator(nullptr)
         , m_AllocatorPool(false /*bLock*/, GetMaxInFlightDepth())
@@ -164,19 +168,6 @@ namespace D3D12TranslationLayer
         m_pResidencySet->Open(0);
     }
 
-    HRESULT CommandListManager::PreExecuteCommandQueueCommand()
-    {
-        m_bNeedSubmitFence = true;
-        m_pResidencySet->Close();
-        return m_pParent->GetResidencyManager().PreExecuteCommandQueueCommand(m_pCommandQueue.get(), 0, m_pResidencySet.get());
-    }
-
-    HRESULT CommandListManager::PostExecuteCommandQueueCommand()
-    {
-        ResetResidencySet();
-        return S_OK;
-    }
-
     //----------------------------------------------------------------------------------------------------------------------------------
     void CommandListManager::SubmitCommandList()
     {
@@ -244,7 +235,6 @@ namespace D3D12TranslationLayer
     {
         m_pCommandQueue->Signal(m_Fence.Get(), m_commandListID);
         IncrementFence();
-        m_bNeedSubmitFence = false;
     }
 
     //----------------------------------------------------------------------------------------------------------------------------------
@@ -278,10 +268,6 @@ namespace D3D12TranslationLayer
         if (HasCommands())
         {
             SubmitCommandListImpl(); // throws
-        }
-        else if (m_bNeedSubmitFence)
-        {
-            SubmitFence();
         }
     }
 
@@ -335,18 +321,9 @@ namespace D3D12TranslationLayer
         {
             if (IsImmediateContextThread)
             {
+                assert(HasCommands());
                 assert(CurCmdListID == FenceValue);
-                if (HasCommands())
-                {
-                    SubmitCommandListImpl(); // throws
-                }
-                else
-                {
-                    // We submitted only an initial data command list, but no fence
-                    // Just insert the fence now, and increment its value
-                    assert(m_bNeedSubmitFence);
-                    SubmitFence();
-                }
+                SubmitCommandListImpl(); // throws
                 CurCmdListID = m_commandListID;
                 assert(CurCmdListID > FenceValue);
             }

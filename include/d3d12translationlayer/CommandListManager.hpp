@@ -2,11 +2,16 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "D3D12TranslationLayerDependencyIncludes.h"
+#include "Fence.hpp"
+#include "Util.hpp"
+
 namespace D3D12TranslationLayer
 {
     LONGLONG InterlockedRead64(volatile LONGLONG* p);
 
     class ImmediateContext;
+    class ResidencySet;
 
     class CommandListManager
     {
@@ -21,21 +26,7 @@ namespace D3D12TranslationLayer
         void ReadbackInitiated() noexcept;
         void SubmitCommandListIfNeeded();
 
-        void SetNeedSubmitFence() noexcept { m_bNeedSubmitFence = true; }
         bool HasCommands() const noexcept { return m_NumCommands > 0; }
-        bool NeedSubmitFence() const noexcept { return m_bNeedSubmitFence; }
-        bool ShouldFlushForResourceAcquire() const noexcept { return HasCommands() || NeedSubmitFence(); }
-        template <typename TFunc> void ExecuteCommandQueueCommand(TFunc&& func)
-        {
-            m_bNeedSubmitFence = true;
-            m_pResidencySet->Close();
-            m_pParent->GetResidencyManager().SubmitCommandQueueCommand(
-                m_pCommandQueue.get(), (UINT)m_type, m_pResidencySet.get(), std::forward<TFunc>(func));
-            ResetResidencySet();
-        }
-
-        HRESULT PreExecuteCommandQueueCommand(); //throws
-        HRESULT PostExecuteCommandQueueCommand(); //throws
 
         void SubmitCommandList();
         void InitCommandList();
@@ -65,7 +56,6 @@ namespace D3D12TranslationLayer
         ID3D12GraphicsCommandList* GetGraphicsCommandList(ID3D12CommandList *pCommandList = nullptr) { return static_cast<ID3D12GraphicsCommandList * const>(pCommandList ? pCommandList : m_pCommandList.get()); }
 
         bool WaitForFenceValueInternal(bool IsImmediateContextThread, UINT64 FenceValue);
-        bool ComputeOnly() {return !!(m_pParent->FeatureLevel() == D3D_FEATURE_LEVEL_1_0_CORE);}
 
     private:
         void ResetCommandListTrackingData()
@@ -91,7 +81,6 @@ namespace D3D12TranslationLayer
         UINT                                                m_NumCommands = 0;
         UINT                                                m_NumDispatches = 0;
         UINT64                                              m_UploadHeapSpaceAllocated = 0;
-        bool                                                m_bNeedSubmitFence;
         ThrowingSafeHandle                                  m_hWaitEvent;
 
         // The more upload heap space allocated in a command list, the more memory we are 

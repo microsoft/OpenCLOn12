@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "pch.h"
-
+#include "FormatDesc.hpp"
+#include "Util.hpp"
 
 namespace D3D12TranslationLayer
 {

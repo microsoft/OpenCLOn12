@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "pch.h"
+#include "ImmediateContext.hpp"
+#include "Residency.h"
 
 namespace D3D12TranslationLayer
 {

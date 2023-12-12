@@ -5,6 +5,8 @@
 #include "queue.hpp"
 #include "wil/resource.h"
 
+#include "ImmediateContext.inl"
+
 template <typename T>
 using unique_comptr = D3D12TranslationLayer::unique_comptr<T>;
 

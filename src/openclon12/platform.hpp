@@ -13,14 +13,14 @@
 #define CL_TARGET_OPENCL_VERSION 300
 #define CLON12_SUPPORT_3_0 1
 
-#include <D3D12TranslationLayerDependencyIncludes.h>
-#include <D3D12TranslationLayerIncludes.h>
+#include <directx/d3dx12.h>
+#include <directx/dxcore.h>
 
 #include <CL/OpenCL.h>
 #include <CL/cl.h>
 #include <CL/cl_ext.h>
-#include <CL/cl_d3d10.h>
 #include <CL/cl_d3d11.h>
+#include <CL/cl_d3d10.h>
 #include <CL/cl_dx9_media_sharing.h>
 #include <CL/cl_icd.h>
 

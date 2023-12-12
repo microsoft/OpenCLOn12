@@ -12,6 +12,8 @@
 #include <sstream>
 #include <numeric>
 
+#include "ImmediateContext.inl"
+
 extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 constexpr uint32_t PrintfBufferInitialData[PrintfBufferSize / sizeof(uint32_t)] = { sizeof(uint32_t) * 2, PrintfBufferSize };

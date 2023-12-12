@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "D3D12TranslationLayerDependencyIncludes.h"
+#include "DeviceChild.hpp"
+
 namespace D3D12TranslationLayer
 {
     class RootSignature;

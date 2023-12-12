@@ -68,23 +68,17 @@ namespace D3D12TranslationLayer
     template<typename TIface>
     const typename View<TIface>::TDesc12& View<TIface>::GetDesc12() noexcept
     {
-        __if_exists(TDesc12::Buffer)
+        typedef decltype(TDesc12::Buffer) TBufferDesc12;
+        if (m_pResource->AppDesc()->ResourceDimension() == D3D11_RESOURCE_DIMENSION_BUFFER)
         {
-            typedef decltype(TDesc12::Buffer) TBufferDesc12;
-            if (m_pResource->AppDesc()->ResourceDimension() == D3D11_RESOURCE_DIMENSION_BUFFER)
+            UINT Divisor = GetByteAlignment(m_Desc.Format);
+            if (m_Desc.Buffer.StructureByteStride != 0)
             {
-                UINT Divisor = GetByteAlignment(m_Desc.Format);
-                __if_exists(TBufferDesc12::StructureByteStride)
-                {
-                    if (m_Desc.Buffer.StructureByteStride != 0)
-                    {
-                        Divisor = m_Desc.Buffer.StructureByteStride;
-                    }
-                }
-                UINT ByteOffset = GetDynamicBufferOffset(m_pResource);
-                assert(ByteOffset % Divisor == 0);
-                m_Desc.Buffer.FirstElement = APIFirstElement + ByteOffset / Divisor;
+                Divisor = m_Desc.Buffer.StructureByteStride;
             }
+            UINT ByteOffset = GetDynamicBufferOffset(m_pResource);
+            assert(ByteOffset % Divisor == 0);
+            m_Desc.Buffer.FirstElement = APIFirstElement + ByteOffset / Divisor;
         }
         return m_Desc;
     }
@@ -114,18 +108,19 @@ namespace D3D12TranslationLayer
     template<>
     inline HRESULT View<UnorderedAccessViewType>::RefreshUnderlying() noexcept
     {
-        // UAVs are always refreshed (to ensure that the proper counter resource is passed in)
-        UAV* p11on12UAV = static_cast<UAV*>(this);
-        const TDesc12 &Desc = GetDesc12();
+        if (m_ViewUniqueness == UINT_MAX)
+        {
+            const TDesc12 &Desc = GetDesc12();
 
-        m_pParent->m_pDevice12.get()->CreateUnorderedAccessView(
-            m_pResource->GetUnderlyingResource(),
-            nullptr,
-            &Desc,
-            m_Descriptor
-            );
+            m_pParent->m_pDevice12.get()->CreateUnorderedAccessView(
+                m_pResource->GetUnderlyingResource(),
+                nullptr,
+                &Desc,
+                m_Descriptor
+                );
 
-        m_ViewUniqueness = 0;
+            m_ViewUniqueness = 0;
+        }
         return S_OK;
     }
 

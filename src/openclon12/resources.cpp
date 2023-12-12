@@ -9,6 +9,9 @@
 
 #include "gl_tokens.hpp"
 
+#include "FormatDesc.hpp"
+#include "View.inl"
+
 constexpr cl_mem_flags ValidMemFlags =
     CL_MEM_READ_WRITE |
     CL_MEM_WRITE_ONLY |
@@ -1256,8 +1259,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
         m_InitialData.reset(new byte[size]);
         memcpy(m_InitialData.get(), pHostPointer, size);
     }
-    auto& UAVDescWrapper = m_UAVDesc;
-    auto& UAVDesc = UAVDescWrapper.m_Desc12;
+    auto& UAVDesc = m_UAVDesc;
     UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
     UAVDesc.Buffer.CounterOffsetInBytes = 0;
@@ -1265,7 +1267,6 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
     UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
     UAVDesc.Buffer.FirstElement = m_Offset / 4;
     UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
-    UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
 }
 
 Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_image_format& image_format, cl_mem_object_type type, cl_mem_flags flags, const cl_mem_properties *properties)
@@ -1286,8 +1287,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
         UINT FormatByteSize = CD3D11FormatHelper::GetByteAlignment(DXGIFormat);
 
         {
-            auto& UAVDescWrapper = m_UAVDesc;
-            auto &UAVDesc = UAVDescWrapper.m_Desc12;
+            auto &UAVDesc = m_UAVDesc;
             UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
             UAVDesc.Format = DXGIFormat;
             UAVDesc.Buffer.CounterOffsetInBytes = 0;
@@ -1295,8 +1295,6 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
             UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
             UAVDesc.Buffer.FirstElement = m_Offset / FormatByteSize;
             UAVDesc.Buffer.NumElements = (UINT)size;
-
-            UAVDescWrapper.m_D3D11UAVFlags = 0;
         }
         {
             auto& SRVDesc = m_SRVDesc;
@@ -1311,8 +1309,7 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
     }
     else
     {
-        auto& UAVDescWrapper = m_UAVDesc;
-        auto& UAVDesc = UAVDescWrapper.m_Desc12;
+        auto& UAVDesc = m_UAVDesc;
         UAVDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
         UAVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
         UAVDesc.Buffer.CounterOffsetInBytes = 0;
@@ -1320,7 +1317,6 @@ Resource::Resource(Resource& ParentBuffer, size_t offset, size_t size, const cl_
         UAVDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
         UAVDesc.Buffer.FirstElement = m_Offset / 4;
         UAVDesc.Buffer.NumElements = (UINT)((size - 1) / 4) + 1;
-        UAVDescWrapper.m_D3D11UAVFlags = D3D11_BUFFER_UAV_FLAG_RAW;
     }
 }
 
@@ -1349,8 +1345,7 @@ Resource::Resource(Context& Parent, D3D12TranslationLayer::ResourceCreationArgs 
 
     DXGI_FORMAT DXGIFormat = GetDXGIFormatForCLImageFormat(image_format);
     {
-        auto& UAVDescWrapper = m_UAVDesc;
-        auto &UAVDesc = UAVDescWrapper.m_Desc12;
+        auto &UAVDesc = m_UAVDesc;
         UAVDesc.Format = DXGIFormat;
         switch (image_desc.image_type)
         {

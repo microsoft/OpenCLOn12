@@ -7,6 +7,9 @@
 #include <variant>
 #undef GetBinaryType
 
+#include "RootSignature.hpp"
+#include "PipelineState.hpp"
+
 using unique_dxil = std::unique_ptr<CompiledDxil>;
 
 class Kernel;

@@ -2,6 +2,9 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <directx/d3dcommon.h>
+#include <directx/dxgiformat.h>
+
 #define D3DFORMATDESC 1
 
 #define MAP_ALIGN_REQUIREMENT 16 // Map is required to return 16-byte aligned addresses
@@ -98,7 +101,6 @@ private:
 public:
     static bool IsBlockCompressFormat(DXGI_FORMAT Format);
     static UINT GetByteAlignment(DXGI_FORMAT Format);
-    static HRESULT CalculateResourceSize(UINT width, UINT height, UINT depth, DXGI_FORMAT format, UINT mipLevels, UINT subresources, _Out_ SIZE_T& totalByteSize, _Out_writes_opt_(subresources) D3D11_MAPPED_SUBRESOURCE *pDst = nullptr);
     static HRESULT CalculateExtraPlanarRows(DXGI_FORMAT format, UINT plane0Height, _Out_ UINT& totalHeight);
     static HRESULT CalculateMinimumRowMajorRowPitch(DXGI_FORMAT Format, UINT Width, _Out_ UINT& RowPitch);
     static HRESULT CalculateMinimumRowMajorSlicePitch(DXGI_FORMAT Format, UINT ContextBasedRowPitch, UINT Height, _Out_ UINT& SlicePitch);

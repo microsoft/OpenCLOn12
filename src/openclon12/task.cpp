@@ -401,26 +401,20 @@ void Task::Record()
         try
         {
             // TODO: Maybe share a start timestamp with the end of the previous command?
-            m_StartTimestamp.reset(new D3D12TranslationLayer::Query(
-                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP
-            ));
-            m_StartTimestamp->Initialize();
-            m_StopTimestamp.reset(new D3D12TranslationLayer::Query(
-                pImmCtx, D3D12TranslationLayer::e_QUERY_TIMESTAMP
-            ));
-            m_StopTimestamp->Initialize();
+            m_StartTimestamp.reset(new D3D12TranslationLayer::TimestampQuery(pImmCtx));
+            m_StopTimestamp.reset(new D3D12TranslationLayer::TimestampQuery(pImmCtx));
         }
         catch(...) { /* Do nothing, just don't capture timestamps */ }
     }
 
     if (m_StartTimestamp)
     {
-        pImmCtx->QueryEnd(&*m_StartTimestamp);
+        m_StartTimestamp->End();
     }
     RecordImpl();
     if (m_StopTimestamp)
     {
-        pImmCtx->QueryEnd(&*m_StopTimestamp);
+        m_StopTimestamp->End();
     }
 }
 
@@ -627,15 +621,15 @@ void Task::Complete(cl_int error, TaskPoolLock const& lock)
         assert(m_CommandQueue.Get() && m_D3DDevice);
         UINT64 Frequency = m_D3DDevice->GetTimestampFrequency();
         UINT64 GPUTimestamp;
-        if (m_StartTimestamp &&
-            m_StartTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
+        if (m_StartTimestamp)
         {
+            GPUTimestamp = m_StartTimestamp->GetData();
             GetTimestamp(CL_PROFILING_COMMAND_START) =
                 TimestampToNanoseconds(GPUTimestamp, Frequency) + m_D3DDevice->GPUToQPCTimestampOffset();
         }
-        if (m_StopTimestamp &&
-            m_StopTimestamp->GetData(&GPUTimestamp, sizeof(GPUTimestamp), true, false))
+        if (m_StopTimestamp)
         {
+            GPUTimestamp = m_StopTimestamp->GetData();
             GetTimestamp(CL_PROFILING_COMMAND_END) =
                 TimestampToNanoseconds(GPUTimestamp, Frequency) + m_D3DDevice->GPUToQPCTimestampOffset();
         }

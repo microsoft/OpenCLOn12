@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "pch.h"
+#include "ImmediateContext.hpp"
+#include "ImmediateContext.inl"
+#include "FormatDesc.hpp"
+#include "View.inl"
 
 namespace D3D12TranslationLayer
 {
@@ -14,6 +17,7 @@ namespace D3D12TranslationLayer
 ImmediateContext::ImmediateContext(D3D12_FEATURE_DATA_D3D12_OPTIONS& caps, 
     ID3D12Device* pDevice, ID3D12CommandQueue* pQueue, CreationArgs args) noexcept(false)
     : m_caps(caps)
+    , m_CommandList(this, pQueue)
     , m_FeatureLevel(GetHardwareFeatureLevel(pDevice))
     , m_pDevice12(pDevice)
     , m_SRVAllocator(pDevice, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1024)
@@ -106,33 +110,29 @@ ImmediateContext::ImmediateContext(D3D12_FEATURE_DATA_D3D12_OPTIONS& caps,
     (void)m_pDevice12->QueryInterface(&m_pDevice12_2);
     m_pDevice12->QueryInterface(&m_pCompatDevice);
 
-    m_CommandList.reset(new CommandListManager(this, pQueue)); // throw( bad_alloc )
-    m_CommandList->InitCommandList();
+    m_CommandList.InitCommandList();
 }
 
 bool ImmediateContext::Shutdown() noexcept
 {
-    if (m_CommandList)
-    {
-        // The device is being destroyed so no point executing any authored work
-        m_CommandList->DiscardCommandList();
+    // The device is being destroyed so no point executing any authored work
+    m_CommandList.DiscardCommandList();
 
-        // Make sure any GPU work still in the pipe is finished
-        try
-        {
-            if (!m_CommandList->WaitForCompletion()) // throws
-            {
-                return false;
-            }
-        }
-        catch (_com_error&)
+    // Make sure any GPU work still in the pipe is finished
+    try
+    {
+        if (!m_CommandList.WaitForCompletion()) // throws
         {
             return false;
         }
-        catch (std::bad_alloc&)
-        {
-            return false;
-        }
+    }
+    catch (_com_error&)
+    {
+        return false;
+    }
+    catch (std::bad_alloc&)
+    {
+        return false;
     }
     return true;
 }
@@ -340,7 +340,7 @@ UINT ImmediateContext::ReserveSlotsForBindings(OnlineDescriptorHeap& Heap, UINT 
 //----------------------------------------------------------------------------------------------------------------------------------
 void ImmediateContext::PostDispatch()
 {
-    m_CommandList->DispatchCommandAdded();
+    m_CommandList.DispatchCommandAdded();
 }
 
 D3D12_BOX ImmediateContext::GetSubresourceBoxFromBox(Resource *pSrc, UINT RequestedSubresource, UINT BaseSubresource, D3D12_BOX const& SrcBox)
@@ -548,7 +548,7 @@ void ImmediateContext::PostCopy(Resource *pSrc, UINT srcSubresource, Resource *p
 //----------------------------------------------------------------------------------------------------------------------------------
 void ImmediateContext::AddObjectToResidencySet(Resource *pResource)
 {
-    m_CommandList->AddResourceToResidencySet(pResource);
+    m_CommandList.AddResourceToResidencySet(pResource);
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------
@@ -557,9 +557,9 @@ bool ImmediateContext::Flush()
     bool bSubmitCommandList = false;
     m_ResourceStateManager.ApplyAllResourceTransitions();
 
-    if (m_CommandList && m_CommandList->HasCommands())
+    if (m_CommandList.HasCommands())
     {
-        m_CommandList->SubmitCommandList();
+        m_CommandList.SubmitCommandList();
         bSubmitCommandList = true;
     }
 
@@ -573,11 +573,8 @@ bool ImmediateContext::Flush()
 void ImmediateContext::PrepForCommandQueueSync()
 {
     Flush();
-    if (m_CommandList)
-    {
-        assert(!m_CommandList->HasCommands());
-        m_CommandList->PrepForCommandQueueSync();
-    }
+    assert(!m_CommandList.HasCommands());
+    m_CommandList.PrepForCommandQueueSync();
 }
 
 //----------------------------------------------------------------------------------------------------------------------------------

@@ -75,7 +75,7 @@ protected:
     std::unordered_map<D3DDevice*, D3D12TranslationLayer::UAV> m_UAVs;
 
     std::unique_ptr<byte[]> m_InitialData;
-    D3D12TranslationLayer::D3D12_UNORDERED_ACCESS_VIEW_DESC_WRAPPER m_UAVDesc;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC m_UAVDesc;
     D3D12_SHADER_RESOURCE_VIEW_DESC m_SRVDesc;
 
     mutable std::mutex m_MapLock;

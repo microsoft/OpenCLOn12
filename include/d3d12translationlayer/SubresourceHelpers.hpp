@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include "D3D12TranslationLayerDependencyIncludes.h"
+
 namespace D3D12TranslationLayer
 {
     struct CBufferView {};
