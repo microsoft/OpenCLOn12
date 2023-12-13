@@ -14,6 +14,14 @@ inline ID3D12Resource* GetUnderlyingResource(Resource* pResource)
     return pResource->GetUnderlyingResource();
 }
 
+inline D3D12_GPU_VIRTUAL_ADDRESS GetBufferGPUVA(Resource *pBuffer, SIZE_T APIOffset)
+{
+    // TODO: Cache the GPU VA, frequent calls to this cause a CPU hotspot
+    return pBuffer->GetUnderlyingResource()->GetGPUVirtualAddress() // Base of the DX12 resource
+     + pBuffer->GetSubresourcePlacement(0).Offset // Base of the DX11 resource after renaming
+     + APIOffset; // Offset from the base of the DX11 resource
+}
+
 //----------------------------------------------------------------------------------------------------------------------------------
 template <typename TDesc>
 inline void GetBufferViewDesc(Resource *pBuffer, TDesc &Desc, UINT APIOffset, UINT APISize = -1)
@@ -22,11 +30,7 @@ inline void GetBufferViewDesc(Resource *pBuffer, TDesc &Desc, UINT APIOffset, UI
     {
         Desc.SizeInBytes =
             min(GetDynamicBufferSize<TDesc>(pBuffer, APIOffset), APISize);
-        Desc.BufferLocation = Desc.SizeInBytes == 0 ? 0 :
-            // TODO: Cache the GPU VA, frequent calls to this cause a CPU hotspot
-            (pBuffer->GetUnderlyingResource()->GetGPUVirtualAddress() // Base of the DX12 resource
-             + pBuffer->GetSubresourcePlacement(0).Offset // Base of the DX11 resource after renaming
-             + APIOffset); // Offset from the base of the DX11 resource
+        Desc.BufferLocation = Desc.SizeInBytes == 0 ? 0 : GetBufferGPUVA(pBuffer, APIOffset);
     }
     else
     {

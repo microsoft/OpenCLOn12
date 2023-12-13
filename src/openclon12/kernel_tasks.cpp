@@ -225,6 +225,7 @@ public:
         {
             m_PrintfUAV.Attach(static_cast<Resource*>(clCreateBuffer(&m_Parent.get(), CL_MEM_ALLOC_HOST_PTR | CL_MEM_COPY_HOST_PTR, PrintfBufferSize, (void*)PrintfBufferInitialData, nullptr)));
             m_PrintfUAV->EnqueueMigrateResource(&m_CommandQueue->GetD3DDevice(), this, 0);
+            m_KernelArgUAVs[kernel.m_Dxil.GetMetadata().printf_uav_id] = m_PrintfUAV.Get();
         }
 
         CompiledDxil::Configuration config = {};
@@ -669,6 +670,7 @@ void ExecuteKernel::RecordImpl()
         pCmdList->SetComputeRootDescriptorTable(1, ImmCtx.m_SamplerHeap.GPUHandle(SamplerSlot));
     }
 
+    UINT RootUAVParamIdx = NumSamplerDescriptors ? 2 : 1; // First 2 params are view descriptor table and sample table (if present)
     for (auto &UavRes : m_KernelArgUAVs)
     {
         if (UavRes.Get())
@@ -678,11 +680,17 @@ void ExecuteKernel::RecordImpl()
                                                                              UAV.m_subresources,
                                                                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             SrcDescriptors.push_back(UAV.GetRefreshedDescriptorHandle());
+            if (UavRes->m_Desc.image_type == CL_MEM_OBJECT_BUFFER)
+            {
+                pCmdList->SetComputeRootUnorderedAccessView(RootUAVParamIdx,
+                                                            D3D12TranslationLayer::GetBufferGPUVA(UavRes->GetUnderlyingResource(&Device), UavRes->m_Offset));
+            }
         }
         else
         {
             SrcDescriptors.push_back(ImmCtx.m_NullUAV);
         }
+        RootUAVParamIdx++;
     }
     for (auto &SrvRes : m_KernelArgSRVs)
     {
@@ -691,14 +699,6 @@ void ExecuteKernel::RecordImpl()
                                                                          SRV.m_subresources,
                                                                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         SrcDescriptors.push_back(SRV.GetRefreshedDescriptorHandle());
-    }
-    if (m_PrintfUAV.Get())
-    {
-        auto &UAV = m_PrintfUAV->GetUAV(&Device);
-        Device.ImmCtx().GetResourceStateManager().TransitionSubresources(m_PrintfUAV->GetUnderlyingResource(&Device),
-                                                                         UAV.m_subresources,
-                                                                         D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        SrcDescriptors[m_Specialized->m_Dxil->GetMetadata().printf_uav_id] = UAV.GetRefreshedDescriptorHandle();
     }
 
     auto pCompiler = g_Platform->GetCompiler();

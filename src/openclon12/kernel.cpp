@@ -214,9 +214,14 @@ static cl_mem_object_type MemObjectTypeFromName(const char* name)
 
 static ComPtr<ID3DBlob> SerializeRootSignature(CompiledDxil::Metadata const& metadata)
 {
+    static constexpr cl_uint MaxRootCost = D3D12_MAX_ROOT_COST;
+    static constexpr cl_uint BaseRootCost = 2; /* Two descriptor tables take one DWORD each */
+    static constexpr cl_uint RootDescriptorAvailableRootCost = MaxRootCost - BaseRootCost;
+    static constexpr cl_uint RootDescriptorMaxCount = RootDescriptorAvailableRootCost / 2; /* Two DWORDs per descriptor */
+
     CD3DX12_VERSIONED_ROOT_SIGNATURE_DESC RSDesc;
-    CD3DX12_ROOT_PARAMETER1 Params[2];
-    CD3DX12_DESCRIPTOR_RANGE1 ViewRanges[3], SamplerRange;
+    CD3DX12_ROOT_PARAMETER1 Params[2 + RootDescriptorMaxCount];
+    CD3DX12_DESCRIPTOR_RANGE1 ViewRanges[4], SamplerRange;
     cl_uint NumRanges = 0;
     ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 2, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE, 0);
     ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, (UINT)metadata.num_uavs, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE, 2);
@@ -224,11 +229,47 @@ static ComPtr<ID3DBlob> SerializeRootSignature(CompiledDxil::Metadata const& met
     {
         ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, (UINT)metadata.num_srvs, 0, 0, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE);
     }
-    SamplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, (UINT)metadata.num_samplers, 0);
-    Params[0].InitAsDescriptorTable(NumRanges, ViewRanges);
-    // TODO: Static samplers
-    Params[1].InitAsDescriptorTable(1, &SamplerRange);
-    RSDesc.Init_1_1(metadata.num_samplers ? 2 : 1, Params);
+    cl_uint NumParameters = 0;
+    Params[NumParameters++].InitAsDescriptorTable(NumRanges, ViewRanges);
+    if (metadata.num_samplers)
+    {
+        // TODO: Static samplers
+        SamplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, (UINT)metadata.num_samplers, 0);
+        Params[NumParameters++].InitAsDescriptorTable(1, &SamplerRange);
+    }
+
+    for (size_t i = 0; i < metadata.args.size() && NumParameters < ARRAYSIZE(Params); ++i)
+    {
+        auto &properties = metadata.args[i].properties;
+        auto pMemProps = std::get_if<CompiledDxil::Metadata::Arg::Memory>(&properties);
+        if (pMemProps)
+        {
+            // Buffers should be the first UAVs; if they're not, this code needs to also build a mapping so that the binding
+            // logic can set the appropriate root UAVs
+            assert(pMemProps->buffer_id == NumParameters - (metadata.num_samplers ? 2 : 1));
+            Params[NumParameters++].InitAsUnorderedAccessView(pMemProps->buffer_id, 1, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE);
+        }
+    }
+    for (size_t i = 0; i < metadata.consts.size() && NumParameters < ARRAYSIZE(Params); ++i)
+    {
+        assert(metadata.consts[i].uav_id == NumParameters - (metadata.num_samplers ? 2 : 1));
+        Params[NumParameters++].InitAsUnorderedAccessView(metadata.consts[i].uav_id, 1, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE);
+    }
+    if (metadata.printf_uav_id >= 0 && NumParameters < ARRAYSIZE(Params))
+    {
+        assert(metadata.printf_uav_id == NumParameters - (metadata.num_samplers ? 2 : 1));
+        Params[NumParameters++].InitAsUnorderedAccessView(metadata.printf_uav_id, 1, D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE);
+    }
+    if (NumParameters == ARRAYSIZE(Params))
+    {
+        // Ran out of space for root descriptors, just reference these buffers via descriptor table
+        ViewRanges[NumRanges++].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, (UINT)metadata.num_uavs, 0,
+                                     1, D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE, 2);
+        Params[0].DescriptorTable.NumDescriptorRanges++;
+        NumParameters = 2;
+    }
+
+    RSDesc.Init_1_1(NumParameters, Params);
 
     ComPtr<ID3DBlob> ret;
     D3D12TranslationLayer::ThrowFailure(D3D12SerializeVersionedRootSignature(&RSDesc, &ret, nullptr));
