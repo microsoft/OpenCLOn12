@@ -82,7 +82,7 @@ bool Program::SpecializationKeyEqual::operator()(std::unique_ptr<Program::Specia
     return memcmp(a.get(), b.get(), size) == 0;
 }
 
-Program::SpecializationValue* Program::FindExistingSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<Program::SpecializationKey> const& key) const
+std::pair<Program::SpecializationValue *, bool> Program::GetSpecializationEntry(Device* device, std::string const& kernelName, std::unique_ptr<Program::SpecializationKey> &&key)
 {
     std::lock_guard programLock(m_Lock);
     auto buildDataIter = m_BuildData.find(device);
@@ -93,11 +93,8 @@ Program::SpecializationValue* Program::FindExistingSpecialization(Device* device
     auto& kernel = kernelsIter->second;
 
     std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
-    auto iter = kernel.m_SpecializationCache.find(key);
-    if (iter != kernel.m_SpecializationCache.end())
-        return &iter->second;
-
-    return nullptr;
+    auto [iter, success] = kernel.m_SpecializationCache.try_emplace(std::move(key));
+    return std::make_pair(&iter->second, success);
 }
 
 class ExecuteKernel : public Task
@@ -114,12 +111,8 @@ public:
     std::vector<Resource::ref_ptr_int> m_KernelArgUAVs;
     std::vector<Resource::ref_ptr_int> m_KernelArgSRVs;
     std::vector<Sampler::ref_ptr_int> m_KernelArgSamplers;
-
-    std::mutex m_SpecializeLock;
-    std::condition_variable m_SpecializeEvent;
     
     Program::SpecializationValue *m_Specialized = nullptr;
-    bool m_SpecializeError = false;
 
     void MigrateResources() final
     {
@@ -234,13 +227,13 @@ public:
         config.args = kernel.m_ArgMetadataToCompiler;
         auto SpecKey = Program::SpecializationKey::Allocate(m_D3DDevice, config);
         
-        m_Specialized = kernel.m_Parent->FindExistingSpecialization(m_Device.Get(), kernel.m_Name, SpecKey);
+        auto [Specialized, NeedToCreate] = kernel.m_Parent->GetSpecializationEntry(m_Device.Get(), kernel.m_Name, std::move(SpecKey));
+        m_Specialized = Specialized;
 
-        if (!m_Specialized)
+        if (NeedToCreate)
         {
             g_Platform->QueueProgramOp([this, &Device,
                                               config = std::move(config),
-                                              SpecKey = std::move(SpecKey),
                                               kernel = this->m_Kernel,
                                               refThis = Task::ref_int(*this)]() mutable
             {
@@ -258,26 +251,19 @@ public:
                     auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
                         &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get());
 
-                    auto cacheEntry = kernel->m_Parent->StoreSpecialization(m_Device.Get(),
-                                                                            kernel->m_Name,
-                                                                            SpecKey,
-                                                                            std::move(specialized),
-                                                                            std::move(RS),
-                                                                            std::move(PSO));
-
                     {
-                        std::lock_guard lock(m_SpecializeLock);
-                        m_Specialized = cacheEntry;
+                        auto lock = kernel->m_Parent->GetSpecializationUpdateLock();
+                        *m_Specialized = Program::SpecializationValue(std::move(specialized), std::move(RS), std::move(PSO));
                     }
-                    m_SpecializeEvent.notify_all();
+                    kernel->m_Parent->SpecializationComplete();
                 }
                 catch (...)
                 {
                     {
-                        std::lock_guard lock(m_SpecializeLock);
-                        m_SpecializeError = true;
+                        auto lock = kernel->m_Parent->GetSpecializationUpdateLock();
+                        m_Specialized->m_Error = true;
                     }
-                    m_SpecializeEvent.notify_all();
+                    kernel->m_Parent->SpecializationComplete();
                 }
             });
         }
@@ -543,13 +529,15 @@ constexpr UINT c_NumConstants[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT]
 
 void ExecuteKernel::RecordImpl()
 {
-    std::unique_lock lock(m_SpecializeLock);
-    while (!m_Specialized && !m_SpecializeError)
     {
-        m_SpecializeEvent.wait(lock);
+        auto lock = m_Kernel->m_Parent->GetSpecializationUpdateLock();
+        while (!m_Specialized->m_PSO && !m_Specialized->m_Error)
+        {
+            m_Kernel->m_Parent->WaitForSpecialization(lock);
+        }
     }
 
-    if (m_SpecializeError)
+    if (m_Specialized->m_Error)
     {
         auto Lock = g_Platform->GetTaskPoolLock();
         Complete(CL_BUILD_PROGRAM_FAILURE, Lock);

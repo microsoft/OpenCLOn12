@@ -85,29 +85,26 @@ public:
     };
     struct SpecializationValue
     {
+        bool m_Error = false;
         unique_dxil m_Dxil;
         std::unique_ptr<D3D12TranslationLayer::RootSignature> m_RS;
         std::unique_ptr<D3D12TranslationLayer::PipelineState> m_PSO;
+        SpecializationValue() = default;
         SpecializationValue(decltype(m_Dxil) d, decltype(m_RS) rs, decltype(m_PSO) p)
             : m_Dxil(std::move(d)), m_RS(std::move(rs)), m_PSO(std::move(p)) { }
+        SpecializationValue(SpecializationValue &&) = default;
+        SpecializationValue &operator=(SpecializationValue &&) = default;
     };
 
-    SpecializationValue *FindExistingSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey> const& key) const;
-    
-    template <typename... TArgs>
-    SpecializationValue *StoreSpecialization(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey>& key, TArgs&&... args)
-    {
-        std::lock_guard programLock(m_Lock);
-        auto& buildData = m_BuildData[device];
-        std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
-        auto kernelsIter = buildData->m_Kernels.find(kernelName);
-        assert(kernelsIter != buildData->m_Kernels.end());
-        auto ret = kernelsIter->second.m_SpecializationCache.try_emplace(std::move(key), std::forward<TArgs>(args)...);
-        return &ret.first->second;
-    }
+    std::pair<SpecializationValue *, bool> GetSpecializationEntry(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey> &&key);
+    std::unique_lock<std::mutex> GetSpecializationUpdateLock() const { return std::unique_lock<std::mutex>(m_SpecializationUpdateLock); }
+    void SpecializationComplete() const { m_SpecializationEvent.notify_all(); };
+    void WaitForSpecialization(std::unique_lock<std::mutex> &lock) const { m_SpecializationEvent.wait(lock); }
 
 private:
     mutable std::recursive_mutex m_Lock;
+    mutable std::mutex m_SpecializationUpdateLock;
+    mutable std::condition_variable m_SpecializationEvent;
     uint32_t m_NumLiveKernels = 0;
 
     struct KernelData
