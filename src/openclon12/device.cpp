@@ -354,6 +354,7 @@ D3DDevice::D3DDevice(Device &parent, ID3D12Device *pDevice, ID3D12CommandQueue *
     , m_ShaderCache(pDevice)
 {
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
+    m_ExecutionScheduler.SetSchedulingMode(mode);
     m_CompletionScheduler.SetSchedulingMode(mode);
 
     auto commandQueue = m_ImmCtx.GetCommandQueue();
@@ -573,11 +574,11 @@ void D3DDevice::Flush(TaskPoolLock const&)
     };
     std::unique_ptr<ExecutionHandler> spHandler(new ExecutionHandler{ *this, std::move(m_RecordingSubmission) });
 
-    m_CompletionScheduler.QueueTask({
+    m_ExecutionScheduler.QueueTask({
         [](void* pContext)
         {
             std::unique_ptr<ExecutionHandler> spHandler(static_cast<ExecutionHandler*>(pContext));
-            spHandler->m_Device.ExecuteTasks(*spHandler->m_Tasks);
+            spHandler->m_Device.ExecuteTasks(std::move(spHandler->m_Tasks));
         },
         [](void* pContext)
         {
@@ -599,14 +600,9 @@ void Device::FlushAllDevices(TaskPoolLock const& Lock)
     }
 }
 
-//std::unique_ptr<D3D12TranslationLayer::PipelineState> D3DDevice::CreatePSO(D3D12TranslationLayer::COMPUTE_PIPELINE_STATE_DESC const& Desc)
-//{
-//    std::lock_guard PSOCreateLock(m_PSOCreateLock);
-//    return std::make_unique<D3D12TranslationLayer::PipelineState>(&ImmCtx(), Desc);
-//}
-
-void D3DDevice::ExecuteTasks(Submission& tasks)
+void D3DDevice::ExecuteTasks(std::unique_ptr<Submission> spTasks)
 {
+    auto &tasks = *spTasks;
     for (cl_uint i = 0; i < tasks.size(); ++i)
     {
         try
@@ -632,18 +628,36 @@ void D3DDevice::ExecuteTasks(Submission& tasks)
         }
     }
 
-    ImmCtx().WaitForCompletion();
-
+    struct CompletionHandler
     {
-        auto Lock = g_Platform->GetTaskPoolLock();
-        for (auto& task : tasks)
+        XPlatHelpers::unique_event m_Event;
+        std::unique_ptr<Submission> m_Tasks;
+    };
+    std::unique_ptr<CompletionHandler> spHandler(new CompletionHandler);
+    spHandler->m_Event.create();
+    spHandler->m_Tasks = std::move(spTasks);
+    ImmCtx().EnqueueSetEvent(spHandler->m_Event.get());
+    m_CompletionScheduler.QueueTask({
+        [](void* pContext)
         {
-            task->Complete(CL_SUCCESS, Lock);
-        }
+            std::unique_ptr<CompletionHandler> spHandler(static_cast<CompletionHandler*>(pContext));
+            spHandler->m_Event.wait();
 
-        // Enqueue another execution task if there's new items ready to go
-        g_Platform->FlushAllDevices(Lock);
-    }
+            auto Lock = g_Platform->GetTaskPoolLock();
+            for (auto& task : *spHandler->m_Tasks)
+            {
+                task->Complete(CL_SUCCESS, Lock);
+            }
+
+            // Enqueue another execution task if there's new items ready to go
+            g_Platform->FlushAllDevices(Lock);
+        },
+        [](void* pContext)
+        {
+            std::unique_ptr<CompletionHandler> spHandler(static_cast<CompletionHandler*>(pContext));
+        },
+        spHandler.get()});
+    spHandler.release();
 }
 
 void Device::CacheCaps(std::lock_guard<std::mutex> const&, ComPtr<ID3D12Device> spDevice)

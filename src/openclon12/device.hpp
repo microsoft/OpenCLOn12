@@ -39,7 +39,7 @@ protected:
 
     friend class Device;
 
-    void ExecuteTasks(Submission& tasks);
+    void ExecuteTasks(std::unique_ptr<Submission> spTasks);
     unsigned m_ContextCount = 1;
     const bool m_IsImportedDevice;
 
@@ -49,12 +49,9 @@ protected:
 
     std::unique_ptr<Submission> m_RecordingSubmission;
 
+    BackgroundTaskScheduler::Scheduler m_ExecutionScheduler;
     BackgroundTaskScheduler::Scheduler m_CompletionScheduler;
     mutable ShaderCache m_ShaderCache;
-
-    // All PSO creations need to be kicked off behind this lock,
-    // which guards the root signature cache in the immediate context
-    std::mutex m_PSOCreateLock;
 
     UINT64 m_TimestampFrequency = 0;
     INT64 m_GPUToQPCTimestampOffset = 0;
