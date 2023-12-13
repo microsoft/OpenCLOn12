@@ -3,6 +3,7 @@
 #pragma once
 
 #include "D3D12TranslationLayerDependencyIncludes.h"
+#include <assert.h>
 
 namespace D3D12TranslationLayer
 {

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 #include "Allocator.h"
 #include "ImmediateContext.hpp"
+#include "ImmediateContext.inl"
 
 namespace D3D12TranslationLayer
 {

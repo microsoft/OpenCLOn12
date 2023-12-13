@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include "ImmediateContext.hpp"
+#include "ImmediateContext.inl"
 #include "Query.hpp"
 
 namespace D3D12TranslationLayer
