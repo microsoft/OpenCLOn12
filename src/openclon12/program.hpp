@@ -124,6 +124,7 @@ private:
         cl_build_status m_BuildStatus = CL_BUILD_IN_PROGRESS;
         std::string m_BuildLog;
         std::shared_ptr<ProgramBinary> m_OwnedBinary;
+        uint64_t m_Hash[2] = {};
         cl_program_binary_type m_BinaryType = CL_PROGRAM_BINARY_TYPE_NONE;
         std::string m_LastBuildOptions;
         std::map<std::string, KernelData> m_Kernels;

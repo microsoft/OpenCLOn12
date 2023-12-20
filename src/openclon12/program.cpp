@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "spookyv2.h"
+
 struct ProgramBinaryHeader
 {
     static constexpr GUID c_ValidHeaderGuid = { /* 8d46c01e-2977-4234-a5b0-292405fc1d34 */
@@ -1124,23 +1126,47 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
     if (!m_Source.empty() || m_ParsedIL)
     {
         auto& BuildData = Args.Common.BuildData;
-        pCompiler->Initialize(BuildData->m_D3DDevice->GetShaderCache());
+        auto &Cache = BuildData->m_D3DDevice->GetShaderCache();
+        pCompiler->Initialize(Cache);
 
         Logger loggers(m_Lock, BuildData->m_BuildLog);
         std::shared_ptr<ProgramBinary> compiledObject;
 
         if (!m_Source.empty())
         {
-            Compiler::CompileArgs args = {};
-            args.program_source = m_Source.c_str();
-            args.cmdline_args.reserve(Args.Common.Args.size());
-            args.features = Args.Common.Features;
-            for (auto& def : Args.Common.Args)
+            if (Cache.HasCache())
             {
-                args.cmdline_args.push_back(def.c_str());
+                SpookyHash hasher;
+                hasher.Init(BuildData->m_Hash[0], BuildData->m_Hash[1]);
+                hasher.Update(m_Source.c_str(), m_Source.size());
+                hasher.Update(&Args.Common.Features, sizeof(Args.Common.Features));
+                for (auto &def : Args.Common.Args)
+                {
+                    hasher.Update(def.c_str(), def.size());
+                }
+                hasher.Final(&BuildData->m_Hash[0], &BuildData->m_Hash[1]);
+
+                auto Precompiled = Cache.Find(BuildData->m_Hash, sizeof(BuildData->m_Hash));
+                if (Precompiled.first)
+                {
+                    compiledObject = pCompiler->Load(Precompiled.first.get(), Precompiled.second);
+                }
             }
 
-            compiledObject = pCompiler->Compile(args, loggers);
+            if (!compiledObject)
+            {
+                Compiler::CompileArgs args = {};
+                args.program_source = m_Source.c_str();
+                args.cmdline_args.reserve(Args.Common.Args.size());
+                args.features = Args.Common.Features;
+                for (auto &def : Args.Common.Args)
+                {
+                    args.cmdline_args.push_back(def.c_str());
+                }
+
+                compiledObject = pCompiler->Compile(args, loggers);
+                Cache.Store(BuildData->m_Hash, sizeof(BuildData->m_Hash), compiledObject->GetBinary(), compiledObject->GetBinarySize());
+            }
         }
         else
         {
@@ -1152,6 +1178,10 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
             else
             {
                 compiledObject = m_ParsedIL;
+            }
+            if (Cache.HasCache())
+            {
+                SpookyHash::Hash128(compiledObject->GetBinary(), compiledObject->GetBinarySize(), &BuildData->m_Hash[0], &BuildData->m_Hash[1]);
             }
         }
 
@@ -1182,10 +1212,16 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
         pCompiler->Initialize(Args.BinaryBuildDevices[0].second->GetShaderCache());
 
         std::lock_guard Lock(m_Lock);
-        for (auto& [device, _] : Args.BinaryBuildDevices)
+        for (auto& [device, d3dDevice] : Args.BinaryBuildDevices)
         {
             auto& BuildData = m_BuildData[device.Get()];
             Logger loggers(m_Lock, BuildData->m_BuildLog);
+
+            if (d3dDevice->GetShaderCache().HasCache())
+            {
+                SpookyHash::Hash128(BuildData->m_OwnedBinary->GetBinary(), BuildData->m_OwnedBinary->GetBinarySize(),
+                                    &BuildData->m_Hash[0], &BuildData->m_Hash[1]);
+            }
 
             Compiler::LinkerArgs link_args = {};
             link_args.create_library = Args.Common.CreateLibrary;
@@ -1218,28 +1254,57 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
     auto pCompiler = g_Platform->GetCompiler();
-    pCompiler->Initialize(BuildData->m_D3DDevice->GetShaderCache());
+    auto &Cache = BuildData->m_D3DDevice->GetShaderCache();
+    pCompiler->Initialize(Cache);
     Logger loggers(m_Lock, BuildData->m_BuildLog);
 
     std::shared_ptr<ProgramBinary> object;
 
     if (!m_Source.empty())
     {
-        Compiler::CompileArgs args = {};
-        args.cmdline_args.reserve(Args.Common.Args.size());
-        for (auto& def : Args.Common.Args)
+        if (Cache.HasCache())
         {
-            args.cmdline_args.push_back(def.c_str());
-        }
-        args.headers.reserve(Args.Headers.size());
-        for (auto& h : Args.Headers)
-        {
-            args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
-        }
-        args.program_source = m_Source.c_str();
-        args.features = Args.Common.Features;
+            SpookyHash hasher;
+            hasher.Init(BuildData->m_Hash[0], BuildData->m_Hash[1]);
+            hasher.Update(m_Source.c_str(), m_Source.size());
+            hasher.Update(&Args.Common.Features, sizeof(Args.Common.Features));
+            for (auto &def : Args.Common.Args)
+            {
+                hasher.Update(def.c_str(), def.size());
+            }
+            for (auto &header : Args.Headers)
+            {
+                hasher.Update(header.first.c_str(), header.first.size());
+                hasher.Update(header.second->m_Source.c_str(), header.second->m_Source.size());
+            }
+            hasher.Final(&BuildData->m_Hash[0], &BuildData->m_Hash[1]);
 
-        object = pCompiler->Compile(args, loggers);
+            auto Precompiled = Cache.Find(BuildData->m_Hash, sizeof(BuildData->m_Hash));
+            if (Precompiled.first)
+            {
+                object = pCompiler->Load(Precompiled.first.get(), Precompiled.second);
+            }
+        }
+
+        if (!object)
+        {
+            Compiler::CompileArgs args = {};
+            args.cmdline_args.reserve(Args.Common.Args.size());
+            for (auto &def : Args.Common.Args)
+            {
+                args.cmdline_args.push_back(def.c_str());
+            }
+            args.headers.reserve(Args.Headers.size());
+            for (auto &h : Args.Headers)
+            {
+                args.headers.push_back({ h.first.c_str(), h.second->m_Source.c_str() });
+            }
+            args.program_source = m_Source.c_str();
+            args.features = Args.Common.Features;
+
+            object = pCompiler->Compile(args, loggers);
+            Cache.Store(BuildData->m_Hash, sizeof(BuildData->m_Hash), object->GetBinary(), object->GetBinarySize());
+        }
     }
     else
     {
@@ -1251,6 +1316,10 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
         else
         {
             object = m_ParsedIL;
+        }
+        if (BuildData->m_D3DDevice->GetShaderCache().HasCache())
+        {
+            SpookyHash::Hash128(object->GetBinary(), object->GetBinarySize(), &BuildData->m_Hash[0], &BuildData->m_Hash[1]);
         }
     }
 
@@ -1287,7 +1356,14 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
 
     for (auto& [Device, D3DDevice] : m_AssociatedDevices)
     {
-        pCompiler->Initialize(D3DDevice->GetShaderCache());
+        auto &Cache = D3DDevice->GetShaderCache();
+        pCompiler->Initialize(Cache);
+        SpookyHash hasher;
+        uint64_t singleHash[2] = {};
+        if (Cache.HasCache() && Args.LinkPrograms.size() > 1)
+        {
+            hasher.Init(0, 0);
+        }
 
         link_args.objs.clear();
         for (cl_uint i = 0; i < Args.LinkPrograms.size(); ++i)
@@ -1295,7 +1371,14 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
             std::lock_guard Lock(Args.LinkPrograms[i]->m_Lock);
             auto& BuildData = Args.LinkPrograms[i]->m_BuildData[Device.Get()];
             if (BuildData)
+            {
                 link_args.objs.push_back(BuildData->m_OwnedBinary.get());
+                if (Cache.HasCache())
+                {
+                    memcpy(singleHash, BuildData->m_Hash, sizeof(singleHash));
+                    hasher.Update(singleHash, sizeof(singleHash));
+                }
+            }
         }
 
         {
@@ -1308,6 +1391,11 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
 
                 if (linkedObject)
                 {
+                    memcpy(BuildData->m_Hash, singleHash, sizeof(singleHash));
+                    if (Cache.HasCache() && Args.LinkPrograms.size() > 1)
+                    {
+                        hasher.Final(&BuildData->m_Hash[0], &BuildData->m_Hash[1]);
+                    }
                     BuildData->m_OwnedBinary = std::move(linkedObject);
                     BuildData->m_BinaryType = Args.Common.CreateLibrary ?
                         CL_PROGRAM_BINARY_TYPE_LIBRARY : CL_PROGRAM_BINARY_TYPE_EXECUTABLE;
