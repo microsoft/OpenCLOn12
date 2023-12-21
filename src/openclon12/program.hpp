@@ -71,17 +71,19 @@ public:
                 unsigned Padding : 27;
             } SamplerArgData;
         } Args[1];
-        static std::unique_ptr<SpecializationKey> Allocate(D3DDevice const* Device, CompiledDxil::Configuration const& conf);
+        static size_t AllocatedByteSize(uint32_t NumArgs);
+        static size_t HashByteSize(uint32_t NumArgs);
+        static std::unique_ptr<const SpecializationKey> Allocate(D3DDevice const* Device, CompiledDxil::Configuration const& conf);
     private:
         SpecializationKey(D3DDevice const* Device, CompiledDxil::Configuration const& conf);
     };
     struct SpecializationKeyHash
     {
-        size_t operator()(std::unique_ptr<SpecializationKey> const&) const;
+        size_t operator()(std::unique_ptr<const SpecializationKey> const&) const;
     };
     struct SpecializationKeyEqual
     {
-        bool operator()(std::unique_ptr<SpecializationKey> const& a, std::unique_ptr<SpecializationKey> const& b) const;
+        bool operator()(std::unique_ptr<const SpecializationKey> const& a, std::unique_ptr<const SpecializationKey> const& b) const;
     };
     struct SpecializationValue
     {
@@ -95,8 +97,17 @@ public:
         SpecializationValue(SpecializationValue &&) = default;
         SpecializationValue &operator=(SpecializationValue &&) = default;
     };
+    
+    struct SpecializationData
+    {
+        const SpecializationKey *KeyInMap;
+        SpecializationValue *Value;
+        bool NeedToCreate;
+        uint64_t ProgramHash[2];
+    };
 
-    std::pair<SpecializationValue *, bool> GetSpecializationEntry(Device* device, std::string const& kernelName, std::unique_ptr<SpecializationKey> &&key);
+    SpecializationData GetSpecializationData(
+        Device* device, std::string const& kernelName, std::unique_ptr<const SpecializationKey> key);
     std::unique_lock<std::mutex> GetSpecializationUpdateLock() const { return std::unique_lock<std::mutex>(m_SpecializationUpdateLock); }
     void SpecializationComplete() const { m_SpecializationEvent.notify_all(); };
     void WaitForSpecialization(std::unique_lock<std::mutex> &lock) const { m_SpecializationEvent.wait(lock); }
@@ -113,7 +124,7 @@ private:
 
         ProgramBinary::Kernel m_Meta;
         unique_dxil m_GenericDxil;
-        std::unordered_map<std::unique_ptr<SpecializationKey>, SpecializationValue,
+        std::unordered_map<std::unique_ptr<const SpecializationKey>, SpecializationValue,
             SpecializationKeyHash, SpecializationKeyEqual> m_SpecializationCache;
     };
 

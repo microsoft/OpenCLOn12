@@ -151,6 +151,7 @@ public:
             : program_kernel_info(parent)
         {
         }
+        Metadata(Metadata const &) = default;
     };
 
     struct Configuration
@@ -185,6 +186,7 @@ public:
     virtual void *GetBinary() = 0;
 
     CompiledDxil(ProgramBinary const& parent, const char *name);
+    CompiledDxil(ProgramBinary const& parent, Metadata const &metadata);
     void Sign();
     Metadata const& GetMetadata() const;
 
@@ -268,6 +270,9 @@ public:
 
     // Convert a kernel from SPIR-V into DXIL with configuration properties
     virtual std::unique_ptr<CompiledDxil> GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const*, Logger const* logger) const = 0;
+
+    // Load a DXIL binary from a memory blob; the caller is responsible for serializing and deserializing metadata
+    virtual std::unique_ptr<CompiledDxil> LoadKernel(ProgramBinary const &obj, const void *data, size_t size, CompiledDxil::Metadata const &metadata) const = 0;
 
     // Copy the work properties into a constant buffer
     virtual std::byte* CopyWorkProperties(std::byte* WorkPropertiesBuffer, WorkProperties const& props) const = 0;

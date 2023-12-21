@@ -64,6 +64,7 @@ public:
     virtual std::unique_ptr<ProgramBinary> Load(const void *data, size_t size) const final;
     virtual std::unique_ptr<ProgramBinary> Specialize(ProgramBinary const& obj, ProgramBinary::SpecConstantValues const& values, Logger const& logger) const final;
     virtual std::unique_ptr<CompiledDxil> GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *, Logger const *logger) const final;
+    virtual std::unique_ptr<CompiledDxil> CompilerV2::LoadKernel(ProgramBinary const &obj, const void *data, size_t size, CompiledDxil::Metadata const &metadata) const final;
     virtual std::byte * CopyWorkProperties(std::byte *WorkPropertiesBuffer, WorkProperties const& props) const final;
     virtual size_t GetWorkPropertiesChunkSize() const final;
     virtual uint64_t GetVersionForCache() const final;
@@ -101,6 +102,7 @@ private:
 
 public:
     CompiledDxilV2(ProgramBinaryV2 const& parent, unique_obj obj);
+    CompiledDxilV2(ProgramBinaryV2 const& parent, unique_obj obj, Metadata const &metadata);
     clc_dxil_object const& GetRaw() { return m_Object; }
 
     // Inherited via CompiledDxil
@@ -414,6 +416,16 @@ std::unique_ptr<CompiledDxil> CompilerV2::GetKernel(const char *name, ProgramBin
     return std::make_unique<CompiledDxilV2>(static_cast<ProgramBinaryV2 const&>(obj), std::move(dxil));
 }
 
+std::unique_ptr<CompiledDxil> CompilerV2::LoadKernel(ProgramBinary const &obj, const void *data, size_t size, CompiledDxil::Metadata const &metadata) const
+{
+    CompiledDxilV2::unique_obj dxil;
+    dxil.binary.data = operator new(size);
+    dxil.binary.size = size;
+    memcpy(dxil.binary.data, data, size);
+    dxil.m_Deleter = [](clc_dxil_object *p) { operator delete(p->binary.data); };
+    return std::make_unique<CompiledDxilV2>(static_cast<ProgramBinaryV2 const &>(obj), std::move(dxil), metadata);
+}
+
 std::byte *CompilerV2::CopyWorkProperties(std::byte *WorkPropertiesBuffer, WorkProperties const& props) const
 {
     static_assert(sizeof(props) == sizeof(clc_work_properties_data));
@@ -626,6 +638,12 @@ CompiledDxilV2::CompiledDxilV2(ProgramBinaryV2 const& parent, unique_obj obj)
         printf.str = m_Object.metadata.printf.infos[i].str;
         m_Metadata.printfs.push_back(printf);
     }
+}
+
+CompiledDxilV2::CompiledDxilV2(ProgramBinaryV2 const &parent, unique_obj obj, Metadata const &metadata)
+    : CompiledDxil(parent, metadata)
+    , m_Object(std::move(obj))
+{
 }
 
 size_t CompiledDxilV2::GetBinarySize() const

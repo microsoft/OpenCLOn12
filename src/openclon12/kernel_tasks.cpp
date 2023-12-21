@@ -14,15 +14,25 @@
 
 #include "ImmediateContext.inl"
 
+#include "spookyv2.h"
+
 extern void SignBlob(void* pBlob, size_t size);
 constexpr uint32_t PrintfBufferSize = 1024 * 1024;
 constexpr uint32_t PrintfBufferInitialData[PrintfBufferSize / sizeof(uint32_t)] = { sizeof(uint32_t) * 2, PrintfBufferSize };
 
-auto Program::SpecializationKey::Allocate(D3DDevice const* Device, CompiledDxil::Configuration const& conf) -> std::unique_ptr<SpecializationKey>
+size_t Program::SpecializationKey::AllocatedByteSize(uint32_t NumArgs)
 {
-    uint32_t NumAllocatedArgs = conf.args.size() ? (uint32_t)conf.args.size() - 1 : 0;
-    std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(
-        sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs)));
+    uint32_t NumAllocatedArgs = NumArgs ? NumArgs - 1 : 0;
+    return sizeof(SpecializationKey) + sizeof(PackedArgData) * NumAllocatedArgs;
+}
+size_t Program::SpecializationKey::HashByteSize(uint32_t NumArgs)
+{
+    return offsetof(SpecializationKey, Args) + sizeof(PackedArgData) * NumArgs;
+}
+
+auto Program::SpecializationKey::Allocate(D3DDevice const* Device, CompiledDxil::Configuration const& conf) -> std::unique_ptr<const SpecializationKey>
+{
+    std::unique_ptr<SpecializationKey> bits(reinterpret_cast<SpecializationKey*>(operator new(AllocatedByteSize((uint32_t)conf.args.size()))));
     new (bits.get()) SpecializationKey(Device, conf);
     return bits;
 }
@@ -61,7 +71,7 @@ Program::SpecializationKey::SpecializationKey(D3DDevice const* Device, CompiledD
     }
 }
 
-size_t Program::SpecializationKeyHash::operator()(std::unique_ptr<Program::SpecializationKey> const& ptr) const
+size_t Program::SpecializationKeyHash::operator()(std::unique_ptr<const SpecializationKey> const& ptr) const
 {
     size_t val = std::hash<uint64_t>()(ptr->ConfigData.Value);
     D3D12TranslationLayer::hash_combine(val, std::hash<const void *>()(ptr->Device));
@@ -72,17 +82,17 @@ size_t Program::SpecializationKeyHash::operator()(std::unique_ptr<Program::Speci
     return val;
 }
 
-bool Program::SpecializationKeyEqual::operator()(std::unique_ptr<Program::SpecializationKey> const& a,
-                                                 std::unique_ptr<Program::SpecializationKey> const& b) const
+bool Program::SpecializationKeyEqual::operator()(std::unique_ptr<const SpecializationKey> const& a,
+                                                 std::unique_ptr<const SpecializationKey> const& b) const
 {
     assert(a->NumArgs == b->NumArgs);
-    uint32_t NumAllocatedArgs = a->NumArgs ? a->NumArgs - 1 : 0;
-    size_t size = sizeof(Program::SpecializationKey) +
-        sizeof(Program::SpecializationKey::PackedArgData) * NumAllocatedArgs;
+    size_t size = SpecializationKey::HashByteSize(a->NumArgs);
     return memcmp(a.get(), b.get(), size) == 0;
 }
 
-std::pair<Program::SpecializationValue *, bool> Program::GetSpecializationEntry(Device* device, std::string const& kernelName, std::unique_ptr<Program::SpecializationKey> &&key)
+auto Program::GetSpecializationData(
+    Device* device, std::string const& kernelName, std::unique_ptr<const SpecializationKey> key) ->
+    SpecializationData
 {
     std::lock_guard programLock(m_Lock);
     auto buildDataIter = m_BuildData.find(device);
@@ -94,7 +104,7 @@ std::pair<Program::SpecializationValue *, bool> Program::GetSpecializationEntry(
 
     std::lock_guard specializationCacheLock(buildData->m_SpecializationCacheLock);
     auto [iter, success] = kernel.m_SpecializationCache.try_emplace(std::move(key));
-    return std::make_pair(&iter->second, success);
+    return { iter->first.get(), &iter->second, success, { buildData->m_Hash[0], buildData->m_Hash[1] }};
 }
 
 class ExecuteKernel : public Task
@@ -227,25 +237,76 @@ public:
         config.args = kernel.m_ArgMetadataToCompiler;
         auto SpecKey = Program::SpecializationKey::Allocate(m_D3DDevice, config);
         
-        auto [Specialized, NeedToCreate] = kernel.m_Parent->GetSpecializationEntry(m_Device.Get(), kernel.m_Name, std::move(SpecKey));
-        m_Specialized = Specialized;
+        auto SpecializationData = kernel.m_Parent->GetSpecializationData(m_Device.Get(), kernel.m_Name, std::move(SpecKey));
+        m_Specialized = SpecializationData.Value;
 
-        if (NeedToCreate)
+        if (SpecializationData.NeedToCreate)
         {
             g_Platform->QueueProgramOp([this, &Device,
                                               config = std::move(config),
                                               kernel = this->m_Kernel,
-                                              refThis = Task::ref_int(*this)]() mutable
+                                              refThis = Task::ref_int(*this),
+                                              SpecializationData]() mutable
             {
                 try
                 {
                     auto pCompiler = g_Platform->GetCompiler();
-
+                    unique_dxil specialized;
                     auto spirv = kernel->m_Parent->GetSpirV(&m_CommandQueue->GetDevice());
-                    auto name = kernel->m_Dxil.GetMetadata().program_kernel_info.name;
-                    auto specialized = pCompiler->GetKernel(name, *spirv, &config, nullptr);
-                    if (specialized)
+
+                    auto &Cache = m_D3DDevice->GetShaderCache();
+                    
+                    SpookyHash hasher;
+                    hasher.Init(SpecializationData.ProgramHash[0], SpecializationData.ProgramHash[1]);
+                    hasher.Update(kernel->m_Name.c_str(), kernel->m_Name.size());
+                    hasher.Update(&SpecializationData.KeyInMap->ConfigData,
+                                  SpecializationData.KeyInMap->HashByteSize(SpecializationData.KeyInMap->NumArgs) -
+                                    offsetof(Program::SpecializationKey, ConfigData));
+                    uint64_t finalHash[2];
+                    hasher.Final(&finalHash[0], &finalHash[1]);
+
+                    auto found = Cache.Find(finalHash, sizeof(finalHash));
+                    if (found.first)
+                    {
+                        // Adjust the metadata to match this specialization. Everything matches except the offsets
+                        // to use for local args. The CL compiler treats unspecialized args as consuming 4 bytes.
+                        // We don't have the metadata for how much local memory is embedded in the kernel definition,
+                        // so the first local arg's offset tells us that.
+                        auto metadata = kernel->m_Dxil.GetMetadata(); // copy
+                        uint32_t offset = 0;
+                        uint32_t last_size = 0;
+                        for (uint32_t i = 0; i < metadata.args.size(); ++i)
+                        {
+                            if (auto local = std::get_if<CompiledDxil::Metadata::Arg::Local>(&metadata.args[i].properties))
+                            {
+                                if (last_size)
+                                    local->sharedmem_offset = offset + last_size;
+                                offset = local->sharedmem_offset;
+                                last_size = std::get<CompiledDxil::Configuration::Arg::Local>(config.args[i].config).size;
+                                // Match the logic in the compiler, which aligns these sizes based on the types it could contain,
+                                // up to long16 which has a 128 byte alignment.
+                                auto findFirstSet = [](uint32_t i)
+                                    {
+                                        unsigned long index;
+                                        if (_BitScanForward(&index, i))
+                                            return index + 1;
+                                        else
+                                            return 0ul;
+                                    };
+                                uint32_t align = last_size < 128 ? (1 << (findFirstSet(last_size) - 1)) : 128;
+                                last_size = D3D12TranslationLayer::Align(last_size, align);
+                            }
+                        }
+                        specialized = pCompiler->LoadKernel(*spirv, found.first.get(), found.second, metadata);
+                    }
+                    else
+                    {
+                        auto name = kernel->m_Dxil.GetMetadata().program_kernel_info.name;
+                        specialized = pCompiler->GetKernel(name, *spirv, &config, nullptr);
                         specialized->Sign();
+
+                        Cache.Store(finalHash, sizeof(finalHash), specialized->GetBinary(), specialized->GetBinarySize());
+                    }
 
                     auto RS = kernel->GetRootSignature(Device.ImmCtx());
                     auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
