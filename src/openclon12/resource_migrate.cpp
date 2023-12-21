@@ -133,11 +133,13 @@ void Resource::EnqueueMigrateResource(D3DDevice* newDevice, Task* triggeringTask
     cl_event e = CopyToCrossAdapter.get();
     CopyFromCrossAdapter->AddDependencies(&e, 1, Lock);
     m_CurrentActiveDevice->SubmitTask(CopyToCrossAdapter.get(), Lock);
+    CopyToCrossAdapter->Release();
     CopyToCrossAdapter.release();
 
     e = CopyFromCrossAdapter.get();
     triggeringTask->AddDependencies(&e, 1, Lock);
     newDevice->SubmitTask(CopyFromCrossAdapter.get(), Lock);
+    CopyFromCrossAdapter->Release();
     CopyFromCrossAdapter.release();
 
     m_CurrentActiveDevice->Flush(Lock);
@@ -200,6 +202,7 @@ void Resource::UploadInitialData(Task* triggeringTask)
     cl_event e = UploadTask.get();
     triggeringTask->AddDependencies(&e, 1, Lock);
     m_CurrentActiveDevice->SubmitTask(UploadTask.get(), Lock);
+    UploadTask->Release();
     UploadTask.release();
 
     m_CurrentActiveDevice->Flush(Lock);
