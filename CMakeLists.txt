@@ -47,7 +47,7 @@ target_include_directories(d3d12translationlayer
     PUBLIC include/d3d12translationlayer
     PRIVATE external)
 
-target_link_libraries(d3d12translationlayer Microsoft::DirectX-Headers d3d12 dxgi atls)
+target_link_libraries(d3d12translationlayer Microsoft::DirectX-Headers d3d12 dxgi atls dxcore)
 
 target_compile_definitions(d3d12translationlayer PRIVATE $<$<CONFIG:DEBUG>:DBG>)
 target_compile_definitions(d3d12translationlayer PUBLIC $<$<CONFIG:DEBUG>:TRANSLATION_LAYER_DBG=1>)
