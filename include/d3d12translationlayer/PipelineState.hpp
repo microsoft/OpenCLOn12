@@ -14,10 +14,11 @@ namespace D3D12TranslationLayer
     public:
         RootSignature* GetRootSignature() { return m_pRootSignature; }
 
-        PipelineState(ImmediateContext *pContext, const D3D12_SHADER_BYTECODE &CS, RootSignature* pRS);
+        PipelineState(ImmediateContext *pContext, const D3D12_SHADER_BYTECODE &CS, RootSignature *pRS, D3D12_CACHED_PIPELINE_STATE Cached = {});
         ~PipelineState();
 
         using DeviceChildImpl::GetForUse;
+        using DeviceChildImpl::GetForImmediateUse;
 
     protected:
         RootSignature* const m_pRootSignature;

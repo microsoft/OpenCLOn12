@@ -9,7 +9,7 @@
 
 #pragma warning(disable: 4100)
 
-ShaderCache::ShaderCache(ID3D12Device* d)
+ShaderCache::ShaderCache(ID3D12Device* d, bool driverVersioned)
 {
 #ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
     ComPtr<ID3D12Device9> device9;
@@ -20,6 +20,7 @@ ShaderCache::ShaderCache(ID3D12Device* d)
     // {17CB474E-4C55-4DBC-BC2E-D5132115BDA3}
     Desc.Identifier = { 0x17cb474e, 0x4c55, 0x4dbc, { 0xbc, 0x2e, 0xd5, 0x13, 0x21, 0x15, 0xbd, 0xa3 } };
     Desc.Mode = D3D12_SHADER_CACHE_MODE_DISK;
+    Desc.Flags = driverVersioned ? D3D12_SHADER_CACHE_FLAG_DRIVER_VERSIONED : D3D12_SHADER_CACHE_FLAG_NONE;
 
     auto pCompiler = g_Platform->GetCompiler();
     Desc.Version = pCompiler->GetVersionForCache();

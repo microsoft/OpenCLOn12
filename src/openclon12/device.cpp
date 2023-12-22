@@ -351,7 +351,8 @@ D3DDevice::D3DDevice(Device &parent, ID3D12Device *pDevice, ID3D12CommandQueue *
     , m_spDevice(pDevice)
     , m_ImmCtx(options, pDevice, pQueue, GetImmCtxCreationArgs())
     , m_RecordingSubmission(new Submission)
-    , m_ShaderCache(pDevice)
+    , m_ShaderCache(pDevice, false)
+    , m_DriverShaderCache(pDevice, true)
 {
     BackgroundTaskScheduler::SchedulingMode mode{ 1u, BackgroundTaskScheduler::Priority::Normal };
     m_ExecutionScheduler.SetSchedulingMode(mode);

@@ -20,6 +20,7 @@ class D3DDevice
 public:
     ID3D12Device* GetDevice() const noexcept { return m_spDevice.Get(); }
     ShaderCache &GetShaderCache() const noexcept { return m_ShaderCache; }
+    ShaderCache &GetDriverShaderCache() const noexcept { return m_DriverShaderCache; }
 
     ImmCtx& ImmCtx() noexcept { return m_ImmCtx; }
     UINT64 GetTimestampFrequency() const noexcept { return m_TimestampFrequency; }
@@ -52,6 +53,7 @@ protected:
     BackgroundTaskScheduler::Scheduler m_ExecutionScheduler;
     BackgroundTaskScheduler::Scheduler m_CompletionScheduler;
     mutable ShaderCache m_ShaderCache;
+    mutable ShaderCache m_DriverShaderCache;
 
     UINT64 m_TimestampFrequency = 0;
     INT64 m_GPUToQPCTimestampOffset = 0;

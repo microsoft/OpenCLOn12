@@ -7,10 +7,10 @@
 namespace D3D12TranslationLayer
 {
 
-    PipelineState::PipelineState(ImmediateContext *pContext, const D3D12_SHADER_BYTECODE &CS, RootSignature* pRS)
+    PipelineState::PipelineState(ImmediateContext *pContext, const D3D12_SHADER_BYTECODE &CS, RootSignature* pRS, D3D12_CACHED_PIPELINE_STATE Cached)
         : DeviceChildImpl(pContext)
         , m_pRootSignature(pRS)
-        , m_Desc { 0, CS }
+        , m_Desc { nullptr, CS, 0, Cached }
     {
         m_Desc.pRootSignature = m_pRootSignature->GetForImmediateUse();
 

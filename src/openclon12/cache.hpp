@@ -10,7 +10,7 @@
 class ShaderCache
 {
 public:
-    ShaderCache(ID3D12Device*);
+    ShaderCache(ID3D12Device*, bool driverVersioned);
 
     bool HasCache() const
     {

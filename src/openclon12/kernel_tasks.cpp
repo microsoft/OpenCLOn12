@@ -309,8 +309,26 @@ public:
                     }
 
                     auto RS = kernel->GetRootSignature(Device.ImmCtx());
+
+                    auto &DriverCache = m_D3DDevice->GetDriverShaderCache();
+                    auto CachedBlob = DriverCache.Find(finalHash, sizeof(finalHash));
+                    D3D12_CACHED_PIPELINE_STATE CachedDesc = {};
+                    if (CachedBlob.first)
+                    {
+                        CachedDesc = { CachedBlob.first.get(), CachedBlob.second };
+                    }
+
                     auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
-                        &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get());
+                        &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get(), CachedDesc);
+
+                    if (!CachedBlob.first)
+                    {
+                        D3D12TranslationLayer::unique_comptr<ID3DBlob> blob;
+                        if (SUCCEEDED(PSO->GetForImmediateUse()->GetCachedBlob(&blob)))
+                        {
+                            DriverCache.Store(finalHash, sizeof(finalHash), blob->GetBufferPointer(), blob->GetBufferSize());
+                        }
+                    }
 
                     {
                         auto lock = kernel->m_Parent->GetSpecializationUpdateLock();
