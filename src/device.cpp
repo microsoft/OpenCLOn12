@@ -464,7 +464,7 @@ cl_device_type Device::GetType() const noexcept
     {
         return CL_DEVICE_TYPE_ACCELERATOR | Default;
     }
-    if (m_HWIDs.deviceID == 0x8c && m_HWIDs.vendorID == 0x1414)
+    if (m_HWIDs.deviceID == 0x8c && m_HWIDs.vendorID == 0x1414 && !g_Platform->m_bWarpIsHardware)
     {
         return CL_DEVICE_TYPE_CPU | Default;
     }

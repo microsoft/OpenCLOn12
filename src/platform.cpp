@@ -116,8 +116,19 @@ clUnloadPlatformCompiler(cl_platform_id platform) CL_API_SUFFIX__VERSION_1_2
     return CL_SUCCESS;
 }
 
+static bool CheckWarpIsHardware()
+{
+    char *warpIsHardwareStr = nullptr;
+    bool warpIsHardware = _dupenv_s(&warpIsHardwareStr, nullptr, "CLON12_WARP_IS_HARDWARE") == 0 &&
+        warpIsHardwareStr &&
+        strcmp(warpIsHardwareStr, "1") == 0;
+    free(warpIsHardwareStr);
+    return warpIsHardware;
+}
+
 #include "device.hpp"
 Platform::Platform(cl_icd_dispatch* dispatch)
+    : m_bWarpIsHardware(CheckWarpIsHardware())
 {
     this->dispatch = dispatch;
 

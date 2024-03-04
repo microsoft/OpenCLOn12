@@ -176,6 +176,8 @@ public:
     void DeviceInit();
     void DeviceUninit();
 
+    const bool m_bWarpIsHardware;
+
 protected:
     ComPtr<IDXCoreAdapterList> m_spAdapters;
     std::vector<std::unique_ptr<Device>> m_Devices;
