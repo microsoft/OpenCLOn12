@@ -86,7 +86,7 @@ clGetDeviceInfo(cl_device_id    device,
     {
         switch (param_name)
         {
-        case CL_DEVICE_TYPE: return RetValue(pDevice->GetType());
+        case CL_DEVICE_TYPE: return RetValue(pDevice->GetType() & ~CL_DEVICE_TYPE_DEFAULT);
         case CL_DEVICE_VENDOR_ID: return RetValue(pDevice->GetHardwareIds().vendorID);
         case CL_DEVICE_MAX_COMPUTE_UNITS: return RetValue((cl_uint)1);
         case CL_DEVICE_MAX_WORK_ITEM_DIMENSIONS: return RetValue((cl_uint)3);
