@@ -280,6 +280,7 @@ clIcdGetPlatformIDsKHR(cl_uint           num_entries,
         try
         {
             g_Platform = new Platform(&g_DispatchTable);
+            g_Platform->RemoveInvalidDevices();
         }
         catch (std::bad_alloc&) { return CL_OUT_OF_HOST_MEMORY; }
         catch (std::exception&) { return CL_OUT_OF_RESOURCES; }

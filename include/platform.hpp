@@ -121,6 +121,8 @@ public:
     Platform(cl_icd_dispatch* dispatch);
     ~Platform();
 
+    void RemoveInvalidDevices() noexcept;
+
     cl_uint GetNumDevices() const noexcept;
     Device *GetDevice(cl_uint i) const noexcept;
     Compiler *GetCompiler();

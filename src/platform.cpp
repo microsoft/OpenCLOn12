@@ -175,6 +175,21 @@ Platform::Platform(cl_icd_dispatch* dispatch)
 
 Platform::~Platform() = default;
 
+void Platform::RemoveInvalidDevices() noexcept
+{
+    for (cl_uint i = 0; i < m_Devices.size(); ++i)
+    {
+        try
+        {
+            m_Devices[i]->InitD3D();
+        }
+        catch (...)
+        {
+            m_Devices.erase(m_Devices.begin() + i);
+        }
+    }
+}
+
 cl_uint Platform::GetNumDevices() const noexcept
 {
     return (cl_uint)m_Devices.size();
