@@ -239,6 +239,7 @@ std::unique_ptr<ProgramBinary> CompilerV2::Compile(CompileArgs const& args, Logg
     args_impl.features.intel_subgroups = args.features.intel_subgroups;
     args_impl.features.subgroups = args.features.subgroups;
 
+    args_impl.use_llvm_spirv_target = false;
     args_impl.spirv_version = CLC_SPIRV_VERSION_MAX;
     args_impl.allowed_spirv_extensions = nullptr;
 
