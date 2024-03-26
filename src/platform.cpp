@@ -181,8 +181,11 @@ void Platform::RemoveInvalidDevices() noexcept
     {
         try
         {
-            auto& Device = m_Devices[i]->InitD3D();
-            m_Devices[i]->ReleaseD3D(Device);
+            if (m_Devices[i]->IsMCDM())
+            {
+                auto &Device = m_Devices[i]->InitD3D();
+                m_Devices[i]->ReleaseD3D(Device);
+            }
         }
         catch (...)
         {
