@@ -181,7 +181,8 @@ void Platform::RemoveInvalidDevices() noexcept
     {
         try
         {
-            m_Devices[i]->InitD3D();
+            auto& Device = m_Devices[i]->InitD3D();
+            m_Devices[i]->ReleaseD3D(Device);
         }
         catch (...)
         {
