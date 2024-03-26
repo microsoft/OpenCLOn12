@@ -9,16 +9,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-file(GLOB_RECURSE SRC CONFIGURE_DEPENDS src/*.cpp src/*.def)
-file(GLOB_RECURSE INC include/*.h include/*.hpp)
+file(GLOB_RECURSE MAIN_SRC CONFIGURE_DEPENDS src/openclon12/*.cpp src/compilers/*.cpp src/openclon12/*.def)
+file(GLOB MAIN_INC src/openclon12/*.h src/openclon12/*.hpp)
 file(GLOB_RECURSE EXTERNAL_INC external/*.h external/*.hpp)
 
+file(GLOB TRANS_SRC CONFIGURE_DEPENDS src/d3d12translationlayer/*.cpp)
+file(GLOB TRANS_INC include/d3d12translationlayer/*.*)
+file(GLOB TRANS_INL include/d3d12translationlayer/*.inl src/d3d12translationlayer/*.inl)
+
+include(FetchContent)
 FetchContent_Declare(
-    d3d12translationlayer
-    GIT_REPOSITORY https://github.com/microsoft/D3D12TranslationLayer.git
-    GIT_TAG        e77b6a16a64dd584772f2b0123209cd3f96d81ce
+    DirectX-Headers
+    GIT_REPOSITORY https://github.com/Microsoft/DirectX-Headers.git
+    GIT_TAG v1.610.0
 )
-FetchContent_MakeAvailable(d3d12translationlayer)
+FetchContent_MakeAvailable(DirectX-Headers)
 
 FetchContent_Declare(
     opencl_headers
@@ -37,9 +42,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(wil)
 
-add_library(openclon12 SHARED ${SRC} ${INC} ${EXTERNAL_INC})
+add_library(d3d12translationlayer STATIC ${TRANS_SRC} ${TRANS_INC} ${TRANS_INL})
+target_include_directories(d3d12translationlayer
+    PUBLIC include/d3d12translationlayer
+    PRIVATE external)
+
+target_link_libraries(d3d12translationlayer Microsoft::DirectX-Headers d3d12 dxgi atls dxcore)
+
+target_compile_definitions(d3d12translationlayer PRIVATE $<$<CONFIG:DEBUG>:DBG>)
+target_compile_definitions(d3d12translationlayer PUBLIC $<$<CONFIG:DEBUG>:TRANSLATION_LAYER_DBG=1>)
+
+add_library(openclon12 SHARED ${MAIN_SRC} ${MAIN_INC} ${EXTERNAL_INC})
 target_include_directories(openclon12
-    PRIVATE include
+    PRIVATE src/openclon12
     PRIVATE external
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(openclon12

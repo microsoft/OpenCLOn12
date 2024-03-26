@@ -24,6 +24,12 @@ CompiledDxil::CompiledDxil(ProgramBinary const& parent, const char *name)
 {
 }
 
+CompiledDxil::CompiledDxil(ProgramBinary const& parent, Metadata const &metadata)
+    : m_Parent(parent)
+    , m_Metadata(metadata)
+{
+}
+
 CompiledDxil::Metadata const& CompiledDxil::GetMetadata() const
 {
     return m_Metadata;
