@@ -126,7 +126,7 @@ TEST(OpenCLOn12, SimpleImages)
     cl::CommandQueue queue(context, device);
 
     const char* kernel_source =
-    "__kernel void main_test(read_only image2d_t input, write_only image2d_t output, float foo)\n\
+    "__kernel void main_test(read_only image2d_t input, write_only image2d_t output, read_only image2d_t unused_img, float foo)\n\
     {\n\
         int2 coord = (int2)(get_global_id(0), get_global_id(1));\n\
         write_imagef(output, coord, read_imagef(input, coord) + foo);\n\
@@ -153,7 +153,8 @@ TEST(OpenCLOn12, SimpleImages)
 
     kernel.setArg(0, input);
     kernel.setArg(1, output);
-    kernel.setArg(2, 0.0f);
+    kernel.setArg(2, nullptr);
+    kernel.setArg(3, 0.0f);
     queue.enqueueNDRangeKernel(kernel, offset, globalSize, localSize);
 
     float OutputData[width * height * 4];

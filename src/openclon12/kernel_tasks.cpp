@@ -686,11 +686,19 @@ void ExecuteKernel::RecordImpl()
     }
     for (auto &SrvRes : m_KernelArgSRVs)
     {
-        auto &SRV = SrvRes->GetSRV(&Device);
-        Device.ImmCtx().GetResourceStateManager().TransitionSubresources(SrvRes->GetUnderlyingResource(&Device),
-                                                                         SRV.m_subresources,
-                                                                         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-        SrcDescriptors.push_back(SRV.GetRefreshedDescriptorHandle());
+        if (SrvRes.Get())
+        {
+            auto &SRV = SrvRes->GetSRV(&Device);
+            Device.ImmCtx().GetResourceStateManager().TransitionSubresources(SrvRes->GetUnderlyingResource(&Device),
+                                                                             SRV.m_subresources,
+                                                                             D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            SrcDescriptors.push_back(SRV.GetRefreshedDescriptorHandle());
+        }
+        else
+        {
+            // CL doesn't provide defined behavior for accessing a null texture so it doesn't matter what this is.
+            SrcDescriptors.push_back(ImmCtx.m_NullUAV);
+        }
     }
     if (m_PrintfUAV.Get())
     {
