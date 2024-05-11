@@ -1746,8 +1746,9 @@ bool ImmediateContext::SynchronizeForMap(Resource* pResource, UINT Subresource, 
            !pResource->GetIdentity()->m_bOwnsUnderlyingResource ||
            // 9on12 special case
            pResource->OwnsReadbackHeap() ||
-           // For Map(DEFAULT) we should've made sure we're in common
+           // For Map(DEFAULT) we should've made sure we're in common or copy_dest
            CurrentState.GetSubresourceState(Subresource).State == D3D12_RESOURCE_STATE_COMMON ||
+           CurrentState.GetSubresourceState(Subresource).State == D3D12_RESOURCE_STATE_COPY_DEST ||
            // Or we're not mapping the actual resource
            pResource->GetCurrentCpuHeap(Subresource) != nullptr);
 

@@ -2530,10 +2530,29 @@ public:
         Args.m_appDesc.m_Depth = args.Depth;
         Args.m_appDesc.m_Width = args.Width;
         Args.m_appDesc.m_Height = args.Height;
-        Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_STAGING;
         Args.m_appDesc.m_bindFlags = D3D12TranslationLayer::RESOURCE_BIND_NONE;
-        Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
-        Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_READBACK);
+
+        if (flags == CL_MAP_READ)
+        {
+            Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_STAGING;
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ;
+            Args.m_heapDesc = CD3DX12_HEAP_DESC(0, D3D12_HEAP_TYPE_READBACK);
+        }
+        else if (flags == CL_MAP_WRITE)
+        {
+            D3D12_HEAP_PROPERTIES heapProperties = m_CommandQueue->GetD3DDevice().GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_UPLOAD);
+            Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
+            Args.m_heapDesc = CD3DX12_HEAP_DESC({0, 0}, heapProperties);
+        }
+        else if (flags == (CL_MAP_READ | CL_MAP_WRITE))
+        {
+            D3D12_HEAP_PROPERTIES heapProperties = m_CommandQueue->GetD3DDevice().GetDevice()->GetCustomHeapProperties(0, D3D12_HEAP_TYPE_READBACK);
+            Args.m_appDesc.m_usage = D3D12TranslationLayer::RESOURCE_USAGE_DYNAMIC;
+            Args.m_appDesc.m_cpuAcess = D3D12TranslationLayer::RESOURCE_CPU_ACCESS_READ | D3D12TranslationLayer::RESOURCE_CPU_ACCESS_WRITE;
+            Args.m_heapDesc = CD3DX12_HEAP_DESC({ 0, 0 }, heapProperties);
+        }
+        
         Args.m_desc12.Flags = D3D12_RESOURCE_FLAG_NONE;
 
         cl_mem_flags stagingFlags = CL_MEM_ALLOC_HOST_PTR;
