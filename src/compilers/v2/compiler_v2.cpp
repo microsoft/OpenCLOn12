@@ -246,7 +246,7 @@ std::unique_ptr<ProgramBinary> CompilerV2::Compile(CompileArgs const& args, Logg
     args_impl.address_bits = 64;
 
     auto logger_impl = ConvertLogger(logger);
-    if (!CompileImpl(&args_impl, &logger_impl, &obj))
+    if (!CompileImpl(&args_impl, &logger_impl, &obj, /*set*/ nullptr))
         return nullptr;
     
     return std::make_unique<ProgramBinaryV2>(std::move(obj));
