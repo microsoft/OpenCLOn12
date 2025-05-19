@@ -5,6 +5,7 @@
 #include "ImmediateContext.inl"
 #include "FormatDesc.hpp"
 #include "View.inl"
+#include <algorithm>
 
 namespace D3D12TranslationLayer
 {
