@@ -115,7 +115,7 @@ public:
 
     Resource::UnderlyingResourcePtr m_KernelArgsCb;
     std::vector<std::byte> m_KernelArgsCbData;
-    size_t m_WorkPropertiesOffset;
+    cl_uint m_WorkPropertiesOffset;
     Resource::ref_ptr m_PrintfUAV;
 
     std::vector<Resource::ref_ptr_int> m_KernelArgUAVs;
@@ -165,11 +165,11 @@ public:
         cl_uint numZIterations = ((dims[2] - 1) / D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION) + 1;
         cl_uint numIterations = numXIterations * numYIterations * numZIterations;
 
-        size_t KernelInputsCbSize = kernel.m_Dxil.GetMetadata().kernel_inputs_buf_size;
-        m_WorkPropertiesOffset = D3D12TranslationLayer::Align<size_t>(KernelInputsCbSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        cl_uint KernelInputsCbSize = kernel.m_Dxil.GetMetadata().kernel_inputs_buf_size;
+        m_WorkPropertiesOffset = D3D12TranslationLayer::Align<UINT>(KernelInputsCbSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 
         auto pCompiler = g_Platform->GetCompiler();
-        size_t WorkPropertiesSize = pCompiler->GetWorkPropertiesChunkSize() * numIterations;
+        cl_uint WorkPropertiesSize = pCompiler->GetWorkPropertiesChunkSize() * numIterations;
         KernelInputsCbSize = m_WorkPropertiesOffset + WorkPropertiesSize;
 
         m_KernelArgsCbData.resize(KernelInputsCbSize);
