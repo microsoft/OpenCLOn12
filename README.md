@@ -12,6 +12,8 @@ This repository contains the implementations of the APIs. It depends on various 
 
 Additionally, DXIL.dll from the Windows SDK will be required at runtime to sign and validate the DXIL shaders produced by the compiler.
 
+Generally, OpenCLOn12 when installed through the Releases pages' `Universal_D3DMappingLayers_(...).appx` is the same app as the "[OpenCL™, OpenGL®, and Vulkan® Compatibility Pack](https://apps.microsoft.com/detail/9nqpsl29bfff)" app on Microsoft Store.
+
 For more details about OpenCLOn12, see:
 * [Product release blog post](https://devblogs.microsoft.com/directx/announcing-the-opencl-and-opengl-compatibility-pack-for-windows-10-on-arm)
 * [Microsoft blog post](https://devblogs.microsoft.com/directx/in-the-works-opencl-and-opengl-mapping-layers-to-directx/)
