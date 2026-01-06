@@ -66,7 +66,7 @@ public:
     virtual std::unique_ptr<CompiledDxil> GetKernel(const char *name, ProgramBinary const& obj, CompiledDxil::Configuration const *, Logger const *logger) const final;
     virtual std::unique_ptr<CompiledDxil> CompilerV2::LoadKernel(ProgramBinary const &obj, const void *data, size_t size, CompiledDxil::Metadata const &metadata) const final;
     virtual std::byte * CopyWorkProperties(std::byte *WorkPropertiesBuffer, WorkProperties const& props) const final;
-    virtual size_t GetWorkPropertiesChunkSize() const final;
+    virtual uint32_t GetWorkPropertiesChunkSize() const final;
     virtual uint64_t GetVersionForCache() const final;
 };
 
@@ -438,9 +438,9 @@ std::byte *CompilerV2::CopyWorkProperties(std::byte *WorkPropertiesBuffer, WorkP
     return WorkPropertiesBuffer + GetWorkPropertiesChunkSize();
 }
 
-size_t CompilerV2::GetWorkPropertiesChunkSize() const
+uint32_t CompilerV2::GetWorkPropertiesChunkSize() const
 {
-    return std::max<size_t>(sizeof(clc_work_properties_data), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+    return std::max<uint32_t>(sizeof(clc_work_properties_data), D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 }
 
 uint64_t CompilerV2::GetVersionForCache() const

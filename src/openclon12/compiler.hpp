@@ -276,7 +276,7 @@ public:
 
     // Copy the work properties into a constant buffer
     virtual std::byte* CopyWorkProperties(std::byte* WorkPropertiesBuffer, WorkProperties const& props) const = 0;
-    virtual size_t GetWorkPropertiesChunkSize() const = 0;
+    virtual uint32_t GetWorkPropertiesChunkSize() const = 0;
 
     // Return a version that can be used for initializing a shader cache
     virtual uint64_t GetVersionForCache() const = 0;
