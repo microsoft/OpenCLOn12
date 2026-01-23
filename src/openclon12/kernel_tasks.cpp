@@ -318,8 +318,23 @@ public:
                         CachedDesc = { CachedBlob.first.get(), CachedBlob.second };
                     }
 
-                    auto PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
-                        &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get(), CachedDesc);
+                    std::unique_ptr< D3D12TranslationLayer::PipelineState> PSO;
+                    try
+                    {
+                        PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
+                            &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get(), CachedDesc);
+                    }
+                    catch (_com_error &hrEx)
+                    {
+                        if (hrEx.Error() != D3D12_ERROR_DRIVER_VERSION_MISMATCH && hrEx.Error() != D3D12_ERROR_ADAPTER_NOT_FOUND)
+                        {
+                            throw;
+                        }
+                        m_D3DDevice->GetDriverShaderCache().Clear();
+                        CachedDesc = {};
+                        PSO = std::make_unique<D3D12TranslationLayer::PipelineState>(
+                            &Device.ImmCtx(), D3D12_SHADER_BYTECODE{ specialized->GetBinary(), specialized->GetBinarySize() }, RS.get(), CachedDesc);
+                    }
 
                     if (!CachedBlob.first)
                     {

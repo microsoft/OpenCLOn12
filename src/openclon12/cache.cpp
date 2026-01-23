@@ -32,6 +32,7 @@ ShaderCache::ShaderCache(ID3D12Device* d, bool driverVersioned)
 void ShaderCache::Store(const void* key, size_t keySize, const void* value, size_t valueSize) noexcept
 {
 #ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    std::shared_lock Lock(m_ResetLock);
     if (m_pSession)
     {
         (void)m_pSession->StoreValue(key, (UINT)keySize, value, (UINT)valueSize);
@@ -42,6 +43,7 @@ void ShaderCache::Store(const void* key, size_t keySize, const void* value, size
 void ShaderCache::Store(const void* const* keys, const size_t* keySizes, unsigned keyParts, const void* value, size_t valueSize)
 {
 #ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    std::shared_lock Lock(m_ResetLock);
     if (m_pSession)
     {
         size_t combinedSize = std::accumulate(keySizes, keySizes + keyParts, (size_t)0);
@@ -61,6 +63,7 @@ void ShaderCache::Store(const void* const* keys, const size_t* keySizes, unsigne
 ShaderCache::FoundValue ShaderCache::Find(const void* key, size_t keySize)
 {
 #ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    std::shared_lock Lock(m_ResetLock);
     if (m_pSession)
     {
         UINT valueSize = 0;
@@ -80,6 +83,7 @@ ShaderCache::FoundValue ShaderCache::Find(const void* key, size_t keySize)
 ShaderCache::FoundValue ShaderCache::Find(const void* const* keys, const size_t* keySizes, unsigned keyParts)
 {
 #ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    std::shared_lock Lock(m_ResetLock);
     if (m_pSession)
     {
         size_t combinedSize = std::accumulate(keySizes, keySizes + keyParts, (size_t)0);
@@ -100,6 +104,25 @@ ShaderCache::FoundValue ShaderCache::Find(const void* const* keys, const size_t*
 void ShaderCache::Close()
 {
 #ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    std::unique_lock Lock(m_ResetLock);
     m_pSession.Reset();
+#endif
+}
+
+void ShaderCache::Clear()
+{
+#ifdef __ID3D12ShaderCacheSession_INTERFACE_DEFINED__
+    std::unique_lock Lock(m_ResetLock);
+    if (m_pSession)
+    {
+        m_pSession->SetDeleteOnDestroy();
+
+        ComPtr<ID3D12Device9> device9;
+        m_pSession->GetDevice(IID_PPV_ARGS(&device9));
+        D3D12_SHADER_CACHE_SESSION_DESC Desc = m_pSession->GetDesc();
+
+        m_pSession.Reset();
+        (void)device9->CreateShaderCacheSession(&Desc, IID_PPV_ARGS(&m_pSession));
+    }
 #endif
 }
