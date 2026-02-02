@@ -72,9 +72,15 @@ struct clc_optional_features {
     * progress
     */
    bool subgroups_ifp;
+   bool subgroups_ballot;
+   bool subgroups_clustered;
+   bool subgroups_extended_types;
+   bool subgroups_named_barrier;
+   bool subgroups_non_uniform_arithmetic;
+   bool subgroups_non_uniform_vote;
+   bool subgroups_rotate;
    bool subgroups_shuffle;
    bool subgroups_shuffle_relative;
-   bool subgroups_ballot;
 };
 
 struct clc_compile_args {
