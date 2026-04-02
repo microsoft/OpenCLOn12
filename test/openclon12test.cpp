@@ -170,6 +170,9 @@ TEST(OpenCLOn12, SimpleImages)
 
 TEST(OpenCLOn12, LargeDispatch)
 {
+#ifndef _WIN64
+    GTEST_SKIP() << "LargeDispatch requires 64-bit address space";
+#else
     auto&& [context, device] = GetWARPContext();
     if (!context.get())
     {
@@ -211,6 +214,7 @@ TEST(OpenCLOn12, LargeDispatch)
         EXPECT_EQ(OutputData[i].local, i % D3D12_CS_THREAD_GROUP_MAX_X);
         EXPECT_EQ(OutputData[i].work_group, i / D3D12_CS_THREAD_GROUP_MAX_X);
     }
+#endif
 }
 
 TEST(OpenCLOn12, Printf)
