@@ -157,7 +157,10 @@ clCreateProgramWithBinary(cl_context                     context_,
         for (cl_uint i = 0; i < num_devices; ++i)
         {
             auto header = reinterpret_cast<ProgramBinaryHeader const*>(binaries[i]);
-            std::shared_ptr<ProgramBinary> BinaryHolder = g_Platform->GetCompiler()->Load(header->GetBinary(), header->BinarySize);
+            auto pCompiler = g_Platform->GetCompiler();
+            if (!pCompiler)
+                return ReportError("Compiler not available", CL_COMPILER_NOT_AVAILABLE);
+            std::shared_ptr<ProgramBinary> BinaryHolder = pCompiler->Load(header->GetBinary(), header->BinarySize);
             NewProgram->StoreBinary(static_cast<Device*>(device_list[i]), std::move(BinaryHolder), header->BinaryType);
 
             if (binary_status) *binary_status = CL_SUCCESS;
@@ -202,6 +205,8 @@ clCreateProgramWithIL(cl_context    context_,
     try
     {
         auto pCompiler = g_Platform->GetCompiler();
+        if (!pCompiler)
+            return ReportError("Compiler not available", CL_COMPILER_NOT_AVAILABLE);
         std::shared_ptr<ProgramBinary> parsedProgram = pCompiler->Load(il, length);
         if (!parsedProgram || !parsedProgram->Parse(nullptr))
             return ReportError("Failed to parse SPIR-V", CL_INVALID_VALUE);
@@ -1123,6 +1128,8 @@ cl_int Program::BuildImpl(BuildArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto pCompiler = g_Platform->GetCompiler();
+    if (!pCompiler)
+        return CL_COMPILER_NOT_AVAILABLE;
     if (!m_Source.empty() || m_ParsedIL)
     {
         auto& BuildData = Args.Common.BuildData;
@@ -1254,6 +1261,8 @@ cl_int Program::CompileImpl(CompileArgs const& Args)
     cl_int ret = CL_SUCCESS;
     auto& BuildData = Args.Common.BuildData;
     auto pCompiler = g_Platform->GetCompiler();
+    if (!pCompiler)
+        return CL_COMPILER_NOT_AVAILABLE;
     auto &Cache = BuildData->m_D3DDevice->GetShaderCache();
     pCompiler->Initialize(Cache);
     Logger loggers(m_Lock, BuildData->m_BuildLog);
@@ -1349,6 +1358,8 @@ cl_int Program::LinkImpl(LinkArgs const& Args)
 {
     cl_int ret = CL_SUCCESS;
     auto pCompiler = g_Platform->GetCompiler();
+    if (!pCompiler)
+        return CL_COMPILER_NOT_AVAILABLE;
 
     Compiler::LinkerArgs link_args = {};
     link_args.objs.reserve(Args.LinkPrograms.size());
@@ -1431,6 +1442,8 @@ void Program::PerDeviceData::CreateKernels(Program& program)
         return;
 
     auto pCompiler = g_Platform->GetCompiler();
+    if (!pCompiler)
+        return;
     pCompiler->Initialize(m_D3DDevice->GetShaderCache());
 
     auto& kernels = m_OwnedBinary->GetKernelInfo();

@@ -23,6 +23,8 @@ ShaderCache::ShaderCache(ID3D12Device* d, bool driverVersioned)
     Desc.Flags = driverVersioned ? D3D12_SHADER_CACHE_FLAG_DRIVER_VERSIONED : D3D12_SHADER_CACHE_FLAG_NONE;
 
     auto pCompiler = g_Platform->GetCompiler();
+    if (!pCompiler)
+        return;
     Desc.Version = pCompiler->GetVersionForCache();
 
     (void)device9->CreateShaderCacheSession(&Desc, IID_PPV_ARGS(&m_pSession));
