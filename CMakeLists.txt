@@ -28,7 +28,7 @@ FetchContent_MakeAvailable(DirectX-Headers)
 FetchContent_Declare(
     opencl_headers
     GIT_REPOSITORY https://github.com/KhronosGroup/OpenCL-Headers.git
-    GIT_TAG 1bb9ec797d14abed6167e3a3d66ede25a702a5c7
+    GIT_TAG 6fe718c31a45fe25151362a72ef041c3a1047cbd
 )
 FetchContent_MakeAvailable(opencl_headers)
 add_library(OpenCL::Headers ALIAS Headers)
