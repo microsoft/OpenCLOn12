@@ -4,7 +4,7 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        2d924d7a971e9667d76ad09727fb2402b4f8a1e3
+    GIT_TAG        063de7e9578f82b369302001269680b4b1553359
 )
 FetchContent_MakeAvailable(googletest)
 
